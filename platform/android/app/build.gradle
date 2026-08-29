@@ -1,0 +1,191 @@
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+def huxeruiProperty = { String name -> providers.gradleProperty(name).get() }
+def huxeruiHome = rootProject.gradle.ext.huxeruiHome
+def huxeruiLibraries = rootProject.gradle.ext.huxeruiLibraries
+def huxeruiCompileSdk = huxeruiProperty("huxeruiCompileSdk").toInteger()
+def huxeruiMinSdk = huxeruiProperty("huxeruiMinSdk").toInteger()
+def huxeruiTargetSdk = huxeruiProperty("huxeruiTargetSdk").toInteger()
+def huxeruiNdkVersion = huxeruiProperty("huxeruiNdkVersion")
+def huxeruiAbis = huxeruiProperty("huxeruiAbis").split(",")
+def huxeruiStl = huxeruiProperty("huxeruiStl")
+// Optional Termux cross-toolchain override: pass -PtermuxAndroidToolchain=<file>
+// to replace the NDK toolchain file (Termux reports an Android host, which the
+// NDK toolchain cannot handle).
+def termuxAndroidToolchain = providers.gradleProperty("termuxAndroidToolchain").orNull
+def huxeruiDebugResourceRoot = layout.buildDirectory.dir("generated/huxerui/resources/debug").get().asFile
+def huxeruiReleaseResourceRoot = layout.buildDirectory.dir("generated/huxerui/resources/release").get().asFile
+def huxeruiDebugAssets = layout.buildDirectory.dir("generated/huxerui/assets/debug").get().asFile
+def huxeruiReleaseAssets = layout.buildDirectory.dir("generated/huxerui/assets/release").get().asFile
+
+android {
+    namespace = "com.example.sweetedithuxer"
+    packaging {
+        // Compress native libraries inside the APK (smaller download);
+        // extraction cost is paid once at install time.
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+    compileSdk = huxeruiCompileSdk
+    ndkVersion = huxeruiNdkVersion
+
+    defaultConfig {
+        applicationId = "com.example.sweetedithuxer"
+        minSdk = huxeruiMinSdk
+        targetSdk = huxeruiTargetSdk
+        versionCode = 1
+        versionName = "1.0"
+
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=${huxeruiStl}",
+                        "-DHUXERUI_HOME=${huxeruiHome.absolutePath}"
+                if (termuxAndroidToolchain != null) {
+                    arguments "-DCMAKE_TOOLCHAIN_FILE=${termuxAndroidToolchain}"
+                }
+            }
+        }
+
+        ndk {
+            abiFilters(*huxeruiAbis)
+        }
+    }
+
+    buildTypes {
+        debug {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DHUXERUI_ANDROID_RESOURCE_OUTPUT_ROOT=${huxeruiDebugResourceRoot.absolutePath}"
+                }
+            }
+        }
+        release {
+            minifyEnabled = false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            externalNativeBuild {
+                cmake {
+                    arguments "-DHUXERUI_ANDROID_RESOURCE_OUTPUT_ROOT=${huxeruiReleaseResourceRoot.absolutePath}"
+                }
+            }
+        }
+    }
+
+    sourceSets {
+        debug {
+            assets.srcDir huxeruiDebugAssets
+        }
+        release {
+            assets.srcDir huxeruiReleaseAssets
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("../../../CMakeLists.txt")
+            if (termuxAndroidToolchain != null) {
+                // Keep the ninja staging dir off FUSE storage (Termux/sdcard mtimes
+                // make ninja loop on 'build.ninja still dirty'); pass
+                // -PtermuxCxxStaging=<dir> to redirect it, e.g. $HOME/sweetedit-android-cxx.
+                buildStagingDirectory = file(providers.gradleProperty("termuxCxxStaging").get())
+            }
+        }
+    }
+}
+
+dependencies {
+    if (rootProject.gradle.ext.huxeruiUsesSource) {
+        implementation project(":HuxerUI")
+    } else {
+        implementation files(rootProject.gradle.ext.huxeruiAndroidArchive)
+    }
+    huxeruiLibraries.each { library ->
+        implementation project(library.projectPath)
+    }
+}
+
+def registerHuxerUIResourceStaging = { String buildType, File resourceRoot, File assetsDirectory ->
+    def capitalizedBuildType = buildType.capitalize()
+    def nativeTaskName = "externalNativeBuild${capitalizedBuildType}"
+    def resolveResourcePackage = {
+        for (String abi : huxeruiAbis) {
+            def packageDirectory = new File(resourceRoot, "${abi}/package")
+            if (new File(packageDirectory, "huxerui/resources.bin").isFile()) {
+                return packageDirectory
+            }
+        }
+        return null
+    }
+    def verificationTask = tasks.register("verifyHuxerUI${capitalizedBuildType}Resources") {
+        dependsOn nativeTaskName
+        doLast {
+            if (resolveResourcePackage() == null) {
+                throw new GradleException("HuxerUI resource package is missing under ${resourceRoot}")
+            }
+        }
+    }
+    def stagingTask = tasks.register("stageHuxerUI${capitalizedBuildType}Resources", Sync) {
+        dependsOn verificationTask
+        from { resolveResourcePackage() ?: [] }
+        into assetsDirectory
+    }
+    tasks.matching { it.name == "merge${capitalizedBuildType}Assets" }.configureEach {
+        dependsOn stagingTask
+    }
+    // Lint's vital analysis consumes the staged assets but Gradle cannot
+    // infer the dependency from the dynamic asset dir; declare it explicitly so
+    // release builds (which run lint vital) do not fail the implicit-dependency
+    // validation.
+    tasks.matching {
+        it.name == "generate${capitalizedBuildType}LintVitalReportModel" ||
+            it.name == "lintVitalAnalyze${capitalizedBuildType}"
+    }.configureEach {
+        dependsOn stagingTask
+    }
+}
+
+registerHuxerUIResourceStaging("debug", huxeruiDebugResourceRoot, huxeruiDebugAssets)
+registerHuxerUIResourceStaging("release", huxeruiReleaseResourceRoot, huxeruiReleaseAssets)
+
+// Strip debug/static symbols from the release shared libraries. The custom
+// Termux toolchain bypasses the NDK's default strip step, so the packaged
+// libs carried ~37MB of debug info each. Run NDK llvm-strip on the merged
+// release libs before packaging.
+tasks.matching { it.name == "stripReleaseDebugSymbols" }.configureEach {
+    // AGP's built-in strip invokes the NDK llvm-strip symlink, which Gradle
+    // mis-executes as a shell script on Termux ("Syntax error"). AGP then
+    // packages the unstripped libs. Strip the task's own output directory
+    // with the Termux llvm-strip (a real ELF tool) so the packaged libs are
+    // actually stripped.
+    doLast {
+        def termuxStrip = new File("/data/data/com.termux/files/usr/bin/llvm-strip")
+        def strip = termuxStrip.isFile() ? termuxStrip : null
+        if (strip == null) {
+            throw new GradleException("llvm-strip not found under Termux")
+        }
+        def libDir = layout.buildDirectory.dir(
+            "intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out/lib").get().asFile
+        if (!libDir.isDirectory()) {
+            return
+        }
+        libDir.listFiles()?.each { abiDir ->
+            abiDir.listFiles()?.each { lib ->
+                if (lib.name.endsWith(".so")) {
+                    def result = exec {
+                        commandLine strip.absolutePath, "--strip-all", lib.absolutePath
+                    }
+                    if (result.exitValue != 0) {
+                        throw new GradleException("strip failed: ${lib}")
+                    }
+                }
+            }
+        }
+    }
+}
