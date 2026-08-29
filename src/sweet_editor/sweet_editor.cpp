@@ -853,34 +853,6 @@ private:
   TextOffset composition_end_{-1};
 };
 
-// ---- Input modifier (attaches the text input client to the editor node) ----
-struct SweetEditorInputModifier {
-  std::shared_ptr<SweetEditorTextInputClient> client;
-
-  struct Extension : NodeExtension {
-    explicit Extension(MountedNode& node, const SweetEditorInputModifier& modifier) : client_(modifier.client) {
-      static_cast<void>(node);
-    }
-
-    void Update(MountedNode& node, const SweetEditorInputModifier& modifier) {
-      static_cast<void>(node);
-      client_ = modifier.client;
-    }
-
-    std::shared_ptr<TextInputClient> GetTextInputClient() noexcept override {
-      return client_;
-    }
-
-    TextSelectionClient* GetTextSelectionClient() noexcept override {
-      return client_.get();
-    }
-
-    std::shared_ptr<SweetEditorTextInputClient> client_;
-  };
-
-  bool operator==(const SweetEditorInputModifier&) const = default;
-};
-
 // ---- Editor holder ---------------------------------------------------------
 class EditorHolder {
 public:
@@ -1506,6 +1478,14 @@ public:
 
   std::shared_ptr<SweetEditorTextInputClient> TextInputClient() const {
     return text_input_client_;
+  }
+
+  void SetPaintInvalidation(std::function<void()> invalidate) {
+    invalidate_ = std::move(invalidate);
+  }
+
+  bool HasPendingAnimation() const noexcept {
+    return animation_pending_;
   }
 
   // ---- Editor event bus (reference EditorEventBus) -------------------------
