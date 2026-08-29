@@ -2658,6 +2658,64 @@ struct SweetEditorBehavior {
   };
 };
 
+View SweetEditorSearchBar(
+    State<std::string> search_text,
+    State<std::string> replace_text,
+    State<bool> visible,
+    const std::shared_ptr<SearchBridge>& bridge
+) {
+  return Column {
+    Row {
+      TextField(TextEditingValue::FromText(search_text.Get()))
+          .Placeholder("Find")
+          .OnChanged([search_text, bridge](const TextEditingValue& value) {
+            search_text = value.text;
+            if (bridge->run_search) {
+              bridge->run_search(value.text);
+            }
+          })
+          .OnSubmitted([bridge] {
+            if (bridge->find_next) {
+              bridge->find_next();
+            }
+          })
+          .With(Grow{}),
+      Button("Prev").OnClick([bridge] {
+        if (bridge->find_previous) {
+          bridge->find_previous();
+        }
+      }),
+      Button("Next").OnClick([bridge] {
+        if (bridge->find_next) {
+          bridge->find_next();
+        }
+      }),
+      Button("Close").OnClick([visible, bridge] {
+        if (bridge->close) {
+          bridge->close();
+        }
+        visible = false;
+      }),
+    }.With(Spacing(4.0F), Padding(4.0F)),
+    Row {
+      TextField(TextEditingValue::FromText(replace_text.Get()))
+          .Placeholder("Replace")
+          .OnChanged([replace_text](const TextEditingValue& value) { replace_text = value.text; })
+          .With(Grow{}),
+      Button("Replace").OnClick([replace_text, bridge] {
+        if (bridge->replace_current) {
+          bridge->replace_current(replace_text.Get());
+        }
+      }),
+      Button("All").OnClick([replace_text, bridge] {
+        if (bridge->replace_all) {
+          bridge->replace_all(replace_text.Get());
+        }
+      }),
+    }.With(Spacing(4.0F), Padding(4.0F)),
+  }.With(CrossAlign(CrossAxisAlignment::Stretch));
+}
+
 [[huxerui::scope]]
 View SweetEditor(SweetEditorOptions options) {
   TextMeasurer& measurer = UseTextMeasurer();
@@ -2679,54 +2737,7 @@ View SweetEditor(SweetEditorOptions options) {
     return editor;
   }
   return Column {
-    Row {
-      TextField(TextEditingValue::FromText(search_text.Get()))
-          .Placeholder("Find")
-          .OnChanged([search_text, search_bridge](const TextEditingValue& value) {
-            search_text = value.text;
-            if (search_bridge->run_search) {
-              search_bridge->run_search(value.text);
-            }
-          })
-          .OnSubmitted([search_bridge] {
-            if (search_bridge->find_next) {
-              search_bridge->find_next();
-            }
-          })
-          .With(Grow{}),
-      Button("Prev").OnClick([search_bridge] {
-        if (search_bridge->find_previous) {
-          search_bridge->find_previous();
-        }
-      }),
-      Button("Next").OnClick([search_bridge] {
-        if (search_bridge->find_next) {
-          search_bridge->find_next();
-        }
-      }),
-      Button("Close").OnClick([search_visible, search_bridge] {
-        if (search_bridge->close) {
-          search_bridge->close();
-        }
-        search_visible = false;
-      }),
-    }.With(Spacing(4.0F), Padding(4.0F)),
-    Row {
-      TextField(TextEditingValue::FromText(replace_text.Get()))
-          .Placeholder("Replace")
-          .OnChanged([replace_text](const TextEditingValue& value) { replace_text = value.text; })
-          .With(Grow{}),
-      Button("Replace").OnClick([replace_text, search_bridge] {
-        if (search_bridge->replace_current) {
-          search_bridge->replace_current(replace_text.Get());
-        }
-      }),
-      Button("All").OnClick([replace_text, search_bridge] {
-        if (search_bridge->replace_all) {
-          search_bridge->replace_all(replace_text.Get());
-        }
-      }),
-    }.With(Spacing(4.0F), Padding(4.0F)),
+    SweetEditorSearchBar(search_text, replace_text, search_visible, search_bridge),
     editor,
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
 }
