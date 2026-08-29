@@ -2542,23 +2542,49 @@ private:
   se::ScrollbarModel cached_scrollbar_h_;
 };
 
+struct SearchBridge {
+  std::function<void(const std::string&)> run_search;
+  std::function<void()> find_next;
+  std::function<void()> find_previous;
+  std::function<void(const std::string&)> replace_current;
+  std::function<void(const std::string&)> replace_all;
+  std::function<void()> close;
+};
+
 }  // namespace
 
 struct SweetEditorBehavior {
   huxerui::TextMeasurer* measurer = nullptr;
   SweetEditorOptions options;
   std::string syntax_json;
+  std::shared_ptr<SearchBridge> search_bridge;
 
   struct Extension final : NodeExtension {
     Extension(MountedNode& node, const SweetEditorBehavior& behavior)
         : holder_(std::make_shared<EditorHolder>(
               *behavior.measurer, behavior.options, behavior.syntax_json, [this] { InvalidatePaint(); })),
           document_key_(behavior.options.document_key) {
+      if (behavior.search_bridge) {
+        behavior.search_bridge->run_search = [this](const std::string& text) { holder_->RunSearch(text); };
+        behavior.search_bridge->find_next = [this] { holder_->FindNext(); };
+        behavior.search_bridge->find_previous = [this] { holder_->FindPrevious(); };
+        behavior.search_bridge->replace_current = [this](const std::string& text) { holder_->ReplaceCurrent(text); };
+        behavior.search_bridge->replace_all = [this](const std::string& text) { holder_->ReplaceAll(text); };
+        behavior.search_bridge->close = [this] { holder_->CloseSearch(); };
+      }
       static_cast<void>(node);
     }
 
     void Update(MountedNode& node, const SweetEditorBehavior& behavior) {
       static_cast<void>(node);
+      if (behavior.search_bridge && behavior.search_bridge->run_search == nullptr) {
+        behavior.search_bridge->run_search = [this](const std::string& text) { holder_->RunSearch(text); };
+        behavior.search_bridge->find_next = [this] { holder_->FindNext(); };
+        behavior.search_bridge->find_previous = [this] { holder_->FindPrevious(); };
+        behavior.search_bridge->replace_current = [this](const std::string& text) { holder_->ReplaceCurrent(text); };
+        behavior.search_bridge->replace_all = [this](const std::string& text) { holder_->ReplaceAll(text); };
+        behavior.search_bridge->close = [this] { holder_->CloseSearch(); };
+      }
       if (behavior.options.document_key != document_key_) {
         document_key_ = behavior.options.document_key;
         holder_ = std::make_shared<EditorHolder>(
@@ -2642,11 +2668,12 @@ View SweetEditor(SweetEditorOptions options) {
   auto search_visible = UseState(false);
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
+  auto search_bridge = std::make_shared<SearchBridge>();
   if (!options.on_toggle_search) {
     options.on_toggle_search = [search_visible] { search_visible = !search_visible.Get(); };
   }
   View editor = Canvas([](PaintContext&, Size) {}).With(
-      SweetEditorBehavior{&measurer, std::move(options), syntax_json}, Focusable{}, Grow{}
+      SweetEditorBehavior{&measurer, std::move(options), syntax_json, search_bridge}, Focusable{}, Grow{}
   );
   if (!search_visible.Get()) {
     return editor;
@@ -2655,12 +2682,50 @@ View SweetEditor(SweetEditorOptions options) {
     Row {
       TextField(TextEditingValue::FromText(search_text.Get()))
           .Placeholder("Find")
-          .OnChanged([search_text](const TextEditingValue& value) { search_text = value.text; })
+          .OnChanged([search_text, search_bridge](const TextEditingValue& value) {
+            search_text = value.text;
+            if (search_bridge->run_search) {
+              search_bridge->run_search(value.text);
+            }
+          })
+          .OnSubmitted([search_bridge] {
+            if (search_bridge->find_next) {
+              search_bridge->find_next();
+            }
+          })
           .With(Grow{}),
-      Button("Close").OnClick([search_visible] { search_visible = false; }),
+      Button("Prev").OnClick([search_bridge] {
+        if (search_bridge->find_previous) {
+          search_bridge->find_previous();
+        }
+      }),
+      Button("Next").OnClick([search_bridge] {
+        if (search_bridge->find_next) {
+          search_bridge->find_next();
+        }
+      }),
+      Button("Close").OnClick([search_visible, search_bridge] {
+        if (search_bridge->close) {
+          search_bridge->close();
+        }
+        search_visible = false;
+      }),
     }.With(Spacing(4.0F), Padding(4.0F)),
     Row {
-      TextField(TextEditingValue::FromText(replace_text.Get())).Placeholder("Replace").With(Grow{}),
+      TextField(TextEditingValue::FromText(replace_text.Get()))
+          .Placeholder("Replace")
+          .OnChanged([replace_text](const TextEditingValue& value) { replace_text = value.text; })
+          .With(Grow{}),
+      Button("Replace").OnClick([replace_text, search_bridge] {
+        if (search_bridge->replace_current) {
+          search_bridge->replace_current(replace_text.Get());
+        }
+      }),
+      Button("All").OnClick([replace_text, search_bridge] {
+        if (search_bridge->replace_all) {
+          search_bridge->replace_all(replace_text.Get());
+        }
+      }),
     }.With(Spacing(4.0F), Padding(4.0F)),
     editor,
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
