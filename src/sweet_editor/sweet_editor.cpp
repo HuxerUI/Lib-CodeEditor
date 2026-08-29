@@ -2639,7 +2639,7 @@ View SweetEditor(SweetEditorOptions options) {
   auto search_visible = UseState(false);
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
-  View editor = Spacer().With(
+  View editor = Canvas([](PaintContext&, Size) {}).With(
       SweetEditorBehavior{&measurer, std::move(options), syntax_json}, Focusable{}, Grow{}
   );
   if (!search_visible.Get()) {
