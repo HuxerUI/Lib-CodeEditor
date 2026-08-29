@@ -2564,7 +2564,7 @@ private:
 }  // namespace
 
 struct SweetEditorBehavior {
-  TextMeasurer* measurer = nullptr;
+  huxerui::TextMeasurer* measurer = nullptr;
   SweetEditorOptions options;
   std::string syntax_json;
 
