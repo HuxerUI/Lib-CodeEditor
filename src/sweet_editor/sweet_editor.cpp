@@ -1457,14 +1457,7 @@ public:
     return result.needs_redraw;
   }
 
-  void SetFocused(bool focused) {
-    focused_ = focused;
-    if (!focused) {
-      blink_on_ = true;
-    }
-  }
-
-  // Toggled by the blink task; schedules a repaint (not a model rebuild).
+  // Toggled by the legacy host path; retained frame scheduling now owns blinking.
   void TickBlink() {
     if (!focused_) {
       blink_on_ = true;
@@ -1480,24 +1473,12 @@ public:
     return text_input_client_;
   }
 
-  void SetPaintInvalidation(std::function<void()> invalidate) {
-    invalidate_ = std::move(invalidate);
-  }
-
-  bool HasPendingAnimation() const noexcept {
-    return animation_pending_;
-  }
-
   bool IsFocused() const noexcept {
     return focused_;
   }
 
   bool HasActiveAnimation() const noexcept {
     return animation_pending_;
-  }
-
-  void SetInvalidate(std::function<void()> invalidate) {
-    invalidate_ = std::move(invalidate);
   }
 
   bool AdvanceFrame(double timestamp) {
@@ -2597,10 +2578,7 @@ struct SweetEditorBehavior {
       if (changed) {
         InvalidatePaint();
       }
-      if (event.type == PointerEventType::Down) {
-        return PointerResult::Capture;
-      }
-      return changed ? PointerResult::Handled : PointerResult::Observe;
+      return changed ? PointerResult::Handled : PointerResult::Ignored;
     }
 
     void OnKey(MountedNode& node, const KeyEvent& event) override {
@@ -2661,10 +2639,6 @@ View SweetEditor(SweetEditorOptions options) {
   auto search_visible = UseState(false);
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
-  if (!options.on_toggle_search) {
-    options.on_toggle_search = [search_visible] { search_visible = !search_visible.Get(); };
-  }
-
   View editor = Spacer().With(
       SweetEditorBehavior{&measurer, std::move(options), syntax_json}, Focusable{}, Grow{}
   );
