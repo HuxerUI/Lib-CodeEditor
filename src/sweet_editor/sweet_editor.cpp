@@ -2578,6 +2578,9 @@ struct SweetEditorBehavior {
       if (changed) {
         InvalidatePaint();
       }
+      if (event.type == PointerEventType::Down) {
+        return PointerResult::Capture;
+      }
       return changed ? PointerResult::Handled : PointerResult::Ignored;
     }
 
@@ -2639,6 +2642,9 @@ View SweetEditor(SweetEditorOptions options) {
   auto search_visible = UseState(false);
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
+  if (!options.on_toggle_search) {
+    options.on_toggle_search = [search_visible] { search_visible = !search_visible.Get(); };
+  }
   View editor = Canvas([](PaintContext&, Size) {}).With(
       SweetEditorBehavior{&measurer, std::move(options), syntax_json}, Focusable{}, Grow{}
   );
