@@ -2571,12 +2571,20 @@ struct SweetEditorBehavior {
   struct Extension final : NodeExtension {
     Extension(MountedNode& node, const SweetEditorBehavior& behavior)
         : holder_(std::make_shared<EditorHolder>(
-              *behavior.measurer, behavior.options, behavior.syntax_json, [this] { InvalidatePaint(); })) {
+              *behavior.measurer, behavior.options, behavior.syntax_json, [this] { InvalidatePaint(); })),
+          document_key_(behavior.options.document_key) {
       static_cast<void>(node);
     }
 
     void Update(MountedNode& node, const SweetEditorBehavior& behavior) {
       static_cast<void>(node);
+      if (behavior.options.document_key != document_key_) {
+        document_key_ = behavior.options.document_key;
+        holder_ = std::make_shared<EditorHolder>(
+            *behavior.measurer, behavior.options, behavior.syntax_json, [this] { InvalidatePaint(); }
+        );
+        return;
+      }
       if (behavior.options.original_text != holder_->CurrentDiffOriginal()) {
         holder_->SetDiffOriginal(behavior.options.original_text);
       }
@@ -2639,6 +2647,7 @@ struct SweetEditorBehavior {
     }
 
     std::shared_ptr<EditorHolder> holder_;
+    std::string document_key_;
   };
 };
 
