@@ -189,9 +189,9 @@ struct SweetEditorOptions {
 
 // A HuxerUI code editor backed by the SweetEditor core (3dparty/SweetEditor).
 //
-// The component owns one SweetEditor EditorCore, bridges text measurement to
-// HuxerUI's platform measurer, renders the EditorRenderModel through a Canvas,
-// and forwards pointer and keyboard events into the core.
+// The component owns one retained SweetEditor EditorCore extension, bridges text
+// measurement to HuxerUI's platform measurer, renders the EditorRenderModel
+// through the extension paint phase, and forwards input events into the core.
 huxerui::View SweetEditor(SweetEditorOptions options = {});
 
 }  // namespace sweetedit_huxer
