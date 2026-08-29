@@ -1481,6 +1481,10 @@ public:
     return animation_pending_;
   }
 
+  bool HasPendingPaintWork() const noexcept {
+    return model_dirty_ || decorations_pending_;
+  }
+
   bool AdvanceFrame(double timestamp) {
     bool changed = false;
     if (animation_pending_) {
@@ -1565,13 +1569,21 @@ public:
   // Applies phantom (ghost) text for the visible lines (reference phantom text
   // decoration / copilot inline suggestion preview). Returns true when the
   // published phantom set changed (model rebuild required).
-  bool ApplyPhantomTexts(uint32_t start_line, uint32_t end_line) {
+  bool ApplyPhantomTexts(int32_t start_line, int32_t end_line) {
+    if (start_line < 0 || end_line < start_line) {
+      return false;
+    }
     std::map<uint32_t, std::string> next;
     if (phantom_text_provider_) {
-      for (uint32_t line = start_line; line <= end_line; ++line) {
-        const std::string text = phantom_text_provider_(line);
+      for (int32_t line = start_line;; ++line) {
+        const uint32_t document_line = static_cast<uint32_t>(line);
+        const std::string text = phantom_text_provider_(document_line);
         if (!text.empty()) {
-          next[line] = text;
+          next[document_line] = text;
+        }
+        // Inclusive ranges must terminate explicitly: INT32_MAX + 1 overflows.
+        if (line == end_line) {
+          break;
         }
       }
     }
@@ -1774,8 +1786,8 @@ public:
     cached_scrollbar_v_ = model.vertical_scrollbar;
     cached_scrollbar_h_ = model.horizontal_scrollbar;
 
-    if (!decorations_pending_ && (phantom_text_provider_ || !cached_phantom_.empty())) {
-      if (ApplyPhantomTexts(static_cast<uint32_t>(visible.start), static_cast<uint32_t>(visible.end))) {
+    if (!visible.isEmpty() && !decorations_pending_ && (phantom_text_provider_ || !cached_phantom_.empty())) {
+      if (ApplyPhantomTexts(visible.start, visible.end)) {
         model_dirty_ = true;
       }
     }
@@ -2629,8 +2641,11 @@ struct SweetEditorBehavior {
       if (changed) {
         InvalidatePaint();
       }
-      if (holder_->HasActiveAnimation() || holder_->IsFocused()) {
-        return {.needs_frame = true, .wake_after = 0.5};
+      if (holder_->HasActiveAnimation() || holder_->HasPendingPaintWork()) {
+        return {.needs_frame = true};
+      }
+      if (holder_->IsFocused()) {
+        return {.wake_after = 0.5};
       }
       return {};
     }
