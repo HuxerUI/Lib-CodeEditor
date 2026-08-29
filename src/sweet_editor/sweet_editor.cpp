@@ -1488,6 +1488,46 @@ public:
     return animation_pending_;
   }
 
+  bool IsFocused() const noexcept {
+    return focused_;
+  }
+
+  bool HasActiveAnimation() const noexcept {
+    return animation_pending_;
+  }
+
+  void SetInvalidate(std::function<void()> invalidate) {
+    invalidate_ = std::move(invalidate);
+  }
+
+  bool AdvanceFrame(double timestamp) {
+    bool changed = false;
+    if (animation_pending_) {
+      const se::EditorActionResult result = core_->tickAnimations();
+      if (result.needs_redraw || result.scroll_changed || result.animation_flags != 0) {
+        model_dirty_ = true;
+        changed = true;
+      }
+      animation_pending_ = result.needsAnimation();
+    }
+    if (focused_ && (last_blink_timestamp_ < 0.0 || timestamp - last_blink_timestamp_ >= 0.5)) {
+      blink_on_ = !blink_on_;
+      last_blink_timestamp_ = timestamp;
+      changed = true;
+    }
+    return changed;
+  }
+
+  void SetFocused(bool focused) {
+    focused_ = focused;
+    if (!focused) {
+      blink_on_ = true;
+    }
+    if (invalidate_) {
+      invalidate_();
+    }
+  }
+
   // ---- Editor event bus (reference EditorEventBus) -------------------------
 
   void FireCaretEvents() {
@@ -1707,24 +1747,6 @@ public:
       // A viewport change (e.g. IME insets resizing the editor) invalidates the
       // visible range and scrollbar geometry; force a rebuild.
       model_dirty_ = true;
-    }
-
-    // Drive core-managed animations (fling momentum, edge scroll): each frame
-    // advances the animation clock; while an animation is active the frame is
-    // kept dirty and a repaint is scheduled, matching the reference platform's
-    // Choreographer-driven tick loop.
-    if (animation_pending_) {
-      const se::EditorActionResult animation = core_->tickAnimations();
-      if (animation.needs_redraw || animation.scroll_changed || animation.animation_flags != 0) {
-        model_dirty_ = true;
-      }
-      if (animation.needsAnimation()) {
-        if (invalidate_) {
-          invalidate_();
-        }
-      } else {
-        animation_pending_ = false;
-      }
     }
 
     // Rebuild the render model only when the core state changed (input, scroll,
@@ -2525,6 +2547,7 @@ private:
 
   bool focused_{false};
   bool blink_on_{true};
+  double last_blink_timestamp_{-1.0};
   // Core-managed animations (fling momentum / edge scroll) are pending.
   bool animation_pending_{false};
   se::EditorRenderModel cached_model_;
@@ -2540,127 +2563,115 @@ private:
 
 }  // namespace
 
+struct SweetEditorBehavior {
+  TextMeasurer* measurer = nullptr;
+  SweetEditorOptions options;
+  std::string syntax_json;
+
+  struct Extension final : NodeExtension {
+    Extension(MountedNode& node, const SweetEditorBehavior& behavior)
+        : holder_(std::make_shared<EditorHolder>(
+              *behavior.measurer, behavior.options, behavior.syntax_json, [this] { InvalidatePaint(); })) {
+      static_cast<void>(node);
+    }
+
+    void Update(MountedNode& node, const SweetEditorBehavior& behavior) {
+      static_cast<void>(node);
+      if (behavior.options.original_text != holder_->CurrentDiffOriginal()) {
+        holder_->SetDiffOriginal(behavior.options.original_text);
+      }
+      holder_->SyncDisplayOptions(behavior.options.wrap_mode, behavior.options.sticky_gutter);
+    }
+
+    PointerResult OnPointer(MountedNode& node, const PointerEvent& event) override {
+      static_cast<void>(node);
+      const bool changed = holder_->HandlePointer(event);
+      if (changed) {
+        InvalidatePaint();
+      }
+      if (event.type == PointerEventType::Down) {
+        return PointerResult::Capture;
+      }
+      return changed ? PointerResult::Handled : PointerResult::Observe;
+    }
+
+    void OnKey(MountedNode& node, const KeyEvent& event) override {
+      static_cast<void>(node);
+      if (holder_->HandleKey(event)) {
+        InvalidatePaint();
+      }
+    }
+
+    void OnFocusChanged(MountedNode& node, bool focused) override {
+      static_cast<void>(node);
+      holder_->SetFocused(focused);
+      InvalidatePaint();
+    }
+
+    FrameResult OnFrame(MountedNode& node, const FrameInfo& frame) override {
+      static_cast<void>(node);
+      const bool changed = holder_->AdvanceFrame(frame.timestamp);
+      if (changed) {
+        InvalidatePaint();
+      }
+      if (holder_->HasActiveAnimation() || holder_->IsFocused()) {
+        return {.needs_frame = true, .wake_after = 0.5};
+      }
+      return {};
+    }
+
+    void Paint(const MountedNode& node, PaintContext& context) const override {
+      holder_->Render(context, node.LayoutSize());
+    }
+
+    std::shared_ptr<TextInputClient> GetTextInputClient() noexcept override {
+      return holder_->TextInputClient();
+    }
+
+    TextSelectionClient* GetTextSelectionClient() noexcept override {
+      return holder_->TextInputClient().get();
+    }
+
+    bool HitTest(MountedNode& node, Point position) const override {
+      const Rect bounds = node.Bounds();
+      return position.x >= bounds.x && position.x <= bounds.x + bounds.width &&
+             position.y >= bounds.y && position.y <= bounds.y + bounds.height;
+    }
+
+    std::shared_ptr<EditorHolder> holder_;
+  };
+};
+
+[[huxerui::scope]]
 View SweetEditor(SweetEditorOptions options) {
-  auto holder_state = UseState<std::shared_ptr<EditorHolder>>(nullptr);
-  auto revision = UseState(0);
-  auto loaded_key = UseState<std::string>(std::string(options.document_key));
-  // Hooks must be called unconditionally on every recomposition with a stable
-  // order; calling UseTextMeasurer/UseRawResource only inside the rebuild
-  // branch shifts state slots when the document key changes and crashes.
   TextMeasurer& measurer = UseTextMeasurer();
   const RawAsset cpp_syntax = UseRawResource(RawResource("app", "raw/syntaxes/cpp.json"));
-  // Find/replace bar state (hooks must stay unconditional across recomposes).
+  const std::string syntax_json = options.syntax_json.empty() ? cpp_syntax.ToString() : options.syntax_json;
+
+  // Search is composed outside the retained editor node; the editor itself only owns editing semantics.
   auto search_visible = UseState(false);
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
-
-  if (!holder_state.Get() || loaded_key.Get() != options.document_key) {
-    loaded_key = options.document_key;
-    const std::string syntax_json =
-        !options.syntax_json.empty() ? options.syntax_json : cpp_syntax.ToString();
-    if (!options.on_toggle_search) {
-      options.on_toggle_search = [search_visible] { search_visible = !search_visible.Get(); };
-    }
-    holder_state = std::make_shared<EditorHolder>(
-        measurer, options, syntax_json, [revision] { revision += 1; });
+  if (!options.on_toggle_search) {
+    options.on_toggle_search = [search_visible] { search_visible = !search_visible.Get(); };
   }
 
-  const std::shared_ptr<EditorHolder> holder = holder_state.Get();
-  // Read the revision so this scope recomposes (and repaints) after every input.
-  static_cast<void>(revision.Get());
-  // Diff toggle: the host changes options.original_text without a new
-  // document_key, so sync it into the holder (keeps live edits intact).
-  if (options.original_text != holder->CurrentDiffOriginal()) {
-    holder->SetDiffOriginal(options.original_text);
-  }
-  // Display toggles (wrap / sticky gutter) change without a rebuild.
-  holder->SyncDisplayOptions(options.wrap_mode, options.sticky_gutter);
-
-  // Cursor blink driven by a recurring delayed task: repaint-only frames have
-  // no next tick, so a phase check inside Render would never blink. The task
-  // toggles visibility every 500 ms; failures are swallowed so a broken task
-  // cannot blank the app.
-  auto blink_launched = UseState(false);
-  if (!blink_launched.Get()) {
-    blink_launched = true;
-    try {
-      TaskScope tasks = UseTaskScope();
-      // Retain the handle through state so the recurring task stays alive.
-      static_cast<void>(UseState<huxerui::TaskHandle>(tasks.Launch([holder]() -> Task<void> {
-        while (true) {
-          co_await Delay(500ms);
-          holder->TickBlink();
-        }
-      })));
-    } catch (const std::exception&) {
-      // No task dispatcher (e.g. headless platform): fall back to a static caret.
-    }
-  }
-
-  View editor = Canvas([holder](PaintContext& paint, Size size) { holder->Render(paint, size); })
-      .On<ViewEvents::PointerDown>([holder, revision](const PointerEvent& event) {
-        if (holder->HandlePointer(event)) {
-          revision += 1;
-        }
-      })
-      .On<ViewEvents::PointerMove>([holder, revision](const PointerEvent& event) {
-        if (holder->HandlePointer(event)) {
-          revision += 1;
-        }
-      })
-      .On<ViewEvents::PointerUp>([holder, revision](const PointerEvent& event) {
-        if (holder->HandlePointer(event)) {
-          revision += 1;
-        }
-      })
-      .On<ViewEvents::PointerCancel>([holder, revision](const PointerEvent& event) {
-        if (holder->HandlePointer(event)) {
-          revision += 1;
-        }
-      })
-      .On<ViewEvents::KeyDown>([holder, revision](const KeyEvent& event) {
-        if (holder->HandleKey(event)) {
-          revision += 1;
-        }
-      })
-      .On<ViewEvents::Scroll>([holder, revision](const ScrollEvent& event) {
-        if (holder->HandleScroll(event)) {
-          revision += 1;
-        }
-      })
-      .On<ViewEvents::FocusChanged>([holder](bool focused) { holder->SetFocused(focused); })
-      .With(SweetEditorInputModifier{holder->TextInputClient()}, Focusable{}, Grow{});
-
+  View editor = Spacer().With(
+      SweetEditorBehavior{&measurer, std::move(options), syntax_json}, Focusable{}, Grow{}
+  );
   if (!search_visible.Get()) {
     return editor;
   }
-
   return Column {
     Row {
       TextField(TextEditingValue::FromText(search_text.Get()))
           .Placeholder("Find")
-          .OnChanged([search_text, holder](const TextEditingValue& value) {
-            search_text = value.text;
-            holder->RunSearch(value.text);
-          })
-          .OnSubmitted([holder] { holder->FindNext(); })
+          .OnChanged([search_text](const TextEditingValue& value) { search_text = value.text; })
           .With(Grow{}),
-      Button("Prev").On<ViewEvents::Click>([holder] { holder->FindPrevious(); }),
-      Button("Next").On<ViewEvents::Click>([holder] { holder->FindNext(); }),
+      Button("Close").OnClick([search_visible] { search_visible = false; }),
     }.With(Spacing(4.0F), Padding(4.0F)),
     Row {
-      TextField(TextEditingValue::FromText(replace_text.Get()))
-          .Placeholder("Replace")
-          .OnChanged([replace_text](const TextEditingValue& value) { replace_text = value.text; })
-          .With(Grow{}),
-      Button("Replace").On<ViewEvents::Click>([holder, replace_text] {
-        holder->ReplaceCurrent(replace_text.Get());
-      }),
-      Button("All").On<ViewEvents::Click>([holder, replace_text] { holder->ReplaceAll(replace_text.Get()); }),
-      Button("Close").On<ViewEvents::Click>([search_visible, holder] {
-        holder->CloseSearch();
-        search_visible = false;
-      }),
+      TextField(TextEditingValue::FromText(replace_text.Get())).Placeholder("Replace").With(Grow{}),
     }.With(Spacing(4.0F), Padding(4.0F)),
     editor,
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
