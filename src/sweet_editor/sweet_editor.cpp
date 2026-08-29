@@ -2747,14 +2747,14 @@ View SweetEditor(SweetEditorOptions options) {
     editor_options.on_toggle_search = [search_visible] { search_visible = !search_visible.Get(); };
   }
   View editor = Canvas([](PaintContext&, Size) {}).With(
-      SweetEditorBehavior{&measurer, std::move(editor_options), syntax_json, search_bridge}, Focusable{}, Grow{}
+      SweetEditorBehavior{&measurer, std::move(editor_options), syntax_json, search_bridge}, Focusable{}
   );
   if (!search_visible.Get()) {
     return editor;
   }
   return Column {
     SweetEditorSearchBar(search_text, replace_text, search_visible, search_bridge),
-    editor,
+    std::move(editor).With(Grow{}),
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
 }
 

@@ -400,7 +400,7 @@ View App() {
             .With(Padding(4.0F))
     );
   }
-  children.push_back(sweetedit_huxer::SweetEditor(options));
+  children.push_back(sweetedit_huxer::SweetEditor(options).With(Grow{}));
   children.push_back(Row {
     Text(cursor_status.Get()).Style(TextStyle{Font::Monospace(12.0F), Color::Rgb(31, 35, 40), TextDecoration::None}),
     Text(selection_status.Get()).Style(TextStyle{Font::Monospace(12.0F), Color::Rgb(31, 35, 40), TextDecoration::None}),
