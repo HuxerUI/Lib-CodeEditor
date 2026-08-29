@@ -2727,11 +2727,12 @@ View SweetEditor(SweetEditorOptions options) {
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
   auto search_bridge = std::make_shared<SearchBridge>();
-  if (!options.on_toggle_search) {
-    options.on_toggle_search = [search_visible] { search_visible = !search_visible.Get(); };
+  SweetEditorOptions editor_options = std::move(options);
+  if (!editor_options.on_toggle_search) {
+    editor_options.on_toggle_search = [search_visible] { search_visible = !search_visible.Get(); };
   }
   View editor = Canvas([](PaintContext&, Size) {}).With(
-      SweetEditorBehavior{&measurer, std::move(options), syntax_json, search_bridge}, Focusable{}, Grow{}
+      SweetEditorBehavior{&measurer, std::move(editor_options), syntax_json, search_bridge}, Focusable{}, Grow{}
   );
   if (!search_visible.Get()) {
     return editor;
