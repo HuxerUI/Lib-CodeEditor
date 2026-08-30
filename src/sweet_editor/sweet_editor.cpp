@@ -1198,6 +1198,54 @@ public:
     }
   }
 
+  // Builds the multi-touch GestureEvent for the current pointer event. Touch
+  // pointers are aggregated in press order so a two-finger move reaches the
+  // core as a two-point TOUCH_MOVE and is recognized as SCALE (pinch zoom).
+  se::GestureEvent BuildTouchGestureEvent(const PointerEvent& event) {
+    se::GestureEvent out;
+    out.modifiers = se::KeyModifier::NONE;
+    const se::PointF point{event.position.x, event.position.y};
+    switch (event.type) {
+    case PointerEventType::Down: {
+      const bool first_pointer = active_pointers_.empty();
+      auto found = std::find_if(active_pointers_.begin(), active_pointers_.end(),
+                                [&](const auto& entry) { return entry.first == event.pointer_id; });
+      if (found == active_pointers_.end()) {
+        active_pointers_.emplace_back(event.pointer_id, point);
+      } else {
+        found->second = point;
+      }
+      out.type = first_pointer ? se::EventType::TOUCH_DOWN : se::EventType::TOUCH_POINTER_DOWN;
+      break;
+    }
+    case PointerEventType::Move: {
+      for (auto& entry : active_pointers_) {
+        if (entry.first == event.pointer_id) {
+          entry.second = point;
+          break;
+        }
+      }
+      out.type = se::EventType::TOUCH_MOVE;
+      break;
+    }
+    case PointerEventType::Up:
+    case PointerEventType::Cancel: {
+      active_pointers_.erase(std::remove_if(active_pointers_.begin(), active_pointers_.end(),
+                                            [&](const auto& entry) { return entry.first == event.pointer_id; }),
+                             active_pointers_.end());
+      out.type = active_pointers_.empty() ? se::EventType::TOUCH_UP : se::EventType::TOUCH_POINTER_UP;
+      break;
+    }
+    }
+    for (const auto& entry : active_pointers_) {
+      out.points.push_back(entry.second);
+    }
+    if (out.points.empty()) {
+      out.points.push_back(point);
+    }
+    return out;
+  }
+
   bool HandlePointer(const PointerEvent& event) {
     if (event.type == PointerEventType::Down) {
       suppress_focus_on_up_ = false;
@@ -1243,7 +1291,9 @@ public:
       DismissCompletion();
     }
     try {
-      const se::EditorActionResult result = core_->handleGestureEvent(ToGestureEvent(event));
+      const bool touch = event.device_kind == PointerDeviceKind::Touch;
+      const se::EditorActionResult result =
+          core_->handleGestureEvent(touch ? BuildTouchGestureEvent(event) : ToGestureEvent(event));
       if (result.selection_changed || result.cursor_changed) {
         text_input_client_->NotifySelectionChanged();
         highlighter_->RefreshBracketMatch(*core_);
@@ -2530,6 +2580,11 @@ private:
     std::vector<ContextMenuEntry> entries;
   };
   ContextMenuState context_menu_;
+
+  // Active touch pointers (pointer_id -> position) in press order. The editor
+  // aggregates multi-touch into one multi-point SweetEditor GestureEvent so the
+  // core can recognize two-finger pinch-to-zoom.
+  std::vector<std::pair<std::int64_t, se::PointF>> active_pointers_;
 
   bool focused_{false};
   bool blink_on_{true};
