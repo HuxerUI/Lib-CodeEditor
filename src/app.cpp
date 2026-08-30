@@ -1,6 +1,7 @@
 #include <huxerui/huxerui.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 
 #include "sweet_editor/sweet_editor.h"
@@ -227,26 +228,164 @@ const char* kCppDemoText =
     "  return static_cast<int>(area);\n"
     "}\n";
 
-View App() {
-  // The runtime applies SafeAreaPadding to the application root. A plain
-  // container (not the editor canvas) consumes it, so the canvas becomes a
-  // child whose event coordinates are mapped into its local space and stay
-  // aligned with its paint coordinates (on edge-to-edge Android the root
-  // would otherwise consume the status-bar inset and shift tap hit-testing).
-  auto current_file = UseState(0);
-  // Diff presentation toggle: when on, the editor diffs the live text against
-  // an editable comparison text (defaults to the pristine demo content).
+struct DemoDocument {
+  const char* key;
+  const char* label;
+  std::string text;
+  std::string syntax;
+};
+
+struct DemoFileSelected : Event<std::size_t> {};
+struct DiffToggleRequested : Event<> {};
+struct WrapToggleRequested : Event<> {};
+struct StickyGutterToggleRequested : Event<> {};
+struct DiffClosed : Event<> {};
+
+std::array<DemoDocument, kDemoFileCount> LoadDemoDocuments(
+    const RawAsset& cpp_syntax,
+    const RawAsset& java_syntax,
+    const RawAsset& kotlin_syntax,
+    const RawAsset& lua_syntax,
+    const RawAsset& java_file,
+    const RawAsset& kotlin_file,
+    const RawAsset& lua_file,
+    const RawAsset& gc_file
+) {
+  return {{
+      {kDemoFiles[0].key, kDemoFiles[0].label, kCppDemoText, cpp_syntax.ToString()},
+      {kDemoFiles[1].key, kDemoFiles[1].label, gc_file.ToString(), cpp_syntax.ToString()},
+      {kDemoFiles[2].key, kDemoFiles[2].label, java_file.ToString(), java_syntax.ToString()},
+      {kDemoFiles[3].key, kDemoFiles[3].label, kotlin_file.ToString(), kotlin_syntax.ToString()},
+      {kDemoFiles[4].key, kDemoFiles[4].label, lua_file.ToString(), lua_syntax.ToString()},
+  }};
+}
+
+[[huxerui::scope]]
+View DemoFileSelector(const std::array<DemoDocument, kDemoFileCount>& documents, std::size_t selected) {
+  const EventEmitter events = UseEvents();
+  const std::array<std::size_t, kDemoFileCount> indices = {0, 1, 2, 3, 4};
+  return Row {
+    ForEach(indices, [documents, selected, events](std::size_t index) {
+      return Button(documents[index].label)
+          .OnClick([events, index] { events.Emit<DemoFileSelected>(index); })
+          .Key(documents[index].key);
+    }),
+  }.With(Spacing(8.0F), Padding(8.0F));
+}
+
+[[huxerui::scope]]
+View DemoToolbar(bool diff_enabled, bool wrap_enabled, bool sticky_enabled) {
+  const EventEmitter events = UseEvents();
+  return Row {
+    Button(diff_enabled ? "Diff: On" : "Diff: Off")
+        .OnClick([events] { events.Emit<DiffToggleRequested>(); }),
+    Button(wrap_enabled ? "Wrap: On" : "Wrap: Off")
+        .OnClick([events] { events.Emit<WrapToggleRequested>(); }),
+    Button(sticky_enabled ? "Sticky: On" : "Sticky: Off")
+        .OnClick([events] { events.Emit<StickyGutterToggleRequested>(); }),
+  }.With(Spacing(8.0F), Padding(8.0F));
+}
+
+[[huxerui::scope]]
+View DemoDiffPanel(bool visible, State<std::string> original_text) {
+  if (!visible) {
+    return Spacer().With(Frame{.height = 0.0F});
+  }
+  const EventEmitter events = UseEvents();
+  return Column {
+    Row {
+      Text("Compare against:")
+          .Style(TextStyle{Font::System(12.0F), Color::Rgb(90, 96, 105), TextDecoration::None}),
+      Button("Close").OnClick([events] { events.Emit<DiffClosed>(); }),
+    }.With(Spacing(8.0F), Padding(4.0F)),
+    TextField(TextEditingValue::FromText(original_text.Get()))
+        .LineLimits(TextFieldLineLimits::MultiLine(3, 4))
+        .Placeholder("Type the original text to diff against...")
+        .OnChanged([original_text](const TextEditingValue& value) { original_text = value.text; })
+        .With(Padding(4.0F)),
+  }.With(CrossAlign(CrossAxisAlignment::Stretch));
+}
+
+View EditorStatusBar(State<std::string> cursor_status, State<std::string> selection_status) {
+  return Row {
+    Text(cursor_status).Style(TextStyle{Font::Monospace(12.0F), Color::Rgb(31, 35, 40), TextDecoration::None}),
+    Text(selection_status).Style(TextStyle{Font::Monospace(12.0F), Color::Rgb(31, 35, 40), TextDecoration::None}),
+  }.With(Spacing(16.0F), Padding(8.0F));
+}
+
+sweetedit_huxer::SweetEditorOptions MakeEditorOptions(
+    const DemoDocument& document,
+    bool diff_enabled,
+    const std::string& diff_original,
+    bool wrap_enabled,
+    bool sticky_enabled,
+    State<std::vector<uint32_t>> breakpoints,
+    State<std::string> cursor_status,
+    State<std::string> selection_status,
+    const ToastHandle& toast
+) {
+  sweetedit_huxer::SweetEditorOptions options;
+  options.initial_text = document.text;
+  options.syntax_json = document.syntax;
+  options.document_key = document.key;
+  options.completion_provider = ProvideCompletions;
+  options.completion_trigger_characters = [](const std::string& character) {
+    return character == "." || character == ":";
+  };
+  options.on_link_click = [toast](const std::string& url) { toast.Show("Link: " + url); };
+  options.on_codelens_click = [toast](int32_t command_id) {
+    toast.Show("CodeLens: " + std::to_string(command_id));
+  };
+  options.on_gutter_icon_click = [toast, breakpoints](uint32_t line, int32_t) {
+    std::vector<uint32_t> lines = breakpoints.Get();
+    const auto found = std::find(lines.begin(), lines.end(), line);
+    if (found == lines.end()) {
+      lines.push_back(line);
+      toast.Show("Breakpoint set at line " + std::to_string(line + 1));
+    } else {
+      lines.erase(found);
+      toast.Show("Breakpoint removed at line " + std::to_string(line + 1));
+    }
+    breakpoints = std::move(lines);
+  };
+  options.gutter_icon_provider = [breakpoints](uint32_t start_line, uint32_t end_line) {
+    std::vector<std::pair<uint32_t, int32_t>> icons;
+    for (uint32_t line : breakpoints.Get()) {
+      if (line >= start_line && line <= end_line) {
+        icons.emplace_back(line, 2);
+      }
+    }
+    return icons;
+  };
+  options.on_inlay_click = [toast](uint32_t line, uint32_t column) {
+    toast.Show("Inlay: " + std::to_string(line + 1) + ":" + std::to_string(column + 1));
+  };
+  options.on_cursor_changed = [cursor_status](uint32_t line, uint32_t column) {
+    cursor_status = "Ln " + std::to_string(line + 1) + ", Col " + std::to_string(column + 1);
+  };
+  options.on_selection_changed = [selection_status](uint32_t, uint32_t, uint32_t line, uint32_t column) {
+    selection_status = "Selection Ln " + std::to_string(line + 1) + ", Col " + std::to_string(column + 1);
+  };
+  options.phantom_text_provider = [](uint32_t line) {
+    return line == 0 ? std::string(" // TODO: implement") : std::string();
+  };
+  options.original_text = diff_enabled ? diff_original : std::string();
+  options.wrap_mode = wrap_enabled ? 2 : 0;
+  options.sticky_gutter = sticky_enabled;
+  return options;
+}
+
+[[huxerui::scope]]
+View SweetEditorDemo() {
+  auto current_file = UseState<std::size_t>(0);
   auto diff_enabled = UseState(false);
   auto diff_original = UseState(std::string());
-  // Display options: wrap long lines and keep the gutter fixed while scrolling
-  // horizontally (reference editor settings).
   auto wrap_enabled = UseState(false);
   auto sticky_enabled = UseState(false);
-  // Breakpoint demo: tap the gutter icon of a line to toggle a breakpoint
-  // marker (rendered as a filled circle via icon_id 2).
   auto breakpoints = UseState(std::vector<uint32_t>());
+  auto cursor_status = UseState(std::string("Ln 1, Col 1"));
+  auto selection_status = UseState(std::string());
 
-  // Load every demo syntax + file resource unconditionally (hook order stable).
   const RawAsset cpp_syntax = UseRawResource(RawResource("app", "raw/syntaxes/cpp.json"));
   const RawAsset java_syntax = UseRawResource(RawResource("app", "raw/syntaxes/java.json"));
   const RawAsset kotlin_syntax = UseRawResource(RawResource("app", "raw/syntaxes/kotlin.json"));
@@ -255,162 +394,44 @@ View App() {
   const RawAsset kotlin_file = UseRawResource(RawResource("app", "raw/files/example.kt"));
   const RawAsset lua_file = UseRawResource(RawResource("app", "raw/files/example.lua"));
   const RawAsset gc_file = UseRawResource(RawResource("app", "raw/files/gc.cpp"));
-
-  const int index = current_file.Get();
-  const std::string texts[kDemoFileCount] = {
-      kCppDemoText,
-      gc_file.ToString(),
-      java_file.ToString(),
-      kotlin_file.ToString(),
-      lua_file.ToString(),
-  };
-  const std::string syntaxes[kDemoFileCount] = {
-      cpp_syntax.ToString(),
-      cpp_syntax.ToString(),
-      java_syntax.ToString(),
-      kotlin_syntax.ToString(),
-      lua_syntax.ToString(),
-  };
-
-  sweetedit_huxer::SweetEditorOptions options;
-  options.initial_text = texts[static_cast<size_t>(index)];
-  options.syntax_json = syntaxes[static_cast<size_t>(index)];
-  options.document_key = kDemoFiles[static_cast<size_t>(index)].key;
-  options.completion_provider = ProvideCompletions;
-  options.completion_trigger_characters = [](const std::string& ch) { return ch == "." || ch == ":"; };
+  const auto documents = LoadDemoDocuments(
+      cpp_syntax, java_syntax, kotlin_syntax, lua_syntax, java_file, kotlin_file, lua_file, gc_file);
   const ToastHandle toast = UseToast();
-  options.on_link_click = [toast](const std::string& url) {
-    toast.Show("Link: " + url);
-  };
-  options.on_codelens_click = [toast](int32_t command_id) {
-    toast.Show("CodeLens: " + std::to_string(command_id));
-  };
-  options.on_gutter_icon_click = [toast, breakpoints](uint32_t line, int32_t icon_id) {
-    std::vector<uint32_t> lines = breakpoints.Get();
-    const auto found = std::find(lines.begin(), lines.end(), line);
-    if (found != lines.end()) {
-      lines.erase(found);
-      toast.Show("Breakpoint removed at line " + std::to_string(line + 1));
-    } else {
-      lines.push_back(line);
-      toast.Show("Breakpoint set at line " + std::to_string(line + 1));
-    }
-    breakpoints = std::move(lines);
-  };
-  options.gutter_icon_provider = [breakpoints](uint32_t start_line, uint32_t end_line) {
-    std::vector<std::pair<uint32_t, int32_t>> icons;
-    for (uint32_t line : breakpoints.Get()) {
-      if (line >= start_line && line <= end_line) {
-        icons.emplace_back(line, 2);  // icon_id 2 = breakpoint (filled circle)
-      }
-    }
-    return icons;
-  };
-  options.on_inlay_click = [toast](uint32_t line, uint32_t column) {
-    toast.Show("Inlay: " + std::to_string(line + 1) + ":" + std::to_string(column + 1));
-  };
+  const DemoDocument& document = documents[current_file.Get()];
+  const auto options = MakeEditorOptions(
+      document, diff_enabled.Get(), diff_original.Get(), wrap_enabled.Get(), sticky_enabled.Get(),
+      breakpoints, cursor_status, selection_status, toast);
 
-  // Status bar: live caret position, selection length, and fold toggles.
-  auto cursor_status = UseState(std::string("Ln 1, Col 1"));
-  auto selection_status = UseState(std::string());
-  options.on_cursor_changed = [cursor_status](uint32_t line, uint32_t column) {
-    cursor_status = "Ln " + std::to_string(line + 1) + ", Col " + std::to_string(column + 1);
-  };
-  options.on_selection_changed =
-      [cursor_status, selection_status](uint32_t, uint32_t, uint32_t end_line, uint32_t end_column) {
-        selection_status = "Selection Ln " + std::to_string(end_line + 1) + ", Col " +
-                           std::to_string(end_column + 1);
-      };
-  options.on_text_changed = [] {
-    std::fprintf(stderr, "[sweetedit] text changed\n");
-  };
-  options.on_scroll_changed = [](float x, float y) {
-    std::fprintf(stderr, "[sweetedit] scroll %.0f,%.0f\n", x, y);
-  };
-  options.on_fold_toggle = [](size_t line) {
-    std::fprintf(stderr, "[sweetedit] fold toggled at line %zu\n", line);
-  };
-  options.on_long_press = [](uint32_t line, uint32_t column) {
-    std::fprintf(stderr, "[sweetedit] long press %u:%u\n", line, column);
-  };
-  options.on_double_tap = [](uint32_t line, uint32_t column) {
-    std::fprintf(stderr, "[sweetedit] double tap %u:%u\n", line, column);
-  };
-
-  // Copilot-style ghost text: suggest a TODO comment at the end of the first
-  // line; Tab accepts it (the component's phantom pipeline commits it).
-  options.phantom_text_provider = [](uint32_t line) {
-    if (line == 0) {
-      return std::string(" // TODO: implement");
-    }
-    return std::string();
-  };
-  options.accept_phantom_on_tab = true;
-  // Diff against the comparison text when the toggle is on.
-  options.original_text = diff_enabled.Get() ? diff_original.Get() : std::string();
-  // Display toggles.
-  options.wrap_mode = wrap_enabled.Get() ? 2 : 0;  // 2 = WORD_BREAK
-  options.sticky_gutter = sticky_enabled.Get();
-
-  const std::array<size_t, kDemoFileCount> file_indices = {0, 1, 2, 3, 4};
-
-  std::vector<View> children;
-  children.reserve(6);
-  children.push_back(
-      Row {
-        ForEach(file_indices, [current_file, diff_enabled, diff_original, texts](size_t i) {
-          return Button(kDemoFiles[i].label)
-              .OnClick([current_file, diff_enabled, diff_original, texts, i] {
-                current_file = static_cast<int>(i);
-                if (diff_enabled.Get()) {
-                  diff_original = texts[i];
-                }
-              })
-              .Key(kDemoFiles[i].key);
+  return Column {
+    DemoFileSelector(documents, current_file.Get())
+        .On<DemoFileSelected>([current_file, diff_enabled, diff_original, documents](std::size_t index) {
+          current_file = index;
+          if (diff_enabled.Get()) {
+            diff_original = documents[index].text;
+          }
         }),
-      }.With(Spacing(8.0F), Padding(8.0F))
-  );
-  children.push_back(Row {
-    Button(diff_enabled.Get() ? "Diff: On" : "Diff: Off")
-        .On<ViewEvents::Click>([diff_enabled, diff_original, texts, index] {
-          const bool turning_on = !diff_enabled.Get();
-          diff_enabled = turning_on;
-          diff_original = turning_on ? texts[static_cast<size_t>(index)] : std::string();
+    DemoToolbar(diff_enabled.Get(), wrap_enabled.Get(), sticky_enabled.Get())
+        .On<DiffToggleRequested>([current_file, diff_enabled, diff_original, documents] {
+          const bool enabled = !diff_enabled.Get();
+          diff_enabled = enabled;
+          diff_original = enabled ? documents[current_file.Get()].text : std::string();
+        })
+        .On<WrapToggleRequested>([wrap_enabled] { wrap_enabled = !wrap_enabled.Get(); })
+        .On<StickyGutterToggleRequested>([sticky_enabled] { sticky_enabled = !sticky_enabled.Get(); }),
+    DemoDiffPanel(diff_enabled.Get(), diff_original)
+        .On<DiffClosed>([diff_enabled, diff_original] {
+          diff_enabled = false;
+          diff_original = std::string();
         }),
-    Button(wrap_enabled.Get() ? "Wrap: On" : "Wrap: Off")
-        .On<ViewEvents::Click>([wrap_enabled] { wrap_enabled = !wrap_enabled.Get(); }),
-    Button(sticky_enabled.Get() ? "Sticky: On" : "Sticky: Off")
-        .On<ViewEvents::Click>([sticky_enabled] { sticky_enabled = !sticky_enabled.Get(); }),
-  }.With(Spacing(8.0F), Padding(8.0F)));
-  if (diff_enabled.Get()) {
-    children.push_back(
-        Row {
-          Text("Compare against:")
-              .Style(TextStyle{Font::System(12.0F), Color::Rgb(90, 96, 105), TextDecoration::None}),
-          Button("Close").On<ViewEvents::Click>([diff_enabled, diff_original] {
-            diff_enabled = false;
-            diff_original = std::string();
-          }),
-        }.With(Spacing(8.0F), Padding(4.0F))
-    );
-    children.push_back(
-        TextField(TextEditingValue::FromText(diff_original.Get()))
-            .LineLimits(TextFieldLineLimits::MultiLine(3, 4))
-            .Placeholder("Type the original text to diff against...")
-            .OnChanged([diff_original](const TextEditingValue& value) { diff_original = value.text; })
-            .With(Padding(4.0F))
-    );
-  }
-  children.push_back(sweetedit_huxer::SweetEditor(options).With(Grow{}));
-  children.push_back(Row {
-    Text(cursor_status.Get()).Style(TextStyle{Font::Monospace(12.0F), Color::Rgb(31, 35, 40), TextDecoration::None}),
-    Text(selection_status.Get()).Style(TextStyle{Font::Monospace(12.0F), Color::Rgb(31, 35, 40), TextDecoration::None}),
-  }.With(Spacing(16.0F), Padding(8.0F)));
-
-  return Column { std::move(children) }.With(CrossAlign(CrossAxisAlignment::Stretch));
+    sweetedit_huxer::SweetEditor(options).With(Grow{}),
+    EditorStatusBar(cursor_status, selection_status),
+  }.With(CrossAlign(CrossAxisAlignment::Stretch));
 }
 
-// The debug overlay is enabled explicitly so it works in release builds too.
+View App() {
+  return SweetEditorDemo();
+}
+
 const Application application{
     App,
     {
