@@ -56,6 +56,14 @@ std::string Utf16ToUtf8(std::u16string_view input) {
   return out;
 }
 
+// SweetEditor's UTF-16 string is std::basic_string<wchar_t> on Windows (where
+// wchar_t is a 16-bit UTF-16 code unit) and std::u16string elsewhere; view it
+// as UTF-16 code units for the UTF-8 conversion.
+std::string Utf16ToUtf8(const se::U16String& input) {
+  static_assert(sizeof(se::U16Char) == 2, "SweetEditor UTF-16 code units must be 16-bit");
+  return Utf16ToUtf8(std::u16string_view(reinterpret_cast<const char16_t*>(input.data()), input.size()));
+}
+
 // ---- ARGB color ------------------------------------------------------------
 Color Argb(int32_t argb) {
   const int a = (argb >> 24) & 0xFF;
@@ -1786,7 +1794,8 @@ public:
   // Reads the link text under a hit column from the document line (the core
   // reports the hit position; the URL continues to the next delimiter).
   std::string LinkTextAt(size_t line, size_t column) const {
-    const std::u16string text = document_->getLineU16Text(line);
+    const se::U16String source_text = document_->getLineU16Text(line);
+    const std::u16string_view text(reinterpret_cast<const char16_t*>(source_text.data()), source_text.size());
     if (column >= text.size()) {
       return {};
     }
@@ -2366,7 +2375,8 @@ private:
     const se::TextPosition cursor = core_->getCursorPosition();
     context.cursor_line = static_cast<uint32_t>(cursor.line);
     context.cursor_column = static_cast<uint32_t>(cursor.column);
-    const std::u16string line = document_->getLineU16Text(cursor.line);
+    const se::U16String source_line = document_->getLineU16Text(cursor.line);
+    const std::u16string_view line(reinterpret_cast<const char16_t*>(source_line.data()), source_line.size());
     context.line_text = Utf16ToUtf8(line);
     size_t start = cursor.column;
     while (start > 0 && IsCompletionWordChar(line[start - 1])) {
@@ -2847,9 +2857,11 @@ struct SweetEditorBehavior {
       InvalidatePaint();
     }
 
+#if defined(SWEETEDIT_CORE_HAS_SHOULD_COMMIT_FOCUS_ON_POINTER_UP)
     bool ShouldCommitFocusOnPointerUp() const noexcept override {
       return !holder_->SuppressFocusOnPointerUp();
     }
+#endif
 
     FrameResult OnFrame(MountedNode& node, const FrameInfo& frame) override {
       static_cast<void>(node);

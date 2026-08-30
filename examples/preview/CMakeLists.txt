@@ -26,13 +26,6 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     enable_language(CXX)
 endif ()
 
-# windows.h defines min/max macros that break std::min/std::max in the
-# editor headers included through the linked library; NOMINMAX keeps the std
-# versions intact (matches the SweetEditor and HuxerUI Windows configuration).
-if (WIN32)
-    add_compile_definitions(NOMINMAX)
-endif ()
-
 if (NOT TARGET HuxerUI::huxerui)
     set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI SDK or source directory")
     set(HUXERUI_HOST_TOOL_ROOT "$ENV{HUXERUI_HOST_TOOL_ROOT}" CACHE PATH "HuxerUI host tool root")
@@ -109,6 +102,14 @@ huxerui_add_app(example_sweetedit_core
         BUNDLE_IDENTIFIER
             "com.example.sweeteditcore.preview"
 )
+
+# windows.h defines min/max macros (breaking std::min/std::max in the editor
+# headers) and, through rpcndr.h, a `small` macro (breaking theme.h fields such
+# as `float small`). NOMINMAX keeps the std versions intact and
+# WIN32_LEAN_AND_MEAN keeps rpcndr.h out; both match upstream configurations.
+if (WIN32 AND NOT HUXERUI_LIBRARY_GRAPH_ONLY)
+    target_compile_definitions(example_sweetedit_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif ()
 
 if (WIN32 AND HUXERUI_WINDOWS_MANIFEST)
     target_sources(example_sweetedit_core PRIVATE "${HUXERUI_WINDOWS_MANIFEST}")

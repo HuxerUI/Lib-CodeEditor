@@ -24,13 +24,6 @@ project(sweetedit_core VERSION 0.1.0 LANGUAGES NONE)
 
 enable_language(CXX)
 
-# windows.h defines min/max macros that break std::min/std::max in the
-# vendored editor headers included by this library; NOMINMAX keeps the std
-# versions intact (matches the SweetEditor and HuxerUI Windows configuration).
-if (WIN32)
-    add_compile_definitions(NOMINMAX)
-endif ()
-
 if (NOT TARGET HuxerUI::huxerui)
     set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI SDK or source directory")
     set(HUXERUI_HOST_TOOL_ROOT "$ENV{HUXERUI_HOST_TOOL_ROOT}" CACHE PATH "HuxerUI host tool root")
@@ -108,6 +101,36 @@ huxerui_add_library(sweetedit_core
         RESOURCE_NAMESPACE
             sweetedit_core
 )
+
+# windows.h defines min/max macros (breaking std::min/std::max in the vendored
+# editor headers) and, through rpcndr.h, a `small` macro (breaking theme.h
+# fields such as `float small`). NOMINMAX keeps the std versions intact and
+# WIN32_LEAN_AND_MEAN keeps rpcndr.h out; both match upstream configurations.
+if (WIN32)
+    target_compile_definitions(sweetedit_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif ()
+
+# ShouldCommitFocusOnPointerUp is a newer HuxerUI NodeExtension hook (keeps
+# editor drags and command taps from raising the keyboard) that released SDKs
+# may not ship. Detect it so the component overrides it only when available.
+set(HUXERUI_HAS_FOCUS_POINTER_HOOK OFF)
+if (HUXERUI_HOME AND IS_DIRECTORY "${HUXERUI_HOME}/include/huxerui")
+    file(GLOB HUXERUI_PUBLIC_HEADERS "${HUXERUI_HOME}/include/huxerui/*.h")
+    foreach (HUXERUI_HEADER ${HUXERUI_PUBLIC_HEADERS})
+        file(READ "${HUXERUI_HEADER}" HUXERUI_HEADER_CONTENT)
+        if (HUXERUI_HEADER_CONTENT MATCHES "ShouldCommitFocusOnPointerUp")
+            set(HUXERUI_HAS_FOCUS_POINTER_HOOK ON)
+            break()
+        endif ()
+    endforeach ()
+endif ()
+if (HUXERUI_HAS_FOCUS_POINTER_HOOK)
+    target_compile_definitions(
+        sweetedit_core
+        PRIVATE
+            SWEETEDIT_CORE_HAS_SHOULD_COMMIT_FOCUS_ON_POINTER_UP
+    )
+endif ()
 
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     target_link_libraries(
