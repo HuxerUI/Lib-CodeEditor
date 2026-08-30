@@ -9,6 +9,18 @@
 
 namespace sweetedit_huxer {
 
+struct SweetEditorTextChanged : huxerui::Event<> {};
+struct SweetEditorCursorChanged : huxerui::Event<std::uint32_t, std::uint32_t> {};
+struct SweetEditorSelectionChanged : huxerui::Event<std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t> {};
+struct SweetEditorScrollChanged : huxerui::Event<float, float> {};
+struct SweetEditorFoldToggled : huxerui::Event<std::size_t> {};
+struct SweetEditorLongPressed : huxerui::Event<std::uint32_t, std::uint32_t> {};
+struct SweetEditorDoubleTapped : huxerui::Event<std::uint32_t, std::uint32_t> {};
+struct SweetEditorLinkClicked : huxerui::Event<const std::string&> {};
+struct SweetEditorCodeLensClicked : huxerui::Event<std::int32_t> {};
+struct SweetEditorGutterIconClicked : huxerui::Event<std::uint32_t, std::int32_t> {};
+struct SweetEditorInlayClicked : huxerui::Event<std::uint32_t, std::uint32_t> {};
+
 // Code completion data model, mirroring the SweetEditor platform reference
 // implementation (Android `completion` package): a provider receives a
 // CompletionContext and returns CompletionItems; the editor shows a caret
@@ -132,22 +144,6 @@ struct SweetEditorOptions {
   // RETRIGGER (the reference manager flow).
   CompletionProvider completion_provider;
   std::function<bool(const std::string&)> completion_trigger_characters;
-  // Decoration click callbacks (reference fireGestureEvents decoration hits).
-  std::function<void(const std::string& url)> on_link_click;
-  std::function<void(int32_t command_id)> on_codelens_click;
-  // line is the logical line owning the icon, icon_id identifies the marker.
-  std::function<void(uint32_t line, int32_t icon_id)> on_gutter_icon_click;
-  std::function<void(uint32_t line, uint32_t column)> on_inlay_click;
-  // Editor event bus (reference EditorEventBus): fired on document, caret,
-  // selection, scroll, fold, and gesture changes.
-  std::function<void()> on_text_changed;
-  std::function<void(uint32_t line, uint32_t column)> on_cursor_changed;
-  std::function<void(uint32_t start_line, uint32_t start_column, uint32_t end_line, uint32_t end_column)>
-      on_selection_changed;
-  std::function<void(float scroll_x, float scroll_y)> on_scroll_changed;
-  std::function<void(size_t line)> on_fold_toggle;
-  std::function<void(uint32_t line, uint32_t column)> on_long_press;
-  std::function<void(uint32_t line, uint32_t column)> on_double_tap;
   // Newline action hook: invoked before inserting a newline; may return
   // replacement text (reference NewLineActionProvider).
   std::function<std::string(uint32_t line, uint32_t column)> newline_action;

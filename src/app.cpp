@@ -319,10 +319,7 @@ sweetedit_huxer::SweetEditorOptions MakeEditorOptions(
     const std::string& diff_original,
     bool wrap_enabled,
     bool sticky_enabled,
-    State<std::vector<uint32_t>> breakpoints,
-    State<std::string> cursor_status,
-    State<std::string> selection_status,
-    const ToastHandle& toast
+    State<std::vector<uint32_t>> breakpoints
 ) {
   sweetedit_huxer::SweetEditorOptions options;
   options.initial_text = document.text;
@@ -332,22 +329,6 @@ sweetedit_huxer::SweetEditorOptions MakeEditorOptions(
   options.completion_trigger_characters = [](const std::string& character) {
     return character == "." || character == ":";
   };
-  options.on_link_click = [toast](const std::string& url) { toast.Show("Link: " + url); };
-  options.on_codelens_click = [toast](int32_t command_id) {
-    toast.Show("CodeLens: " + std::to_string(command_id));
-  };
-  options.on_gutter_icon_click = [toast, breakpoints](uint32_t line, int32_t) {
-    std::vector<uint32_t> lines = breakpoints.Get();
-    const auto found = std::find(lines.begin(), lines.end(), line);
-    if (found == lines.end()) {
-      lines.push_back(line);
-      toast.Show("Breakpoint set at line " + std::to_string(line + 1));
-    } else {
-      lines.erase(found);
-      toast.Show("Breakpoint removed at line " + std::to_string(line + 1));
-    }
-    breakpoints = std::move(lines);
-  };
   options.gutter_icon_provider = [breakpoints](uint32_t start_line, uint32_t end_line) {
     std::vector<std::pair<uint32_t, int32_t>> icons;
     for (uint32_t line : breakpoints.Get()) {
@@ -356,15 +337,6 @@ sweetedit_huxer::SweetEditorOptions MakeEditorOptions(
       }
     }
     return icons;
-  };
-  options.on_inlay_click = [toast](uint32_t line, uint32_t column) {
-    toast.Show("Inlay: " + std::to_string(line + 1) + ":" + std::to_string(column + 1));
-  };
-  options.on_cursor_changed = [cursor_status](uint32_t line, uint32_t column) {
-    cursor_status = "Ln " + std::to_string(line + 1) + ", Col " + std::to_string(column + 1);
-  };
-  options.on_selection_changed = [selection_status](uint32_t, uint32_t, uint32_t line, uint32_t column) {
-    selection_status = "Selection Ln " + std::to_string(line + 1) + ", Col " + std::to_string(column + 1);
   };
   options.phantom_text_provider = [](uint32_t line) {
     return line == 0 ? std::string(" // TODO: implement") : std::string();
@@ -399,8 +371,7 @@ View SweetEditorDemo() {
   const ToastHandle toast = UseToast();
   const DemoDocument& document = documents[current_file.Get()];
   const auto options = MakeEditorOptions(
-      document, diff_enabled.Get(), diff_original.Get(), wrap_enabled.Get(), sticky_enabled.Get(),
-      breakpoints, cursor_status, selection_status, toast);
+      document, diff_enabled.Get(), diff_original.Get(), wrap_enabled.Get(), sticky_enabled.Get(), breakpoints);
 
   return Column {
     DemoFileSelector(documents, current_file.Get())
@@ -423,7 +394,38 @@ View SweetEditorDemo() {
           diff_enabled = false;
           diff_original = std::string();
         }),
-    sweetedit_huxer::SweetEditor(options).With(Grow{}),
+    sweetedit_huxer::SweetEditor(options)
+        .On<sweetedit_huxer::SweetEditorLinkClicked>([toast](const std::string& url) {
+          toast.Show("Link: " + url);
+        })
+        .On<sweetedit_huxer::SweetEditorCodeLensClicked>([toast](int32_t command_id) {
+          toast.Show("CodeLens: " + std::to_string(command_id));
+        })
+        .On<sweetedit_huxer::SweetEditorGutterIconClicked>([toast, breakpoints](uint32_t line, int32_t) {
+          std::vector<uint32_t> lines = breakpoints.Get();
+          const auto found = std::find(lines.begin(), lines.end(), line);
+          if (found == lines.end()) {
+            lines.push_back(line);
+            toast.Show("Breakpoint set at line " + std::to_string(line + 1));
+          } else {
+            lines.erase(found);
+            toast.Show("Breakpoint removed at line " + std::to_string(line + 1));
+          }
+          breakpoints = std::move(lines);
+        })
+        .On<sweetedit_huxer::SweetEditorInlayClicked>([toast](uint32_t line, uint32_t column) {
+          toast.Show("Inlay: " + std::to_string(line + 1) + ":" + std::to_string(column + 1));
+        })
+        .On<sweetedit_huxer::SweetEditorCursorChanged>([cursor_status](uint32_t line, uint32_t column) {
+          cursor_status = "Ln " + std::to_string(line + 1) + ", Col " + std::to_string(column + 1);
+        })
+        .On<sweetedit_huxer::SweetEditorSelectionChanged>(
+            [selection_status](uint32_t, uint32_t, uint32_t line, uint32_t column) {
+              selection_status = "Selection Ln " + std::to_string(line + 1) + ", Col " +
+                                 std::to_string(column + 1);
+            }
+        )
+        .With(Grow{}),
     EditorStatusBar(cursor_status, selection_status),
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
 }

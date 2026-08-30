@@ -860,10 +860,12 @@ public:
       TextMeasurer& measurer,
       const SweetEditorOptions& options,
       std::string syntax_json,
-      std::function<void()> invalidate
+      std::function<void()> invalidate,
+      huxerui::EventEmitter events
   )
       : font_size_(options.font_size),
         invalidate_(std::move(invalidate)),
+        events_(std::move(events)),
         completion_provider_(options.completion_provider),
         completion_trigger_characters_(options.completion_trigger_characters) {
     font_metrics_ = measurer.Metrics(Font::Monospace(font_size_));
@@ -973,17 +975,6 @@ public:
       }
     });
 
-    on_link_click_ = options.on_link_click;
-    on_codelens_click_ = options.on_codelens_click;
-    on_gutter_icon_click_ = options.on_gutter_icon_click;
-    on_inlay_click_ = options.on_inlay_click;
-    on_text_changed_ = options.on_text_changed;
-    on_cursor_changed_ = options.on_cursor_changed;
-    on_selection_changed_ = options.on_selection_changed;
-    on_scroll_changed_ = options.on_scroll_changed;
-    on_fold_toggle_ = options.on_fold_toggle;
-    on_long_press_ = options.on_long_press;
-    on_double_tap_ = options.on_double_tap;
     newline_action_ = options.newline_action;
     phantom_text_provider_ = options.phantom_text_provider;
     accept_phantom_on_tab_ = options.accept_phantom_on_tab;
@@ -1261,28 +1252,20 @@ public:
           model_dirty_ = true;
           return true;
         case se::HitTargetType::LINK:
-          if (on_link_click_) {
-            on_link_click_(LinkTextAt(target.line, target.column));
-          }
+          events_.Emit<SweetEditorLinkClicked>(LinkTextAt(target.line, target.column));
           return true;
         case se::HitTargetType::CODELENS:
-          if (on_codelens_click_) {
-            on_codelens_click_(target.icon_id);
-          }
+          events_.Emit<SweetEditorCodeLensClicked>(target.icon_id);
           return true;
         case se::HitTargetType::GUTTER_ICON:
-          if (on_gutter_icon_click_) {
-            on_gutter_icon_click_(
-                static_cast<uint32_t>(target.line), target.icon_id
-            );
-          }
+          events_.Emit<SweetEditorGutterIconClicked>(static_cast<uint32_t>(target.line), target.icon_id);
           return true;
         case se::HitTargetType::INLAY_HINT_TEXT:
         case se::HitTargetType::INLAY_HINT_ICON:
         case se::HitTargetType::INLAY_HINT_COLOR:
-          if (on_inlay_click_) {
-            on_inlay_click_(static_cast<uint32_t>(target.line), static_cast<uint32_t>(target.column));
-          }
+          events_.Emit<SweetEditorInlayClicked>(
+              static_cast<uint32_t>(target.line), static_cast<uint32_t>(target.column)
+          );
           return true;
         default:
           break;
@@ -1441,9 +1424,9 @@ public:
     if (result.selection_changed || result.cursor_changed) {
       text_input_client_->NotifySelectionChanged();
     }
-    if (result.scroll_changed && on_scroll_changed_) {
+    if (result.scroll_changed) {
       const se::ViewState view = core_->getViewState();
-      on_scroll_changed_(view.scroll_x, view.scroll_y);
+      events_.Emit<SweetEditorScrollChanged>(view.scroll_x, view.scroll_y);
     }
     if (result.needs_redraw) {
       model_dirty_ = true;
@@ -1516,37 +1499,29 @@ public:
   // ---- Editor event bus (reference EditorEventBus) -------------------------
 
   void FireCaretEvents() {
-    if (on_cursor_changed_ || on_selection_changed_) {
-      const se::TextPosition cursor = core_->getCursorPosition();
-      if (on_cursor_changed_) {
-        on_cursor_changed_(static_cast<uint32_t>(cursor.line), static_cast<uint32_t>(cursor.column));
-      }
-      if (on_selection_changed_) {
-        const se::TextRange selection = core_->getSelection();
-        on_selection_changed_(
-            static_cast<uint32_t>(selection.start.line),
-            static_cast<uint32_t>(selection.start.column),
-            static_cast<uint32_t>(selection.end.line),
-            static_cast<uint32_t>(selection.end.column)
-        );
-      }
-    }
+    const se::TextPosition cursor = core_->getCursorPosition();
+    events_.Emit<SweetEditorCursorChanged>(static_cast<uint32_t>(cursor.line), static_cast<uint32_t>(cursor.column));
+    const se::TextRange selection = core_->getSelection();
+    events_.Emit<SweetEditorSelectionChanged>(
+        static_cast<uint32_t>(selection.start.line),
+        static_cast<uint32_t>(selection.start.column),
+        static_cast<uint32_t>(selection.end.line),
+        static_cast<uint32_t>(selection.end.column)
+    );
   }
 
   void FirePointerEvents(const se::EditorActionResult& result) {
     switch (result.gesture_type) {
     case se::GestureType::LONG_PRESS:
-      if (on_long_press_) {
-        on_long_press_(static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column));
-      }
+      events_.Emit<SweetEditorLongPressed>(
+          static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
+      );
       ShowContextMenu(result.tap_point);
       break;
     case se::GestureType::DOUBLE_TAP:
-      if (on_double_tap_) {
-        on_double_tap_(
-            static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
-        );
-      }
+      events_.Emit<SweetEditorDoubleTapped>(
+          static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
+      );
       ShowContextMenu(result.tap_point);
       break;
     default:
@@ -1555,15 +1530,11 @@ public:
   }
 
   void FireFoldToggle(size_t line) {
-    if (on_fold_toggle_) {
-      on_fold_toggle_(line);
-    }
+    events_.Emit<SweetEditorFoldToggled>(line);
   }
 
   void FireTextChanged() {
-    if (on_text_changed_) {
-      on_text_changed_();
-    }
+    events_.Emit<SweetEditorTextChanged>();
   }
 
   // Applies phantom (ghost) text for the visible lines (reference phantom text
@@ -2490,21 +2461,11 @@ private:
   FontMetrics completion_badge_metrics_;
   float completion_badge_char_advance_{0.0F};
 
-  std::function<void(const std::string&)> on_link_click_;
-  std::function<void(int32_t)> on_codelens_click_;
-  std::function<void(uint32_t, int32_t)> on_gutter_icon_click_;
-  std::function<void(uint32_t, uint32_t)> on_inlay_click_;
-  std::function<void()> on_text_changed_;
-  std::function<void(uint32_t, uint32_t)> on_cursor_changed_;
-  std::function<void(uint32_t, uint32_t, uint32_t, uint32_t)> on_selection_changed_;
-  std::function<void(float, float)> on_scroll_changed_;
-  std::function<void(size_t)> on_fold_toggle_;
-  std::function<void(uint32_t, uint32_t)> on_long_press_;
-  std::function<void(uint32_t, uint32_t)> on_double_tap_;
+  std::function<void()> on_toggle_search_;
+  huxerui::EventEmitter events_;
   std::function<std::string(uint32_t, uint32_t)> newline_action_;
   std::function<std::string(uint32_t)> phantom_text_provider_;
   bool accept_phantom_on_tab_{true};
-  std::function<void()> on_toggle_search_;
   std::string current_diff_original_;
   int current_wrap_mode_{0};
   bool current_sticky_gutter_{false};
@@ -2570,11 +2531,17 @@ struct SweetEditorBehavior {
   SweetEditorOptions options;
   std::string syntax_json;
   std::shared_ptr<SearchBridge> search_bridge;
+  huxerui::EventEmitter events;
 
   struct Extension final : NodeExtension {
     Extension(MountedNode& node, const SweetEditorBehavior& behavior)
         : holder_(std::make_shared<EditorHolder>(
-              *behavior.measurer, behavior.options, behavior.syntax_json, [this] { InvalidatePaint(); })),
+              *behavior.measurer,
+              behavior.options,
+              behavior.syntax_json,
+              [this] { InvalidatePaint(); },
+              behavior.events
+          )),
           document_key_(behavior.options.document_key) {
       if (behavior.search_bridge) {
         behavior.search_bridge->run_search = [this](const std::string& text) { holder_->RunSearch(text); };
@@ -2600,7 +2567,11 @@ struct SweetEditorBehavior {
       if (behavior.options.document_key != document_key_) {
         document_key_ = behavior.options.document_key;
         holder_ = std::make_shared<EditorHolder>(
-            *behavior.measurer, behavior.options, behavior.syntax_json, [this] { InvalidatePaint(); }
+            *behavior.measurer,
+            behavior.options,
+            behavior.syntax_json,
+            [this] { InvalidatePaint(); },
+            behavior.events
         );
         return;
       }
@@ -2742,12 +2713,13 @@ View SweetEditor(SweetEditorOptions options) {
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
   auto search_bridge = std::make_shared<SearchBridge>();
+  const EventEmitter events = UseEvents();
   SweetEditorOptions editor_options = std::move(options);
   if (!editor_options.on_toggle_search) {
     editor_options.on_toggle_search = [search_visible] { search_visible = !search_visible.Get(); };
   }
   View editor = Canvas([](PaintContext&, Size) {}).With(
-      SweetEditorBehavior{&measurer, std::move(editor_options), syntax_json, search_bridge}, Focusable{}
+      SweetEditorBehavior{&measurer, std::move(editor_options), syntax_json, search_bridge, events}, Focusable{}
   );
   if (!search_visible.Get()) {
     return editor;
