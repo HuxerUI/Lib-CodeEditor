@@ -319,26 +319,52 @@ options.decoration_providers.push_back(
 
 严重级别：`0 = error`、`1 = warning`、`2 = info`、`3 = hint`。提供器应尽量只计算请求的可见行范围，避免滚动时扫描整个文件。
 
-## 9. 搜索和替换
+## 9. 搜索、替换和 controller
 
-组件内置声明式搜索/替换栏。未设置 `on_toggle_search` 时，Ctrl+F 会切换内置栏。内置栏包括 Find、Prev、Next、Replace、All 和 Close 控件。
-
-```cpp
-SweetEditorOptions options;
-// 不设置 on_toggle_search，使用内置搜索栏。
-```
-
-控件通过内部 `SearchBridge` 连接 retained `EditorHolder`，最终调用 SweetEditor 的搜索、查找下一个、查找上一个、替换当前、全部替换和清理搜索状态接口。
-
-如需自定义工具栏，可以提供：
+`SweetEditor` 暴露一个 `SweetEditorController`，由组件 scope 创建并传给 `SweetEditor()`。controller 提供文档加载、全文读取、光标定位和搜索替换控制；未连接时方法返回 `false`。
 
 ```cpp
-options.on_toggle_search = [] {
-  // 切换应用自己的工具栏
-};
+[[huxerui::scope]]
+View Page() {
+  auto controller = UseSweetEditorController();
+  SweetEditorOptions options;
+  // ...
+
+  return Column {
+    Row {
+      Button("Find").OnClick([controller] { controller.ToggleSearch(); }),
+      Button("Goto 5:1").OnClick([controller] {
+        controller.SetCursor(4, 0);
+      }),
+    },
+    SweetEditor(options, controller).With(Grow{}),
+  };
+}
 ```
 
-当前公共 API 尚未提供独立搜索 controller，自定义工具栏不能访问私有 `EditorHolder`。
+### 9.1 controller API
+
+```cpp
+controller.IsConnected();
+
+// 文档控制
+controller.LoadDocument("main.cpp", source, cpp_syntax);
+controller.Text();           // 当前全文（UTF-8）
+controller.SetCursor(line, column);
+
+// 搜索替换
+controller.RunSearch("pattern");
+controller.FindNext();
+controller.FindPrevious();
+controller.ReplaceCurrent("replacement");
+controller.ReplaceAll("replacement");
+controller.ClearSearch();
+controller.ToggleSearch();    // 切换内置搜索栏
+```
+
+### 9.2 内置搜索栏
+
+组件内置声明式搜索/替换栏，Ctrl+F 或 `controller.ToggleSearch()` 切换显示。内置栏包括 Find、Prev、Next、Replace、All 和 Close 控件，操作通过 controller 直接作用于当前文档，不再依赖内部回调桥。
 
 ## 10. Phantom text、换行和 Diff
 
@@ -455,11 +481,9 @@ Windows、Linux、macOS 使用 `huxerui::RunApplication()`；Web 使用 Emscript
 
 ## 15. 当前限制
 
-`initial_text` 是初始化值，不是完整受控 `TextEditingValue`。编辑开始后，当前文档由 SweetEditor retained 内核持有；`SweetEditorTextChanged` typed event 可以通知应用内容变化，但当前公共头文件没有公开用于任意读取、替换全文、控制光标或共享文档的独立 controller。
+`initial_text` 是初始化值，不是完整受控 `TextEditingValue`。编辑开始后，当前文档由 SweetEditor retained 内核持有；`SweetEditorTextChanged` typed event 可以通知应用内容变化，`SweetEditorController::Text()` 可以读取全文，`LoadDocument()` 可以程序化加载文档，`SetCursor()` 可以控制光标。当前还没有把文档文本作为双向受控值（每次输入都由应用回写）的完整受控模型，也没有多个组件共享同一个文档实例的 API。
 
-如果需要文件保存、程序化编辑、外部光标控制或共享文档，应新增明确的 controller/document API，不要暴露 `EditorHolder` 和私有 extension。
-
-编辑器语义输出已经通过 typed events 暴露（见第 7 节）。`SweetEditorOptions` 中剩余的 `std::function` 字段只属于 provider/service 语义（补全、装饰、行号区图标、Phantom text、换行策略）以及 `on_toggle_search` 搜索命令回调；后续可以进一步迁移为 Environment/service 或 controller，而不是普通事件。
+编辑器语义输出已经通过 typed events 暴露（见第 7 节），文档和搜索控制通过 `SweetEditorController`（见第 9 节）。`SweetEditorOptions` 中剩余的 `std::function` 字段只属于 provider/service 语义（补全、装饰、行号区图标、Phantom text、换行策略），后续可以进一步迁移为 Environment/service。
 
 ## 16. 修改后的验证清单
 
