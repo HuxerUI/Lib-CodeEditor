@@ -184,8 +184,6 @@ se::KeyCode ToKeyCode(Key key) {
     return se::KeyCode::Y;
   case Key::Z:
     return se::KeyCode::Z;
-  case Key::K:
-    return se::KeyCode::K;
   default:
     return se::KeyCode::NONE;
   }
@@ -1322,7 +1320,8 @@ public:
           return result.handled;
         }
       }
-      if (!event.modifiers.alt && event.modifiers.control && event.modifiers.shift && event.key == Key::K) {
+      if (!event.modifiers.alt && event.modifiers.control && event.modifiers.shift &&
+          (event.text == "k" || event.text == "K")) {
         const se::EditorActionResult result = core_->deleteLine();
         AfterCoreAction(result);
         return result.handled;
@@ -1433,18 +1432,6 @@ public:
   }
 
   bool HandleScroll(const ScrollEvent& event) {
-    // Ctrl+wheel zooms (desktop stand-in for the core's pinch gesture, which
-    // needs multi-point input the platform layer does not deliver yet).
-    if (event.modifiers.control) {
-      const se::ViewState view = core_->getViewState();
-      const float factor = event.delta_y < 0.0F ? 1.1F : 0.9F;
-      core_->setScale(view.scale * factor);
-      model_dirty_ = true;
-      if (invalidate_) {
-        invalidate_();
-      }
-      return true;
-    }
     const se::EditorActionResult result = core_->handleGestureEvent(ToWheelGestureEvent(event));
     if (result.selection_changed || result.cursor_changed) {
       text_input_client_->NotifySelectionChanged();
@@ -2816,7 +2803,7 @@ struct SweetEditorBehavior {
       return {};
     }
 
-    void Paint(const MountedNode& node, PaintContext& context) const override {
+    void PaintAboveContent(const MountedNode& node, PaintContext& context) const override {
       holder_->Render(context, node.LayoutSize());
     }
 
@@ -2882,7 +2869,7 @@ View SweetEditorSearchBar(
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
 }
 
-[[huxerui::scope]]
+[[huxerui::composable]]
 View SweetEditor(SweetEditorOptions options, SweetEditorController controller) {
   TextMeasurer& measurer = UseTextMeasurer();
   const RawAsset cpp_syntax = UseRawResource(RawResource("app", "raw/syntaxes/cpp.json"));

@@ -260,7 +260,7 @@ std::array<DemoDocument, kDemoFileCount> LoadDemoDocuments(
   }};
 }
 
-[[huxerui::scope]]
+[[huxerui::composable]]
 View DemoFileSelector(const std::array<DemoDocument, kDemoFileCount>& documents, std::size_t selected) {
   const EventEmitter events = UseEvents();
   const std::array<std::size_t, kDemoFileCount> indices = {0, 1, 2, 3, 4};
@@ -273,7 +273,7 @@ View DemoFileSelector(const std::array<DemoDocument, kDemoFileCount>& documents,
   }.With(Spacing(8.0F), Padding(8.0F));
 }
 
-[[huxerui::scope]]
+[[huxerui::composable]]
 View DemoToolbar(bool diff_enabled, bool wrap_enabled, bool sticky_enabled) {
   const EventEmitter events = UseEvents();
   return Row {
@@ -286,7 +286,7 @@ View DemoToolbar(bool diff_enabled, bool wrap_enabled, bool sticky_enabled) {
   }.With(Spacing(8.0F), Padding(8.0F));
 }
 
-[[huxerui::scope]]
+[[huxerui::composable]]
 View DemoDiffPanel(bool visible, State<std::string> original_text) {
   if (!visible) {
     return Spacer().With(Frame{.height = 0.0F});
@@ -347,7 +347,7 @@ sweetedit_huxer::SweetEditorOptions MakeEditorOptions(
   return options;
 }
 
-[[huxerui::scope]]
+[[huxerui::composable]]
 View SweetEditorDemo() {
   auto current_file = UseState<std::size_t>(0);
   auto diff_enabled = UseState(false);

@@ -28,6 +28,7 @@ endif ()
 
 if (NOT TARGET HuxerUI::huxerui)
     set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI SDK or source directory")
+    set(HUXERUI_HOST_TOOL_ROOT "$ENV{HUXERUI_HOST_TOOL_ROOT}" CACHE PATH "HuxerUI host tool root")
     if (HUXERUI_HOME AND EXISTS "${HUXERUI_HOME}/CMakeLists.txt"
             AND EXISTS "${HUXERUI_HOME}/include/huxerui/huxerui.h")
         set(HUXERUI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
