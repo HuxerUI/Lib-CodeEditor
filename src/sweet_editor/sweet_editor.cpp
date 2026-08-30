@@ -1216,6 +1216,9 @@ public:
         found->second = point;
       }
       out.type = first_pointer ? se::EventType::TOUCH_DOWN : se::EventType::TOUCH_POINTER_DOWN;
+      if (active_pointers_.size() >= 2) {
+        pinch_last_distance_ = active_pointers_[0].second.distance(active_pointers_[1].second);
+      }
       break;
     }
     case PointerEventType::Move: {
@@ -1225,6 +1228,17 @@ public:
           break;
         }
       }
+      if (active_pointers_.size() >= 2) {
+        // Two fingers: report the distance ratio directly. DIRECT_SCALE skips
+        // the core's touch state machine and applies the scale immediately.
+        const float distance = active_pointers_[0].second.distance(active_pointers_[1].second);
+        if (pinch_last_distance_ > 0.0F && distance > 0.0F) {
+          out.type = se::EventType::DIRECT_SCALE;
+          out.direct_scale = distance / pinch_last_distance_;
+        }
+        pinch_last_distance_ = distance;
+        break;
+      }
       out.type = se::EventType::TOUCH_MOVE;
       break;
     }
@@ -1233,6 +1247,7 @@ public:
       active_pointers_.erase(std::remove_if(active_pointers_.begin(), active_pointers_.end(),
                                             [&](const auto& entry) { return entry.first == event.pointer_id; }),
                              active_pointers_.end());
+      pinch_last_distance_ = 0.0F;
       out.type = active_pointers_.empty() ? se::EventType::TOUCH_UP : se::EventType::TOUCH_POINTER_UP;
       break;
     }
@@ -2585,6 +2600,7 @@ private:
   // aggregates multi-touch into one multi-point SweetEditor GestureEvent so the
   // core can recognize two-finger pinch-to-zoom.
   std::vector<std::pair<std::int64_t, se::PointF>> active_pointers_;
+  float pinch_last_distance_{0.0F};
 
   bool focused_{false};
   bool blink_on_{true};
