@@ -207,21 +207,63 @@ SweetEditor 内核负责占位符展开和 Tab 停靠点切换。
 
 ## 7. 装饰和事件
 
-### 7.1 点击回调
+编辑器语义输出通过 HuxerUI typed events 暴露。事件绑定在 `SweetEditor()` 返回的 View 上，与普通组件一致：
 
 ```cpp
-options.on_link_click = [](const std::string& url) {
-  // 打开链接或显示提示
-};
-options.on_codelens_click = [](int32_t command_id) {
-  // 执行命令
-};
-options.on_gutter_icon_click = [](uint32_t line, int32_t icon_id) {
-  // line 是 0-based 行号
-};
-options.on_inlay_click = [](uint32_t line, uint32_t column) {
-  // 处理 Inlay hint
-};
+SweetEditor(options)
+    .On<SweetEditorLinkClicked>([](const std::string& url) {
+      // 打开链接或显示提示
+    })
+    .On<SweetEditorCodeLensClicked>([](int32_t command_id) {
+      // 执行命令
+    })
+    .On<SweetEditorGutterIconClicked>([](uint32_t line, int32_t icon_id) {
+      // line 是 0-based 行号
+    })
+    .On<SweetEditorInlayClicked>([](uint32_t line, uint32_t column) {
+      // 处理 Inlay hint
+    })
+    .On<SweetEditorTextChanged>([] {
+      // 文档文本发生变化
+    })
+    .On<SweetEditorCursorChanged>([](uint32_t line, uint32_t column) {
+      // 光标位置变化，0-based
+    })
+    .On<SweetEditorSelectionChanged>(
+        [](uint32_t start_line, uint32_t start_column, uint32_t end_line, uint32_t end_column) {
+          // 选区变化
+        }
+    )
+    .On<SweetEditorScrollChanged>([](float scroll_x, float scroll_y) {
+      // 滚动位置变化
+    })
+    .On<SweetEditorFoldToggled>([](std::size_t line) {
+      // 折叠状态变化
+    })
+    .On<SweetEditorLongPressed>([](uint32_t line, uint32_t column) {
+      // 长按
+    })
+    .On<SweetEditorDoubleTapped>([](uint32_t line, uint32_t column) {
+      // 双击
+    });
+```
+
+### 7.1 点击事件
+
+```cpp
+SweetEditor(options)
+    .On<SweetEditorLinkClicked>([](const std::string& url) {
+      // 打开链接或显示提示
+    })
+    .On<SweetEditorCodeLensClicked>([](int32_t command_id) {
+      // 执行命令
+    })
+    .On<SweetEditorGutterIconClicked>([](uint32_t line, int32_t icon_id) {
+      // line 是 0-based 行号
+    })
+    .On<SweetEditorInlayClicked>([](uint32_t line, uint32_t column) {
+      // 处理 Inlay hint
+    });
 ```
 
 ### 7.2 行号区图标
@@ -239,15 +281,16 @@ options.gutter_icon_provider = [](uint32_t start_line, uint32_t end_line) {
 ### 7.3 编辑器事件
 
 ```cpp
-options.on_text_changed = [] {};
-options.on_cursor_changed = [](uint32_t line, uint32_t column) {};
-options.on_selection_changed = [](
-    uint32_t start_line, uint32_t start_column,
-    uint32_t end_line, uint32_t end_column) {};
-options.on_scroll_changed = [](float scroll_x, float scroll_y) {};
-options.on_fold_toggle = [](size_t line) {};
-options.on_long_press = [](uint32_t line, uint32_t column) {};
-options.on_double_tap = [](uint32_t line, uint32_t column) {};
+SweetEditor(options)
+    .On<SweetEditorTextChanged>([] {})
+    .On<SweetEditorCursorChanged>([](uint32_t line, uint32_t column) {})
+    .On<SweetEditorSelectionChanged>(
+        [](uint32_t start_line, uint32_t start_column, uint32_t end_line, uint32_t end_column) {}
+    )
+    .On<SweetEditorScrollChanged>([](float scroll_x, float scroll_y) {})
+    .On<SweetEditorFoldToggled>([](std::size_t line) {})
+    .On<SweetEditorLongPressed>([](uint32_t line, uint32_t column) {})
+    .On<SweetEditorDoubleTapped>([](uint32_t line, uint32_t column) {});
 ```
 
 行号和列号均为 0-based。显示给用户时使用 `line + 1`。
@@ -412,11 +455,11 @@ Windows、Linux、macOS 使用 `huxerui::RunApplication()`；Web 使用 Emscript
 
 ## 15. 当前限制
 
-`initial_text` 是初始化值，不是完整受控 `TextEditingValue`。编辑开始后，当前文档由 SweetEditor retained 内核持有；`on_text_changed` 可以通知应用内容变化，但当前公共头文件没有公开用于任意读取、替换全文、控制光标或共享文档的独立 controller。
+`initial_text` 是初始化值，不是完整受控 `TextEditingValue`。编辑开始后，当前文档由 SweetEditor retained 内核持有；`SweetEditorTextChanged` typed event 可以通知应用内容变化，但当前公共头文件没有公开用于任意读取、替换全文、控制光标或共享文档的独立 controller。
 
 如果需要文件保存、程序化编辑、外部光标控制或共享文档，应新增明确的 controller/document API，不要暴露 `EditorHolder` 和私有 extension。
 
-当前回调保留 SweetEditor 平台参考接口的兼容形式。未来若迁移到 HuxerUI typed event，应同时更新声明、实现、Demo 和文档。
+编辑器语义输出已经通过 typed events 暴露（见第 7 节）。`SweetEditorOptions` 中剩余的 `std::function` 字段只属于 provider/service 语义（补全、装饰、行号区图标、Phantom text、换行策略）以及 `on_toggle_search` 搜索命令回调；后续可以进一步迁移为 Environment/service 或 controller，而不是普通事件。
 
 ## 16. 修改后的验证清单
 
