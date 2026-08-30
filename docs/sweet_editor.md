@@ -70,10 +70,12 @@ const Application application{
 
 ```cpp
 [[huxerui::scope]]
-View SweetEditor(SweetEditorOptions options = {});
+View SweetEditor(SweetEditorOptions options = {}, SweetEditorController controller = {});
 ```
 
 组件作用域管理搜索栏显示状态、搜索文本等局部状态。返回的 `View` 是临时声明；编辑器内核和交互状态由挂载节点上的 retained extension 持有。
+
+语义输出（光标、选区、点击等）通过 **typed events** 绑定在返回的 `View` 上（见第 7 节）；文档加载、全文读取、光标定位与搜索替换通过 **`SweetEditorController`** 程序化控制（见第 9 节）。
 
 ### 4.2 retained NodeExtension
 
@@ -485,9 +487,13 @@ Windows、Linux、macOS 使用 `huxerui::RunApplication()`；Web 使用 Emscript
 
 编辑器语义输出已经通过 typed events 暴露（见第 7 节），文档和搜索控制通过 `SweetEditorController`（见第 9 节）。`SweetEditorOptions` 中剩余的 `std::function` 字段只属于 provider/service 语义（补全、装饰、行号区图标、Phantom text、换行策略），后续可以进一步迁移为 Environment/service。
 
-## 16. 修改后的验证清单
+## 16. 已知问题
 
-建议验证：挂载、重组、文档 key 切换、卸载、文本编辑、剪贴板、撤销重做、中文 IME、Emoji、光标闪烁、鼠标和触摸选择、滚动、折叠、括号、高亮、补全、Snippet、搜索、替换、Diff、诊断、Inlay hint、CodeLens，以及 Android `arm64-v8a` 原生编译。
+- 首屏语法高亮：某些启动时序下，编辑器内容先以无高亮状态显示，需要滚动一次才出现高亮。正在修复中。
+
+## 17. 修改后的验证清单
+
+建议验证：挂载、重组、文档 key 切换、卸载、文本编辑、剪贴板、撤销重做、中文 IME、Emoji、光标闪烁、鼠标和触摸选择、滚动、折叠、括号、高亮、补全、Snippet、搜索、替换、Diff、诊断、Inlay hint、CodeLens、命令区点击（gutter/CodeLens 不弹键盘）、滑动不弹键盘，以及 Android `arm64-v8a` 原生编译。
 
 ```bash
 git diff --check

@@ -10,3 +10,6 @@
 
 .DS_Store
 Thumbs.db
+
+# Local backup directories
+/sweetedit-backup/
