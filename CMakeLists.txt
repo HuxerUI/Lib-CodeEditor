@@ -24,6 +24,13 @@ project(sweetedit_core VERSION 0.1.0 LANGUAGES NONE)
 
 enable_language(CXX)
 
+# windows.h defines min/max macros that break std::min/std::max in the
+# vendored editor headers included by this library; NOMINMAX keeps the std
+# versions intact (matches the SweetEditor and HuxerUI Windows configuration).
+if (WIN32)
+    add_compile_definitions(NOMINMAX)
+endif ()
+
 if (NOT TARGET HuxerUI::huxerui)
     set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI SDK or source directory")
     set(HUXERUI_HOST_TOOL_ROOT "$ENV{HUXERUI_HOST_TOOL_ROOT}" CACHE PATH "HuxerUI host tool root")

@@ -26,6 +26,13 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     enable_language(CXX)
 endif ()
 
+# windows.h defines min/max macros that break std::min/std::max in the
+# editor headers included through the linked library; NOMINMAX keeps the std
+# versions intact (matches the SweetEditor and HuxerUI Windows configuration).
+if (WIN32)
+    add_compile_definitions(NOMINMAX)
+endif ()
+
 if (NOT TARGET HuxerUI::huxerui)
     set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI SDK or source directory")
     set(HUXERUI_HOST_TOOL_ROOT "$ENV{HUXERUI_HOST_TOOL_ROOT}" CACHE PATH "HuxerUI host tool root")
