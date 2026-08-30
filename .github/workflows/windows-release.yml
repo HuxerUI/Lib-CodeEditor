@@ -58,7 +58,27 @@ jobs:
       - name: Install HuxerUI SDK
         shell: pwsh
         run: |
-          irm https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.ps1 | iex
+          $ErrorActionPreference = "Stop"
+          $installer = Join-Path $env:TEMP "huxerui-install.ps1"
+          Invoke-WebRequest -Uri "https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.ps1" -OutFile $installer -UseBasicParsing
+          # The installer resolves the latest version through the GitHub API,
+          # which rate-limits unauthenticated requests from shared runner IPs.
+          # Resolve the version here (with a fallback) and pass it explicitly so
+          # the installer skips the API call.
+          $version = $null
+          try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/HuxerUI/HuxerUI/releases/latest" -Headers @{ "User-Agent" = "sweetedit-ci" }
+            $version = ([string]$release.tag_name).TrimStart("v")
+          } catch {
+            Write-Host "Could not resolve the latest HuxerUI release: $($_.Exception.Message)"
+          }
+          if (-not $version) {
+            $version = "0.1.0"
+            Write-Host "Using fallback version $version"
+          } else {
+            Write-Host "Resolved latest HuxerUI release: $version"
+          }
+          & $installer -Version $version -Yes
           $sdk = Join-Path $env:LOCALAPPDATA "HuxerUI"
           if (-not (Test-Path $sdk)) {
             throw "HuxerUI SDK was not installed at $sdk"
