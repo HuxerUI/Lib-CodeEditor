@@ -113,6 +113,34 @@ jobs:
         shell: pwsh
         run: Get-ChildItem -Recurse examples/preview/dist/windows | Select-Object FullName, Length
 
+      - name: Smoke-run the app and sample CPU (diagnose freeze)
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "examples/preview/dist/windows" -Filter *.exe -Recurse | Select-Object -First 1
+          if (-not $exe) {
+            throw "no exe found under examples/preview/dist/windows"
+          }
+          Write-Host "Launching $($exe.FullName)"
+          $p = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 6
+          $p.Refresh()
+          $alive = -not $p.HasExited
+          $cpuMs = 0
+          if ($alive) {
+            $cpuMs = [int]$p.TotalProcessorTime.TotalMilliseconds
+          }
+          Write-Host "SMOKE alive=$alive cpu_ms=$cpuMs"
+          if ($alive) {
+            Stop-Process -Id $p.Id -Force
+            if ($cpuMs -gt 5000) {
+              Write-Host "SMOKE verdict: busy loop / repaint storm (main thread spinning)"
+            } else {
+              Write-Host "SMOKE verdict: idle but unresponsive (blocked or deadlocked)"
+            }
+          } else {
+            Write-Host "SMOKE verdict: app exited early (exit code $($p.ExitCode))"
+          }
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
