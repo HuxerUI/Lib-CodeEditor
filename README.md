@@ -1,21 +1,21 @@
 # SweetEdit Huxer
 
-HuxerUI 声明式组件实现的跨平台代码编辑器。组件复用 SweetEditor 编辑器内核与 SweetLine 语法高亮引擎，把文本编辑、语法高亮、补全、搜索替换等能力以 HuxerUI 原生方式暴露给应用层。
+A cross-platform code editor implemented as a declarative HuxerUI component. The component reuses the SweetEditor editor core and the SweetLine syntax highlighting engine, exposing text editing, syntax highlighting, completion, search and replace, and more to the application layer the HuxerUI-native way.
 
-## 特性
+## Features
 
-- 声明式组件：`SweetEditor(options, controller)` 返回普通 HuxerUI `View`
-- retained `NodeExtension`：编辑器内核、文档、高亮分析器与输入状态由挂载节点持有
-- 语法高亮：SweetLine JSON 语法规则、增量分析、括号匹配、缩进线、彩虹括号
-- 编辑能力：光标/选区、撤销重做、自动缩进、自动闭合括号、Tab/空格策略、只读
-- 代码补全：Provider 驱动的补全面板、Snippet 展开、替换范围
-- 搜索替换：内置声明式搜索栏，或经 `SweetEditorController` 程序化控制
-- 装饰：诊断、Inlay hint、CodeLens、行号区图标、Diff 展示、Phantom text
-- 折叠与链接：代码折叠、可点击链接
-- typed events：光标/选区/文本/滚动/折叠/手势/点击事件全部通过 HuxerUI 事件系统发出
-- 平台：Windows、macOS、Linux、Web、Android、iOS（随 HuxerUI 平台支持）
+- Declarative component: `SweetEditor(options, controller)` returns an ordinary HuxerUI `View`
+- Retained `NodeExtension`: the editor core, document, highlighter, and input state are held by the mounted node
+- Syntax highlighting: SweetLine JSON grammar rules, incremental analysis, bracket matching, indentation guides, rainbow brackets
+- Editing: caret/selection, undo/redo, auto-indent, auto-closing brackets, Tab/space policy, read-only
+- Code completion: provider-driven completion panel, snippet expansion, replacement ranges
+- Search and replace: built-in declarative search bar, or programmatic control via `SweetEditorController`
+- Decorations: diagnostics, inlay hints, code lens, gutter icons, diff presentation, phantom text
+- Folding and links: code folding, clickable links
+- Typed events: caret/selection/text/scroll/fold/gesture/click events are all emitted through the HuxerUI event system
+- Platforms: Windows, macOS, Linux, Web, Android, iOS (following HuxerUI platform support)
 
-## 快速开始
+## Quick Start
 
 ```cpp
 #include <huxerui/huxerui.h>
@@ -44,41 +44,41 @@ const Application application{
 };
 ```
 
-## 目录结构
+## Repository Layout
 
 ```text
 sweetedit_huxer/
-├── CMakeLists.txt                   # 依赖库（sweetedit_core）
+├── CMakeLists.txt                   # dependency library (sweetedit_core)
 ├── include/sweetedit_core/
-│   └── sweet_editor.h               # 公共 API：配置、事件、controller
-├── src/sweet_editor/                # 组件实现（retained extension）
+│   └── sweet_editor.h               # public API: options, events, controller
+├── src/sweet_editor/                # component implementation (retained extension)
 │   ├── sweet_editor.cpp
 │   ├── sweetline_highlighter.h
 │   └── sweetline_highlighter.cpp
-├── resources/                       # 组件内置语法规则
-├── examples/preview/                # 引用库的 Demo 应用
+├── resources/                       # built-in component syntax rules
+├── examples/preview/                # demo app that uses the library
 │   ├── CMakeLists.txt
 │   ├── src/app.cpp
-│   ├── platform/                    # 各平台 shell
-│   └── resources/                   # Demo 示例文件与语法
+│   ├── platform/                    # per-platform shells
+│   └── resources/                   # demo sample files and grammars
 ├── docs/
-│   └── sweet_editor.md              # 组件使用文档（详细）
+│   └── sweet_editor.md              # detailed component documentation
 └── 3dparty/
-    ├── SweetEditor/                 # 编辑器内核（vendored, gitlink）
-    └── SweetLine/                   # 语法高亮引擎（vendored, gitlink）
+    ├── SweetEditor/                 # editor core (vendored, gitlink)
+    └── SweetLine/                   # syntax highlighting engine (vendored, gitlink)
 ```
 
-## 公共 API 一览
+## Public API Overview
 
 ```cpp
-// 声明式配置 + providers（文档、字体、编辑行为、补全、装饰、Diff、显示）
+// Declarative configuration + providers (document, font, editing behavior, completion, decorations, diff, display)
 struct SweetEditorOptions;
 
-// 文档与搜索控制
+// Document and search control
 class SweetEditorController;
 inline SweetEditorController UseSweetEditorController();
 
-// typed events（绑定在 SweetEditor() 返回的 View 上）
+// Typed events (bound on the View returned by SweetEditor())
 struct SweetEditorTextChanged;
 struct SweetEditorCursorChanged;
 struct SweetEditorSelectionChanged;
@@ -94,111 +94,111 @@ struct SweetEditorInlayClicked;
 View SweetEditor(SweetEditorOptions options = {}, SweetEditorController controller = {});
 ```
 
-## HuxerUI 依赖与安装
+## HuxerUI Dependency and Installation
 
-本仓库是 **HuxerUI 的依赖库**：`sweetedit_core` 构建在 HuxerUI SDK 之上（链接 `HuxerUI::huxerui`），仓库本身不包含 HuxerUI 源码。**没有安装 HuxerUI 的机器无法构建**，请先按本节安装。
+This repository is a **HuxerUI dependency library**: `sweetedit_core` is built on top of the HuxerUI SDK (it links `HuxerUI::huxerui`) and does not contain HuxerUI sources itself. **Machines without HuxerUI installed cannot build this project** — install it first as described in this section.
 
-### HuxerUI 装在哪里（HUXERUI_HOME）
+### Where HuxerUI Is Installed (HUXERUI_HOME)
 
-HuxerUI 安装器把 SDK 装到以下默认位置，并同时做两件事：
+The HuxerUI installer places the SDK in the following default locations and does two things at the same time:
 
-- 写入环境变量 `HUXERUI_HOME`（指向 SDK 根目录）；
-- 把 `$HUXERUI_HOME/bin` 加入 `PATH`（提供 `huxerui` CLI）。
+- writes the `HUXERUI_HOME` environment variable (pointing at the SDK root);
+- adds `$HUXERUI_HOME/bin` to `PATH` (providing the `huxerui` CLI).
 
-| 平台 | 默认安装位置 |
+| Platform | Default install location |
 |---|---|
 | Windows | `%LOCALAPPDATA%\HuxerUI` |
 | macOS | `~/Library/Developer/HuxerUI` |
 | Linux | `~/.local/share/HuxerUI` |
-| Android（Termux） | `~/.local/share/HuxerUI` |
+| Android (Termux) | `~/.local/share/HuxerUI` |
 
-### 安装 HuxerUI
+### Installing HuxerUI
 
-Windows（PowerShell）：
+Windows (PowerShell):
 
 ```powershell
 irm https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.ps1 | iex
 ```
 
-macOS、Linux 与 Android（Termux 同样适用）：
+macOS, Linux, and Android (works on Termux too):
 
 ```bash
 curl -fsSL https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.sh | sh
 ```
 
-安装完成后**新开一个终端**再验证：
+**Open a new terminal** after installation, then verify:
 
 ```bash
 huxerui doctor
 ```
 
-指定版本或自定义安装目录：
+Explicit version or custom prefix:
 
 ```bash
 curl -fsSLO https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.sh
 sh install.sh --version 0.1.0 --prefix "$HOME/Environment/HuxerUI" --yes
 ```
 
-离线安装已下载的归档（需把同名 `.sha256` 放在旁边）：
+Offline install from a downloaded archive (place the matching `.sha256` file beside it):
 
 ```bash
 sh install.sh --archive ./huxerui-sdk-0.1.0-android-arm64-v8a.tar.gz --yes
 ```
 
-卸载（使用安装时的同一前缀）：
+Uninstall (use the same prefix used for installation):
 
 ```bash
 sh install.sh --uninstall --yes
 ```
 
-> 安装 HuxerUI 并不包含平台 SDK、编译器与 Android 工具链（NDK、CMake、ninja 等），这些仍需单独准备；可用 `huxerui doctor` / `huxerui setup` 检查。
+> Installing HuxerUI does not include platform SDKs, compilers, or Android tooling (NDK, CMake, ninja, and so on); those still need to be prepared separately. Use `huxerui doctor` / `huxerui setup` to check.
 
-### 本仓库如何使用 HuxerUI
+### How This Repository Uses HuxerUI
 
-根目录 `CMakeLists.txt` 在配置时读取 `HUXERUI_HOME`，支持两种用法：
+The root `CMakeLists.txt` reads `HUXERUI_HOME` at configure time and supports two modes:
 
-1. **指向已安装的 SDK**（推荐）：SDK 自带 CMake 包文件，项目通过 `find_package(HuxerUI CONFIG REQUIRED)` 找到 `HuxerUI::huxerui`；
-2. **指向 HuxerUI 源码目录**：若 `$HUXERUI_HOME` 下存在 `CMakeLists.txt` 与 `include/huxerui/huxerui.h`，项目直接 `add_subdirectory` 从源码构建 SDK（适合联动调试 HuxerUI 本身）。
+1. **Point at an installed SDK** (recommended): the SDK ships CMake package files and the project finds `HuxerUI::huxerui` through `find_package(HuxerUI CONFIG REQUIRED)`;
+2. **Point at a HuxerUI source directory**: if `$HUXERUI_HOME` contains `CMakeLists.txt` and `include/huxerui/huxerui.h`, the project adds the SDK directly with `add_subdirectory` and builds it from source (useful when developing HuxerUI itself).
 
-组件编译还需要 host 代码生成工具 `hrc`/`hcg`：已安装的 SDK 会在 `share/huxerui/tools` 下自动提供；源码目录则在 `tools/prebuilt/<平台>/<架构>/`。Termux 的特殊处理见下文。
+The component build also needs the host code generation tools `hrc`/`hcg`: an installed SDK provides them automatically under `share/huxerui/tools`; a source directory keeps them under `tools/prebuilt/<platform>/<architecture>/`. Termux-specific handling is described below.
 
-## 构建
+## Building
 
-### Android（普通电脑）
+### Android (on a normal computer)
 
-`HUXERUI_HOME` 一般已由 HuxerUI 安装器写入环境，无需手动指定；此处仅示范如何覆盖为其他 SDK 位置：
+`HUXERUI_HOME` is normally written by the HuxerUI installer, so it needs no manual export; this just shows how to override it with another SDK location:
 
 ```bash
 cd examples/preview/platform/android
 HUXERUI_HOME=/path/to/huxerui sh gradlew :app:assembleRelease --no-daemon
 ```
 
-### 没有电脑？在 Termux 中构建（重要）
+### No computer? Build in Termux (important)
 
-本仓库支持**只用手机（Termux 环境）**完成 Android 构建，但 Termux 与普通电脑差异很大，请务必注意以下事项。
+This repository supports completing an Android build **using only a phone (Termux environment)**, but Termux differs a lot from a normal computer, so please note the following carefully.
 
-#### 1. 环境准备
+#### 1. Environment preparation
 
-先安装 HuxerUI SDK（Termux 支持官方安装脚本，默认装到 `~/.local/share/HuxerUI`，位于 /data 分区、工具可直接执行）：
+First install the HuxerUI SDK (Termux supports the official installer; it defaults to `~/.local/share/HuxerUI` on the /data partition, where tools run directly):
 
 ```bash
 curl -fsSL https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.sh | sh
 ```
 
-再装编译所需工具：
+Then install the build tools:
 
 ```bash
 pkg install clang cmake ninja openjdk-21 python
 ```
 
-还需要 Android SDK 与 NDK（建议装在 Termux 私有目录，不要放在共享存储）：
+You also need the Android SDK and NDK (install them under the Termux private directory, not on shared storage):
 
 ```bash
 export ANDROID_HOME=$HOME/android-sdk
 export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865
 ```
 
-以及 HuxerUI 的 host 代码生成工具（hrc/hcg）。**如果 HuxerUI 已用安装器装到 /data 分区，工具已自带且可执行，跳过本步**；只有当 `HUXERUI_HOME` 指向共享存储（/sdcard）上的 HuxerUI 源码目录时，才需要把工具**复制到 /data 分区并加执行权限**：
+And the HuxerUI host code generation tools (hrc/hcg). **If HuxerUI was installed with the installer on the /data partition, the tools are included and executable — skip this step**; only when `HUXERUI_HOME` points at a HuxerUI source directory on shared storage (/sdcard) do you need to **copy the tools to the /data partition and mark them executable**:
 
 ```bash
 mkdir -p $HOME/huxerui-tools/host-tools/android/arm64-v8a
@@ -206,19 +206,19 @@ cp <huxerui>/tools/prebuilt/android/arm64-v8a/{hrc,hcg} $HOME/huxerui-tools/host
 chmod 755 $HOME/huxerui-tools/host-tools/android/arm64-v8a/{hrc,hcg}
 ```
 
-> 共享存储（/sdcard）的 FUSE 文件系统**不支持设置执行位**，放在 /data 分区的工具才能运行。
+> The FUSE filesystem on shared storage (/sdcard) **does not support setting the executable bit**; only tools on the /data partition can run.
 
-#### 2. 使用专用工具 huxerui-termux
+#### 2. Use the dedicated huxerui-termux tool
 
-本项目提供 `tools/huxerui-termux`，已封装 Termux 所需的所有步骤（绕过无执行位、注入交叉工具链、staging 重定向、aapt2 覆盖）：
+This repository provides `tools/huxerui-termux`, which wraps every Termux-specific step (working around the missing exec bit, injecting the cross toolchain, redirecting staging, overriding aapt2):
 
 ```bash
 cd examples/preview
 bash ../tools/huxerui-termux build android [--profile debug|release]
-bash ../tools/huxerui-termux run android        # 需要 adb 连接设备
+bash ../tools/huxerui-termux run android        # requires an adb-connected device
 ```
 
-#### 3. 手动构建（不用工具时）
+#### 3. Manual build (without the tool)
 
 ```bash
 cd examples/preview/platform/android
@@ -232,33 +232,33 @@ sh gradlew :app:assembleRelease \
   --no-daemon
 ```
 
-#### 4. Termux 关键注意点
+#### 4. Key Termux gotchas
 
-- **gradlew 无法直接执行**：共享存储无执行位，必须用 `sh gradlew ...`；
-- **aapt2 必须覆盖**：SDK 自带的 aapt2 是 Linux ELF，在 Termux 无法运行；`-Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2` 指向 Termux 原生版本；
-- **staging 放非 FUSE 分区**：`-PtermuxCxxStaging=$HOME/...`，否则共享存储的 mtime 不更新会让 ninja 反复重编/漏编；
-- **host 工具路径**：新版 HuxerUI 在 Termux 下按 `android/arm64-v8a` 解析；已安装 SDK 位于 `share/huxerui/tools/`，源码目录位于 `tools/prebuilt/`。若自动解析失败（如 `HUXERUI_HOME` 指向共享存储），需按第 1 条复制到 /data 分区；
-- **CMake 交叉工具链**：`-PtermuxAndroidToolchain=platform/android/termux-android-toolchain.cmake`（仓库自带），Termux 的 Android 用户态无法使用 NDK 自带工具链；
-- **HUXERUI_HOST_TOOL_ROOT**：新版 HuxerUI 需要该变量指向 host 工具目录（已安装 SDK 由 CMake 包自动设置，无需手动指定；仅在指向共享存储的源码目录时需手动设置，否则回退到无执行权限的共享存储路径）；
-- 完整 `assembleRelease` 在 Termux 可能因系统限制失败，优先用 `buildCMakeRelease[arm64-v8a]` 或上面的工具。
+- **gradlew cannot be executed directly**: shared storage has no exec bit, so use `sh gradlew ...`;
+- **aapt2 must be overridden**: the SDK's bundled aapt2 is a Linux ELF and cannot run under Termux; `-Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2` points at the Termux-native version;
+- **staging on a non-FUSE partition**: `-PtermuxCxxStaging=$HOME/...`, otherwise stale mtimes on shared storage make ninja rebuild/miss builds repeatedly;
+- **host tool path**: newer HuxerUI resolves `android/arm64-v8a` on Termux; an installed SDK keeps the tools under `share/huxerui/tools/`, a source directory under `tools/prebuilt/`. If automatic resolution fails (for example `HUXERUI_HOME` points at shared storage), copy the tools to the /data partition as in step 1;
+- **CMake cross toolchain**: `-PtermuxAndroidToolchain=platform/android/termux-android-toolchain.cmake` (shipped in the repository); Termux's Android userland cannot use the NDK toolchain;
+- **HUXERUI_HOST_TOOL_ROOT**: newer HuxerUI needs this variable to point at the host tool directory (an installed SDK sets it automatically through the CMake package, so it only needs to be set manually for a source directory on shared storage; otherwise it falls back to a shared-storage path without exec permission);
+- a full `assembleRelease` may fail under Termux because of system limits; prefer `buildCMakeRelease[arm64-v8a]` or the tool above.
 
-### 桌面 / Web / iOS
+### Desktop / Web / iOS
 
-- Windows、Linux、macOS：`huxerui::RunApplication()` 平台入口
-- Web：Emscripten WebAssembly（`platform/web/`）
-- iOS：`platform/ios/` 的 Xcode 工程
+- Windows, Linux, macOS: `huxerui::RunApplication()` platform entry
+- Web: Emscripten WebAssembly (`platform/web/`)
+- iOS: the Xcode project under `platform/ios/`
 
-## 第三方依赖
+## Third-Party Dependencies
 
-- [SweetEditor](3dparty/SweetEditor) — 跨平台编辑器内核（vendored，独立仓库 gitlink）
-- [SweetLine](3dparty/SweetLine) — 跨平台语法高亮引擎（vendored，独立仓库 gitlink）
+- [SweetEditor](3dparty/SweetEditor) — cross-platform editor core (vendored, independent repo as gitlink)
+- [SweetLine](3dparty/SweetLine) — cross-platform syntax highlighting engine (vendored, independent repo as gitlink)
 
-两个第三方仓库以 gitlink 形式记录，不修改其内容。
+Both third-party repositories are recorded as gitlinks and their contents are never modified.
 
-## 文档
+## Documentation
 
-- [组件使用文档](docs/sweet_editor.md) — API、架构、示例、限制与验证清单
+- [Component documentation](docs/sweet_editor.md) — API, architecture, examples, limitations, and validation checklist
 
-## 许可
+## License
 
-组件代码许可待定；SweetEditor 与 SweetLine 遵循各自上游仓库的许可。
+Component code license is pending; SweetEditor and SweetLine follow the licenses of their respective upstream repositories.

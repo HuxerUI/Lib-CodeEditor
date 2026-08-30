@@ -99,7 +99,7 @@ non-sealed class Rectangle extends Shape {
  * @apiNote This class is for demonstration purposes only.
  */
 @SuppressWarnings("unchecked")
-@MyAnnotation(value = "示例", count = 5, enabled = true)
+@MyAnnotation(value = "Sample", count = 5, enabled = true)
 public class Example<T extends Comparable<T>> {
 
     // primitive type variable
@@ -178,10 +178,10 @@ public class Example<T extends Comparable<T>> {
     // switch expression + yield
     public String describe(Color color) {
         return switch (color) {
-            case RED -> "红色";
-            case GREEN -> "绿色";
+            case RED -> "Red";
+            case GREEN -> "Green";
             case BLUE -> {
-                String msg = "蓝色";
+                String msg = "Blue";
                 yield msg;
             }
         };
@@ -198,12 +198,12 @@ public class Example<T extends Comparable<T>> {
             if (obj instanceof String str) {
                 System.out.println(str.length());
             } else if (obj instanceof Integer) {
-                throw new IllegalArgumentException("不支持整数");
+                throw new IllegalArgumentException("Integer is not supported");
             }
         } catch (IllegalArgumentException e) {
             e.printStackTrace();
         } finally {
-            System.out.println("处理完毕");
+            System.out.println("Done processing");
         }
     }
 
@@ -226,7 +226,7 @@ public class Example<T extends Comparable<T>> {
         List<String> list = new ArrayList<String>();
         Map<String, List<Integer>> map = new ArrayList<>();
         var value = list.get(0);
-        assert value != null : "值不能为空";
+        assert value != null : "Value must not be null";
     }
 
     // text block
@@ -245,7 +245,7 @@ public class Example<T extends Comparable<T>> {
         Circle c1 = new Circle(5.0);
         Circle c2 = new Circle(3.0);
         Circle max = findMax(List.of(c1, c2));
-        System.out.println("面积: " + c1.area());
-        System.out.println("较大: " + max);
+        System.out.println("Area: " + c1.area());
+        System.out.println("Larger: " + max);
     }
 }
