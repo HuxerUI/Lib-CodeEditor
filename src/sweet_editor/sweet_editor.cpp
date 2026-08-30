@@ -1732,6 +1732,32 @@ public:
       model_dirty_ = true;
     }
 
+    // Re-publish the viewport highlight slice when the visible range changed
+    // (scroll) or on the very first non-empty viewport. Syntax highlighting and
+    // indent guides are applied immediately; decorations/document highlights are
+    // deferred until the viewport settles so fast scrolling does not pay their
+    // per-frame cost. Publishing must happen before buildRenderModel so the very
+    // first frame already carries the spans (an unfocused editor schedules no
+    // follow-up frame, so waiting for one would leave the editor unhighlighted
+    // until the user scrolls).
+    const se::IntRange visible = core_->getVisibleLineRange();
+    const bool first_highlight = !highlight_published_ && !visible.isEmpty();
+    if (first_highlight || visible.start != last_visible_range_.start || visible.end != last_visible_range_.end) {
+      if (first_highlight || !visible.isEmpty()) {
+        highlighter_->PublishVisible(*core_);
+        if (first_highlight) {
+          highlight_published_ = true;
+        }
+        decorations_pending_ = true;
+        model_dirty_ = true;
+      }
+      last_visible_range_ = visible;
+    } else if (decorations_pending_) {
+      highlighter_->RefreshVisibleDecorations(*core_);
+      decorations_pending_ = false;
+      model_dirty_ = true;
+    }
+
     // Rebuild the render model only when the core state changed (input, scroll,
     // decorations). Pure repaints (cursor blink, focus changes) reuse the
     // cached model, matching the reference renderer's onDraw caching.
@@ -1744,32 +1770,6 @@ public:
       model_dirty_ = false;
     }
     const se::EditorRenderModel& model = cached_model_;
-
-    // Re-publish the viewport highlight slice when the visible range changed (scroll).
-    // Syntax highlighting and indent guides are applied immediately;
-    // decorations/document highlights are deferred until the viewport settles so
-    // fast scrolling does not pay their per-frame cost (reference decoration
-    // pipeline throttles scroll refreshes). Publishing new spans/guides changes
-    // core decorations, so the next frame must rebuild the model.
-    const se::IntRange visible = core_->getVisibleLineRange();
-    if (visible.start != last_visible_range_.start || visible.end != last_visible_range_.end) {
-      last_visible_range_ = visible;
-      if (!visible.isEmpty()) {
-        highlighter_->PublishVisible(*core_);
-        decorations_pending_ = true;
-        model_dirty_ = true;
-        if (invalidate_) {
-          invalidate_();
-        }
-      }
-    } else if (decorations_pending_) {
-      highlighter_->RefreshVisibleDecorations(*core_);
-      decorations_pending_ = false;
-      model_dirty_ = true;
-      if (invalidate_) {
-        invalidate_();
-      }
-    }
 
     RenderModel(paint, size, model);
 
@@ -2526,6 +2526,7 @@ private:
   se::EditorRenderModel cached_model_;
   bool model_dirty_{true};
   bool decorations_pending_{false};
+  bool highlight_published_{false};
   // Scrollbar thumb dragging state.
   bool scrollbar_dragging_{false};
   bool scrollbar_drag_vertical_{true};
