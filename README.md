@@ -248,6 +248,15 @@ sh gradlew :app:assembleRelease \
 - Web: Emscripten WebAssembly (`platform/web/`)
 - iOS: the Xcode project under `platform/ios/`
 
+## CI / Windows Release
+
+The repository ships a GitHub Actions workflow ([`.github/workflows/windows-release.yml`](.github/workflows/windows-release.yml)) that builds the Windows x64 demo app (`examples/preview`) on `windows-latest` and publishes the exe:
+
+- on **every push to `main`** it builds and uploads the exe as a workflow artifact;
+- on a **tag push `v*`** or a **manual `workflow_dispatch` run** (with the `create_release` input) it also creates/updates a GitHub Release and attaches the exe, its resources, and any DLLs.
+
+The workflow installs the HuxerUI SDK with the official installer and populates the `3dparty` gitlinks (SweetEditor/SweetLine) at the exact commits recorded in the repository.
+
 ## Third-Party Dependencies
 
 - [SweetEditor](3dparty/SweetEditor) — cross-platform editor core (vendored, independent repo as gitlink)
