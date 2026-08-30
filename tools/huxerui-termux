@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+#
+# huxerui-termux — Termux-only Android build/run helper for HuxerUI projects.
+#
+# Termux runs an Android userland, so the generated gradlew on shared storage
+# cannot be marked executable and the NDK toolchain cannot configure a build
+# from an Android host. This script keeps the huxerui CLI source untouched and
+# performs the Termux-specific steps itself:
+#
+#   1. configures the HuxerUI library graph with cmake;
+#   2. runs gradlew through the shell (bypasses the missing exec bit);
+#   3. selects the Termux cross-toolchain file;
+#   4. redirects CMake staging off FUSE storage;
+#   5. pins arm64-v8a and the Termux native aapt2.
+#
+# Usage (run from a project directory, like the huxerui CLI):
+#
+#   huxerui-termux build android [--profile debug|release]
+#   huxerui-termux run android
+#
+# Other commands are forwarded to the huxerui CLI (set HUXERUI_CLI to its
+# executable path; default $HOME/huxerui-cli).
+
+set -euo pipefail
+
+HUXERUI_CLI="${HUXERUI_CLI:-"$HOME/huxerui-cli"}"
+HUXERUI_HOME="${HUXERUI_HOME:-/storage/emulated/0/资源/huxerui}"
+HUXERUI_HOST_TOOL_ROOT="${HUXERUI_HOST_TOOL_ROOT:-/data/data/com.termux/files/home/huxerui-tools/host-tools}"
+AAPT2_OVERRIDE="${AAPT2_OVERRIDE:-/data/data/com.termux/files/usr/bin/aapt2}"
+CXX_STAGING="${CXX_STAGING:-"${HOME:-.}/sweetedit-android-cxx"}"
+ABIS="${ABIS:-arm64-v8a}"
+
+configure_graph() {
+  cmake -G Ninja -S . -B .huxerui/build/library-graph \
+    -DCMAKE_BUILD_TYPE=Debug -DHUXERUI_LIBRARY_GRAPH_ONLY=ON
+}
+
+termux_gradle() {
+  local profile="${1:-debug}"
+  local shell_dir="$PWD/platform/android"
+  if [[ ! -d "$shell_dir" ]]; then
+    echo "huxerui-termux: no Android shell at $shell_dir" >&2
+    exit 1
+  fi
+  local toolchain="$shell_dir/termux-android-toolchain.cmake"
+  if [[ ! -f "$toolchain" ]]; then
+    echo "huxerui-termux: missing toolchain file $toolchain" >&2
+    exit 1
+  fi
+  mkdir -p "$CXX_STAGING"
+  cd "$shell_dir"
+  sh ./gradlew ":app:assemble${profile^}" \
+    "-PtermuxAndroidToolchain=$toolchain" \
+    "-PtermuxCxxStaging=$CXX_STAGING" \
+    "-PhuxeruiAbis=$ABIS" \
+    "-Pandroid.aapt2FromMavenOverride=$AAPT2_OVERRIDE" \
+    --no-daemon
+}
+
+android_build() {
+  local profile="${1:-debug}"
+  configure_graph
+  termux_gradle "$profile"
+}
+
+android_run() {
+  local profile="${1:-debug}"
+  android_build "$profile"
+  local output_dir="platform/android/app/build/outputs/apk/${profile}"
+  local metadata="$output_dir/output-metadata.json"
+  if [[ ! -f "$metadata" ]]; then
+    echo "huxerui-termux: APK metadata not produced at $metadata" >&2
+    exit 1
+  fi
+  local app_id apk
+  app_id="$(grep -o '"applicationId": *"[^"]*"' "$metadata" | sed 's/.*: *"//; s/"//')"
+  apk="$(grep -o '"outputFile": *"[^"]*"' "$metadata" | sed 's/.*: *"//; s/"//' | sed "s|^|$output_dir/|")"
+  adb install -r "$apk"
+  adb shell am start -n "${app_id}/.MainActivity"
+}
+
+main() {
+  local command="${1:-}"
+  shift || true
+  local profile="debug"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --profile) profile="${2:-debug}"; shift 2 ;;
+    *) shift ;;
+    esac
+  done
+
+  case "$command" in
+  build)
+    android_build "$profile"
+    ;;
+  run)
+    android_run "$profile"
+    ;;
+  *)
+    if [[ -x "$HUXERUI_CLI" ]]; then
+      "$HUXERUI_CLI" "$command" "${@:-}"
+    else
+      echo "huxerui-termux: '$command' needs the huxerui CLI; set HUXERUI_CLI" >&2
+      exit 127
+    fi
+    ;;
+  esac
+}
+
+main "$@"
