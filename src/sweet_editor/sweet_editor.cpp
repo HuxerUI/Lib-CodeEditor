@@ -2873,7 +2873,10 @@ struct SweetEditorBehavior {
     }
 
     TextSelectionClient* GetTextSelectionClient() noexcept override {
-      return holder_->TextInputClient().get();
+      // The editor renders selection handles and highlights itself inside its
+      // own clip; leaving the window-level selection overlay enabled would draw
+      // them in host coordinates without clipping and bleed onto other views.
+      return nullptr;
     }
 
     bool HitTest(MountedNode& node, Point position) const override {
