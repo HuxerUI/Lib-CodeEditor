@@ -289,7 +289,9 @@ View DemoToolbar(bool diff_enabled, bool wrap_enabled, bool sticky_enabled) {
 [[huxerui::composable]]
 View DemoDiffPanel(bool visible, State<std::string> original_text) {
   if (!visible) {
-    return Spacer().With(Frame{.height = 0.0F});
+    // An empty View contributes no children and no layout space, so the
+    // collapsed diff panel cannot push a gap between the toolbar and editor.
+    return View{};
   }
   const EventEmitter events = UseEvents();
   return Column {

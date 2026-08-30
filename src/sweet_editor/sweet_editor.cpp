@@ -2859,7 +2859,13 @@ struct SweetEditorBehavior {
     }
 
     void PaintAboveContent(const MountedNode& node, PaintContext& context) const override {
-      holder_->Render(context, node.LayoutSize());
+      const Size size = node.LayoutSize();
+      // Clip the editor painting to its own bounds so cursor, focus line,
+      // selection backgrounds, and other overdraw cannot bleed into the gutter
+      // lane or outside the component layout.
+      context.PushClip(Rect{0.0F, 0.0F, size.width, size.height});
+      holder_->Render(context, size);
+      context.PopClip();
     }
 
     std::shared_ptr<TextInputClient> GetTextInputClient() noexcept override {
