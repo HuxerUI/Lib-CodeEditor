@@ -1394,6 +1394,11 @@ public:
       }
     }
 
+    // The SweetEditor core resolves key chords without a down/up distinction, so
+    // a KeyUp would repeat the same edit (double newline / double delete).
+    if (event.type != KeyEventType::Down) {
+      return false;
+    }
     try {
       const se::EditorActionResult result = core_->handleKeyEvent(ToKeyEvent(event));
       if (!result.text_changes.empty()) {
