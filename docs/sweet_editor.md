@@ -27,6 +27,8 @@ project/sweetedit_huxer/
 │   └── sweetline_highlighter.cpp
 ├── resources/raw/
 ├── platform/
+├── docs/
+│   └── sweet_editor.md
 └── 3dparty/
     ├── SweetEditor/
     └── SweetLine/
@@ -323,7 +325,7 @@ options.decoration_providers.push_back(
 
 ## 9. 搜索、替换和 controller
 
-`SweetEditor` 暴露一个 `SweetEditorController`，由组件 scope 创建并传给 `SweetEditor()`。controller 提供文档加载、全文读取、光标定位和搜索替换控制；未连接时方法返回 `false`。
+`SweetEditor` 暴露一个 `SweetEditorController`，由调用方组件通过 `UseSweetEditorController()` 创建并传给 `SweetEditor()`。controller 提供文档加载、全文读取、光标定位和搜索替换控制；未连接（组件未挂载或已卸载）时方法返回 `false`。
 
 ```cpp
 [[huxerui::scope]]
@@ -408,6 +410,7 @@ options.content_start_padding = 8.0F;
 ## 12. 多文件示例
 
 ```cpp
+// 需要 [[huxerui::scope]]（示例省略）。
 View EditorPage() {
   auto current_file = UseState(0);
   const char* keys[] = {"main.cpp", "example.java", "example.lua"};
@@ -450,16 +453,24 @@ target_link_libraries(sweetedit_huxer PRIVATE
 ### Android
 
 ```bash
-cd project/sweetedit_huxer/platform/android
+cd platform/android
 HUXERUI_HOME=/path/to/huxerui \
 HUXERUI_HOST_TOOL_ROOT=/path/to/host-tools \
-bash ./gradlew :app:buildCMakeDebug[arm64-v8a] --no-daemon
+sh gradlew :app:assembleRelease \
+  -PtermuxAndroidToolchain=/path/to/termux-android-toolchain.cmake \
+  -PtermuxCxxStaging=$HOME/sweetedit-android-cxx \
+  -PhuxeruiAbis=arm64-v8a \
+  -Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2 \
+  --no-daemon
 ```
 
-完整 APK：
+> Termux 环境下 `android.aapt2FromMavenOverride` 指向 Termux 原生 `aapt2`；
+> `termuxCxxStaging` 把 CMake 中间产物放到非 FUSE 分区以避免 mtime 问题。
+
+Debug 原生目标：
 
 ```bash
-bash ./gradlew :app:assembleDebug --no-daemon
+sh gradlew :app:buildCMakeDebug[arm64-v8a] --no-daemon
 ```
 
 当前工程按 Android API 23 边界配置，并需要 Android SDK、NDK、CMake、Gradle 和 HuxerUI host codegen 工具。
