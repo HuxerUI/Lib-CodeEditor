@@ -1201,6 +1201,9 @@ public:
   }
 
   bool HandlePointer(const PointerEvent& event) {
+    if (event.type == PointerEventType::Down) {
+      suppress_focus_on_up_ = false;
+    }
     // A down inside the open context menu executes the tapped entry; a down
     // outside dismisses it (then falls through to the editor).
     if (event.type == PointerEventType::Down && context_menu_.visible) {
@@ -1250,9 +1253,12 @@ public:
         FireCaretEvents();
       }
       // Decoration hits (reference fireGestureEvents): fold toggles are
-      // handled inline; the rest dispatch to host callbacks.
+      // handled inline; the rest dispatch to host callbacks. Taps on command
+      // areas (gutter icons, code lens, links, inlay hints, fold controls)
+      // must not focus the editor or raise the keyboard.
       if (result.gesture_type == se::GestureType::TAP && result.hit_target.type != se::HitTargetType::NONE) {
         const se::HitTarget& target = result.hit_target;
+        suppress_focus_on_up_ = true;
         switch (target.type) {
         case se::HitTargetType::FOLD_GUTTER:
         case se::HitTargetType::FOLD_PLACEHOLDER:
@@ -1485,6 +1491,21 @@ public:
 
   bool HasPendingPaintWork() const noexcept {
     return model_dirty_ || decorations_pending_;
+  }
+
+  // Whether the first non-empty viewport highlight slice has been published.
+  bool HighlightPublished() const noexcept {
+    return highlight_published_;
+  }
+
+  bool HasViewport() const noexcept {
+    return viewport_.width > 0.0F && viewport_.height > 0.0F;
+  }
+
+  // Whether the latest tap hit a command area (gutter icon, code lens, link,
+  // inlay hint, fold control) that must not focus the editor.
+  bool SuppressFocusOnPointerUp() const noexcept {
+    return suppress_focus_on_up_;
   }
 
   bool AdvanceFrame(double timestamp) {
@@ -2527,6 +2548,7 @@ private:
   bool model_dirty_{true};
   bool decorations_pending_{false};
   bool highlight_published_{false};
+  bool suppress_focus_on_up_{false};
   // Scrollbar thumb dragging state.
   bool scrollbar_dragging_{false};
   bool scrollbar_drag_vertical_{true};
@@ -2760,11 +2782,22 @@ struct SweetEditorBehavior {
       InvalidatePaint();
     }
 
+    bool ShouldCommitFocusOnPointerUp() const noexcept override {
+      return !holder_->SuppressFocusOnPointerUp();
+    }
+
     FrameResult OnFrame(MountedNode& node, const FrameInfo& frame) override {
       static_cast<void>(node);
       const bool changed = holder_->AdvanceFrame(frame.timestamp);
       if (changed) {
         InvalidatePaint();
+      }
+      // Keep frames flowing until the first highlight slice is published: an
+      // unfocused editor otherwise schedules no follow-up frame and the first
+      // paint (which may run before the viewport has size) never repaints.
+      if (!holder_->HighlightPublished() && holder_->HasViewport()) {
+        InvalidatePaint();
+        return {.needs_frame = true};
       }
       if (holder_->HasActiveAnimation() || holder_->HasPendingPaintWork()) {
         return {.needs_frame = true};
