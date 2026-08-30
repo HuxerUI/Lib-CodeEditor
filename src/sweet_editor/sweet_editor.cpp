@@ -1498,8 +1498,15 @@ public:
     return highlight_published_;
   }
 
-  bool HasViewport() const noexcept {
-    return viewport_.width > 0.0F && viewport_.height > 0.0F;
+  // The first frames after mount keep flowing until the initial highlight slice
+  // is published (an unfocused editor schedules no follow-up frame otherwise).
+  // Bounded so a permanently empty viewport cannot spin frames forever.
+  bool ShouldBootstrapHighlight() noexcept {
+    if (highlight_published_ || highlight_bootstrap_attempts_ >= kHighlightBootstrapFrames) {
+      return false;
+    }
+    ++highlight_bootstrap_attempts_;
+    return true;
   }
 
   // Whether the latest tap hit a command area (gutter icon, code lens, link,
@@ -1753,14 +1760,25 @@ public:
       model_dirty_ = true;
     }
 
+    // Rebuild the render model first: buildRenderModel also refreshes the
+    // core's visible line range, so the viewport slice below is always current.
+    if (model_dirty_) {
+      // buildRenderModel appends into the model, so a fresh (empty) model is
+      // required each rebuild; reusing the cached instance would accumulate
+      // stale lines/decorations and ghost on every update.
+      cached_model_ = se::EditorRenderModel{};
+      core_->buildRenderModel(cached_model_);
+      model_dirty_ = false;
+    }
+    const se::EditorRenderModel& model = cached_model_;
+
     // Re-publish the viewport highlight slice when the visible range changed
     // (scroll) or on the very first non-empty viewport. Syntax highlighting and
     // indent guides are applied immediately; decorations/document highlights are
     // deferred until the viewport settles so fast scrolling does not pay their
-    // per-frame cost. Publishing must happen before buildRenderModel so the very
-    // first frame already carries the spans (an unfocused editor schedules no
-    // follow-up frame, so waiting for one would leave the editor unhighlighted
-    // until the user scrolls).
+    // per-frame cost. Publishing marks the model dirty so the next frame
+    // rebuilds with the spans; the OnFrame bootstrap keeps frames flowing until
+    // that first publish lands.
     const se::IntRange visible = core_->getVisibleLineRange();
     const bool first_highlight = !highlight_published_ && !visible.isEmpty();
     if (first_highlight || visible.start != last_visible_range_.start || visible.end != last_visible_range_.end) {
@@ -1778,19 +1796,6 @@ public:
       decorations_pending_ = false;
       model_dirty_ = true;
     }
-
-    // Rebuild the render model only when the core state changed (input, scroll,
-    // decorations). Pure repaints (cursor blink, focus changes) reuse the
-    // cached model, matching the reference renderer's onDraw caching.
-    if (model_dirty_) {
-      // buildRenderModel appends into the model, so a fresh (empty) model is
-      // required each rebuild; reusing the cached instance would accumulate
-      // stale lines/decorations and ghost on every update.
-      cached_model_ = se::EditorRenderModel{};
-      core_->buildRenderModel(cached_model_);
-      model_dirty_ = false;
-    }
-    const se::EditorRenderModel& model = cached_model_;
 
     RenderModel(paint, size, model);
 
@@ -2549,6 +2554,8 @@ private:
   bool decorations_pending_{false};
   bool highlight_published_{false};
   bool suppress_focus_on_up_{false};
+  static constexpr unsigned kHighlightBootstrapFrames = 16;
+  unsigned highlight_bootstrap_attempts_{0};
   // Scrollbar thumb dragging state.
   bool scrollbar_dragging_{false};
   bool scrollbar_drag_vertical_{true};
@@ -2795,7 +2802,8 @@ struct SweetEditorBehavior {
       // Keep frames flowing until the first highlight slice is published: an
       // unfocused editor otherwise schedules no follow-up frame and the first
       // paint (which may run before the viewport has size) never repaints.
-      if (!holder_->HighlightPublished() && holder_->HasViewport()) {
+      // Bounded so a permanently empty viewport cannot spin frames forever.
+      if (holder_->ShouldBootstrapHighlight()) {
         InvalidatePaint();
         return {.needs_frame = true};
       }
