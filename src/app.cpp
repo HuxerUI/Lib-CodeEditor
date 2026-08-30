@@ -352,23 +352,24 @@ View App() {
   options.wrap_mode = wrap_enabled.Get() ? 2 : 0;  // 2 = WORD_BREAK
   options.sticky_gutter = sticky_enabled.Get();
 
-  std::vector<View> file_buttons;
-  file_buttons.reserve(kDemoFileCount);
-  for (size_t i = 0; i < kDemoFileCount; ++i) {
-    file_buttons.push_back(
-        Button(kDemoFiles[i].label)
-            .On<ViewEvents::Click>([current_file, diff_enabled, diff_original, texts, i] {
-              current_file = static_cast<int>(i);
-              if (diff_enabled.Get()) {
-                diff_original = texts[static_cast<size_t>(i)];
-              }
-            })
-    );
-  }
+  const std::array<size_t, kDemoFileCount> file_indices = {0, 1, 2, 3, 4};
 
   std::vector<View> children;
   children.reserve(6);
-  children.push_back(Row { std::move(file_buttons) }.With(Spacing(8.0F), Padding(8.0F)));
+  children.push_back(
+      Row {
+        ForEach(file_indices, [current_file, diff_enabled, diff_original, texts](size_t i) {
+          return Button(kDemoFiles[i].label)
+              .OnClick([current_file, diff_enabled, diff_original, texts, i] {
+                current_file = static_cast<int>(i);
+                if (diff_enabled.Get()) {
+                  diff_original = texts[i];
+                }
+              })
+              .Key(kDemoFiles[i].key);
+        }),
+      }.With(Spacing(8.0F), Padding(8.0F))
+  );
   children.push_back(Row {
     Button(diff_enabled.Get() ? "Diff: On" : "Diff: Off")
         .On<ViewEvents::Click>([diff_enabled, diff_original, texts, index] {
