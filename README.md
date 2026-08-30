@@ -96,22 +96,73 @@ View SweetEditor(SweetEditorOptions options = {}, SweetEditorController controll
 
 ## 构建
 
-### Android
+### Android（普通电脑）
 
 ```bash
-cd platform/android
-HUXERUI_HOME=/path/to/huxerui \
-HUXERUI_HOST_TOOL_ROOT=/path/to/host-tools \
+cd examples/preview/platform/android
+HUXERUI_HOME=/path/to/huxerui sh gradlew :app:assembleRelease --no-daemon
+```
+
+### 没有电脑？在 Termux 中构建（重要）
+
+本仓库支持**只用手机（Termux 环境）**完成 Android 构建，但 Termux 与普通电脑差异很大，请务必注意以下事项。
+
+#### 1. 环境准备
+
+```bash
+pkg install clang cmake ninja openjdk-21 python
+```
+
+还需要 Android SDK 与 NDK（建议装在 Termux 私有目录，不要放在共享存储）：
+
+```bash
+export ANDROID_HOME=$HOME/android-sdk
+export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865
+```
+
+以及 HuxerUI 的 host 代码生成工具（hrc/hcg）。它们必须**复制到 /data 分区并加执行权限**，否则无法运行：
+
+```bash
+mkdir -p $HOME/huxerui-tools/host-tools/android/arm64-v8a
+cp <huxerui>/tools/prebuilt/android/arm64-v8a/{hrc,hcg} $HOME/huxerui-tools/host-tools/android/arm64-v8a/
+chmod 755 $HOME/huxerui-tools/host-tools/android/arm64-v8a/{hrc,hcg}
+```
+
+> 共享存储（/sdcard）的 FUSE 文件系统**不支持设置执行位**，工具必须放在 /data 分区。
+
+#### 2. 使用专用工具 huxerui-termux
+
+本项目提供 `tools/huxerui-termux`，已封装 Termux 所需的所有步骤（绕过无执行位、注入交叉工具链、staging 重定向、aapt2 覆盖）：
+
+```bash
+cd examples/preview
+bash ../tools/huxerui-termux build android [--profile debug|release]
+bash ../tools/huxerui-termux run android        # 需要 adb 连接设备
+```
+
+#### 3. 手动构建（不用工具时）
+
+```bash
+cd examples/preview/platform/android
+export HUXERUI_HOME=/storage/emulated/0/资源/huxerui
+export HUXERUI_HOST_TOOL_ROOT=$HOME/huxerui-tools/host-tools
 sh gradlew :app:assembleRelease \
-  -PtermuxAndroidToolchain=/path/to/termux-android-toolchain.cmake \
+  -PtermuxAndroidToolchain=$PWD/termux-android-toolchain.cmake \
   -PtermuxCxxStaging=$HOME/sweetedit-android-cxx \
   -PhuxeruiAbis=arm64-v8a \
   -Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2 \
   --no-daemon
 ```
 
-> 在 Termux 环境下，`android.aapt2FromMavenOverride` 指向 Termux 原生 `aapt2`；
-> `termuxCxxStaging` 把 CMake 中间产物放到非 FUSE 分区以避免 mtime 问题。
+#### 4. Termux 关键注意点
+
+- **gradlew 无法直接执行**：共享存储无执行位，必须用 `sh gradlew ...`；
+- **aapt2 必须覆盖**：SDK 自带的 aapt2 是 Linux ELF，在 Termux 无法运行；`-Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2` 指向 Termux 原生版本；
+- **staging 放非 FUSE 分区**：`-PtermuxCxxStaging=$HOME/...`，否则共享存储的 mtime 不更新会让 ninja 反复重编/漏编；
+- **host 工具路径**：新版 HuxerUI 在 Termux 下从 `tools/prebuilt/android/arm64-v8a/` 解析，需按第 1 条复制到 /data 分区；
+- **CMake 交叉工具链**：`-PtermuxAndroidToolchain=platform/android/termux-android-toolchain.cmake`（仓库自带），Termux 的 Android 用户态无法使用 NDK 自带工具链；
+- **HUXERUI_HOST_TOOL_ROOT**：新版 HuxerUI 需要该变量指向 host 工具目录（否则回退到无执行权限的共享存储路径）；
+- 完整 `assembleRelease` 在 Termux 可能因系统限制失败，优先用 `buildCMakeRelease[arm64-v8a]` 或上面的工具。
 
 ### 桌面 / Web / iOS
 
