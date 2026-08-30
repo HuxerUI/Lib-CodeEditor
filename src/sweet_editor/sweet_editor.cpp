@@ -1,4 +1,4 @@
-#include "sweet_editor.h"
+#include <sweetedit_core/sweet_editor.h>
 #include "sweetline_highlighter.h"
 
 #include <huxerui/huxerui.h>
@@ -2952,7 +2952,7 @@ View SweetEditorSearchBar(
 [[huxerui::composable]]
 View SweetEditor(SweetEditorOptions options, SweetEditorController controller) {
   TextMeasurer& measurer = UseTextMeasurer();
-  const RawAsset cpp_syntax = UseRawResource(RawResource("app", "raw/syntaxes/cpp.json"));
+  const RawAsset cpp_syntax = UseRawResource(RawResource("sweetedit_core", "raw/syntaxes/cpp.json"));
   const std::string syntax_json = options.syntax_json.empty() ? cpp_syntax.ToString() : options.syntax_json;
 
   // Search is composed outside the retained editor node; the editor itself only owns editing semantics.

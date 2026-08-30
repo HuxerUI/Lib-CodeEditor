@@ -4,7 +4,7 @@
 #include <array>
 #include <cstdio>
 
-#include "sweet_editor/sweet_editor.h"
+#include <sweetedit_core/sweet_editor.h>
 
 using namespace huxerui;
 

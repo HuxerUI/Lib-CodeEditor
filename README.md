@@ -48,16 +48,19 @@ const Application application{
 
 ```text
 sweetedit_huxer/
-├── CMakeLists.txt
-├── src/
-│   ├── app.cpp                      # Demo 应用
-│   └── sweet_editor/
-│       ├── sweet_editor.h           # 公共 API：配置、事件、controller
-│       ├── sweet_editor.cpp         # 组件实现（retained extension）
-│       ├── sweetline_highlighter.h
-│       └── sweetline_highlighter.cpp
-├── resources/                       # Demo 语法规则与示例文件
-├── platform/                        # 各平台 shell
+├── CMakeLists.txt                   # 依赖库（sweetedit_core）
+├── include/sweetedit_core/
+│   └── sweet_editor.h               # 公共 API：配置、事件、controller
+├── src/sweet_editor/                # 组件实现（retained extension）
+│   ├── sweet_editor.cpp
+│   ├── sweetline_highlighter.h
+│   └── sweetline_highlighter.cpp
+├── resources/                       # 组件内置语法规则
+├── examples/preview/                # 引用库的 Demo 应用
+│   ├── CMakeLists.txt
+│   ├── src/app.cpp
+│   ├── platform/                    # 各平台 shell
+│   └── resources/                   # Demo 示例文件与语法
 ├── docs/
 │   └── sweet_editor.md              # 组件使用文档（详细）
 └── 3dparty/

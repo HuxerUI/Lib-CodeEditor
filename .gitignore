@@ -16,3 +16,6 @@ Thumbs.db
 
 # Local CLI-generated demo project
 /demo/
+
+# Generated project graph
+/examples/preview/.huxerui/

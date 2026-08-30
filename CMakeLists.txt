@@ -9,10 +9,10 @@ if (HUXERUI_PROJECT_PLAN_OUTPUT)
     file(WRITE "${HUXERUI_PROJECT_PLAN_OUTPUT}" [=[
 {
   "schema": 1,
-  "kind": "app",
-  "name": "sweetedit_huxer",
-  "id": "com.example.sweetedithuxer",
-  "target": "sweetedit_huxer"
+  "kind": "library",
+  "name": "sweetedit_core",
+  "id": "com.example.sweeteditcore",
+  "target": "sweetedit_core"
 }
 ]=])
 endif ()
@@ -20,11 +20,9 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(sweetedit_huxer VERSION 0.1.0 LANGUAGES NONE)
+project(sweetedit_core VERSION 0.1.0 LANGUAGES NONE)
 
-if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
-    enable_language(CXX)
-endif ()
+enable_language(CXX)
 
 if (NOT TARGET HuxerUI::huxerui)
     set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI SDK or source directory")
@@ -85,80 +83,37 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     )
 endif ()
 
-if (WIN32)
-    include("${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/huxerui.cmake" OPTIONAL)
-elseif (APPLE AND NOT IOS)
-    include("${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/huxerui.cmake" OPTIONAL)
-elseif (EMSCRIPTEN)
-    include("${CMAKE_CURRENT_SOURCE_DIR}/platform/web/huxerui.cmake" OPTIONAL)
-endif ()
-
-file(GLOB_RECURSE APP_SOURCE_FILES CONFIGURE_DEPENDS
+file(GLOB_RECURSE LIBRARY_SOURCE_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx"
 )
-if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
-    if (WIN32)
-        list(APPEND APP_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/main.cpp")
-    elseif (APPLE AND NOT IOS)
-        list(APPEND APP_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/main.cpp")
-    elseif (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        list(APPEND APP_SOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/platform/linux/main.cpp")
-    endif ()
-endif ()
 
 set(HUXERUI_LIBRARY_GRAPH_OUTPUT
         "${CMAKE_CURRENT_SOURCE_DIR}/.huxerui/generated/libraries.json"
 )
 
-set(HUXERUI_APP_RESOURCE_OUTPUT_ARGUMENTS)
-if (ANDROID AND HUXERUI_ANDROID_RESOURCE_OUTPUT_ROOT)
-    list(APPEND HUXERUI_APP_RESOURCE_OUTPUT_ARGUMENTS
-            RESOURCE_OUTPUT_DIRECTORY
-            "${HUXERUI_ANDROID_RESOURCE_OUTPUT_ROOT}/${ANDROID_ABI}"
-    )
-endif ()
-
-huxerui_add_app(sweetedit_huxer
+huxerui_add_library(sweetedit_core
         SOURCES
-            ${APP_SOURCE_FILES}
+            ${LIBRARY_SOURCE_FILES}
         RESOURCES
             resources
         RESOURCE_NAMESPACE
-            app
-        ${HUXERUI_APP_RESOURCE_OUTPUT_ARGUMENTS}
-        BUNDLE_NAME
-            "sweetedit_huxer"
-        BUNDLE_IDENTIFIER
-            "com.example.sweetedithuxer"
+            sweetedit_core
 )
 
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     target_link_libraries(
-        sweetedit_huxer
+        sweetedit_core
         PRIVATE
             SweetEditor::sweeteditor_static
             SweetLine::sweetline_static
     )
 endif ()
 
-if (WIN32 AND HUXERUI_WINDOWS_MANIFEST)
-    target_sources(sweetedit_huxer PRIVATE "${HUXERUI_WINDOWS_MANIFEST}")
-endif ()
-if (APPLE AND NOT IOS AND HUXERUI_MACOS_INFO_PLIST)
-    set_target_properties(sweetedit_huxer PROPERTIES
-            MACOSX_BUNDLE_INFO_PLIST "${HUXERUI_MACOS_INFO_PLIST}"
-    )
-endif ()
-if (EMSCRIPTEN AND COMMAND huxerui_configure_web_app)
-    huxerui_configure_web_app(sweetedit_huxer)
-endif ()
+target_include_directories(sweetedit_core PUBLIC
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+        "$<INSTALL_INTERFACE:include>"
+)
 
-# Keep the Web module runnable in Node too, so the editor can be smoke-tested headlessly.
-# Linking this interface library after HuxerUI makes its ENVIRONMENT flag win on the link line.
-if (EMSCRIPTEN)
-    add_library(sweetedit_web_node INTERFACE)
-    target_link_options(sweetedit_web_node INTERFACE "-sENVIRONMENT=web,node")
-    target_link_libraries(sweetedit_huxer PRIVATE sweetedit_web_node)
-endif ()
+add_library(SweeteditCore::SweeteditCore ALIAS sweetedit_core)

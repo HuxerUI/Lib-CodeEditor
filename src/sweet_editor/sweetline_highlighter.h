@@ -1,6 +1,6 @@
 #pragma once
 
-#include "sweet_editor.h"
+#include <sweetedit_core/sweet_editor.h>
 
 #include <sweeteditor/decoration.h>
 #include <sweeteditor/editor_core.h>
