@@ -1,11 +1,14 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include <huxerui/huxerui.h>
+#include <huxerui/event.h>
+#include <huxerui/view.h>
 
 namespace sweetedit_huxer {
 

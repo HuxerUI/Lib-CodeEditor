@@ -1,6 +1,8 @@
 #include "sweet_editor.h"
 #include "sweetline_highlighter.h"
 
+#include <huxerui/huxerui.h>
+
 #include <sweeteditor/decoration.h>
 #include <sweeteditor/document.h>
 #include <sweeteditor/editor_core.h>
@@ -11,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -2543,27 +2546,25 @@ struct SweetEditorBehavior {
               behavior.events
           )),
           document_key_(behavior.options.document_key) {
-      if (behavior.search_bridge) {
-        behavior.search_bridge->run_search = [this](const std::string& text) { holder_->RunSearch(text); };
-        behavior.search_bridge->find_next = [this] { holder_->FindNext(); };
-        behavior.search_bridge->find_previous = [this] { holder_->FindPrevious(); };
-        behavior.search_bridge->replace_current = [this](const std::string& text) { holder_->ReplaceCurrent(text); };
-        behavior.search_bridge->replace_all = [this](const std::string& text) { holder_->ReplaceAll(text); };
-        behavior.search_bridge->close = [this] { holder_->CloseSearch(); };
-      }
+      BindSearchBridge(behavior.search_bridge);
       static_cast<void>(node);
+    }
+
+    void BindSearchBridge(const std::shared_ptr<SearchBridge>& bridge) {
+      if (!bridge) {
+        return;
+      }
+      bridge->run_search = [this](const std::string& text) { holder_->RunSearch(text); };
+      bridge->find_next = [this] { holder_->FindNext(); };
+      bridge->find_previous = [this] { holder_->FindPrevious(); };
+      bridge->replace_current = [this](const std::string& text) { holder_->ReplaceCurrent(text); };
+      bridge->replace_all = [this](const std::string& text) { holder_->ReplaceAll(text); };
+      bridge->close = [this] { holder_->CloseSearch(); };
     }
 
     void Update(MountedNode& node, const SweetEditorBehavior& behavior) {
       static_cast<void>(node);
-      if (behavior.search_bridge && behavior.search_bridge->run_search == nullptr) {
-        behavior.search_bridge->run_search = [this](const std::string& text) { holder_->RunSearch(text); };
-        behavior.search_bridge->find_next = [this] { holder_->FindNext(); };
-        behavior.search_bridge->find_previous = [this] { holder_->FindPrevious(); };
-        behavior.search_bridge->replace_current = [this](const std::string& text) { holder_->ReplaceCurrent(text); };
-        behavior.search_bridge->replace_all = [this](const std::string& text) { holder_->ReplaceAll(text); };
-        behavior.search_bridge->close = [this] { holder_->CloseSearch(); };
-      }
+      BindSearchBridge(behavior.search_bridge);
       if (behavior.options.document_key != document_key_) {
         document_key_ = behavior.options.document_key;
         holder_ = std::make_shared<EditorHolder>(
@@ -2573,6 +2574,7 @@ struct SweetEditorBehavior {
             [this] { InvalidatePaint(); },
             behavior.events
         );
+        BindSearchBridge(behavior.search_bridge);
         return;
       }
       if (behavior.options.original_text != holder_->CurrentDiffOriginal()) {
