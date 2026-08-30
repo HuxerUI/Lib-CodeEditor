@@ -3,11 +3,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
+#include <source_location>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <huxerui/event.h>
+#include <huxerui/state.h>
 #include <huxerui/view.h>
 
 namespace sweetedit_huxer {
@@ -23,6 +26,52 @@ struct SweetEditorLinkClicked : huxerui::Event<const std::string&> {};
 struct SweetEditorCodeLensClicked : huxerui::Event<std::int32_t> {};
 struct SweetEditorGutterIconClicked : huxerui::Event<std::uint32_t, std::int32_t> {};
 struct SweetEditorInlayClicked : huxerui::Event<std::uint32_t, std::uint32_t> {};
+
+namespace detail {
+class SweetEditorControllerState;
+struct SweetEditorControllerAccess;
+}  // namespace detail
+
+// External control surface for a mounted SweetEditor. A controller is scope
+// state created with UseSweetEditorController() and passed to SweetEditor().
+// Methods operate on the currently mounted editor node and return false when no
+// editor is connected (for example before the component mounts or after it
+// unmounts).
+class SweetEditorController {
+public:
+  SweetEditorController();
+
+  [[nodiscard]] bool IsConnected() const noexcept;
+
+  // Loads a different document, recreating the editor core, document, and
+  // highlighter for `document_key` (like changing SweetEditorOptions).
+  bool LoadDocument(const std::string& document_key, const std::string& text, const std::string& syntax_json) const;
+  [[nodiscard]] std::string Text() const;
+  bool SetCursor(std::uint32_t line, std::uint32_t column) const;
+
+  // Search and replace operations on the current document.
+  bool RunSearch(const std::string& pattern) const;
+  bool FindNext() const;
+  bool FindPrevious() const;
+  bool ReplaceCurrent(const std::string& replacement) const;
+  bool ReplaceAll(const std::string& replacement) const;
+  bool ClearSearch() const;
+  // Toggles the component's built-in search bar.
+  bool ToggleSearch() const;
+
+  bool operator==(const SweetEditorController&) const = default;
+
+private:
+  std::shared_ptr<detail::SweetEditorControllerState> state_;
+
+  friend struct detail::SweetEditorControllerAccess;
+};
+
+inline SweetEditorController UseSweetEditorController(
+    const std::source_location& location = std::source_location::current()
+) {
+  return huxerui::UseState(SweetEditorController{}, location).Get();
+}
 
 // Code completion data model, mirroring the SweetEditor platform reference
 // implementation (Android `completion` package): a provider receives a
@@ -159,9 +208,6 @@ struct SweetEditorOptions {
   // visible line range during decoration refresh; results merge into the
   // editor's inlay hints, diagnostics, and code lens.
   std::vector<HostDecorationProvider> decoration_providers;
-  // Invoked on Ctrl+F (or the platform search shortcut): the host may toggle
-  // its find/replace bar. The component's built-in bar uses this to show.
-  std::function<void()> on_toggle_search;
   // When set, the core computes a line-level diff against this original text
   // (reference diff presentation): added/removed lines get background colors
   // and the removed lines are shown in the gutter. Empty disables the diff.
@@ -191,6 +237,6 @@ struct SweetEditorOptions {
 // The component owns one retained SweetEditor EditorCore extension, bridges text
 // measurement to HuxerUI's platform measurer, renders the EditorRenderModel
 // through the extension paint phase, and forwards input events into the core.
-huxerui::View SweetEditor(SweetEditorOptions options = {});
+huxerui::View SweetEditor(SweetEditorOptions options = {}, SweetEditorController controller = {});
 
 }  // namespace sweetedit_huxer

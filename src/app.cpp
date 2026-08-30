@@ -369,6 +369,7 @@ View SweetEditorDemo() {
   const auto documents = LoadDemoDocuments(
       cpp_syntax, java_syntax, kotlin_syntax, lua_syntax, java_file, kotlin_file, lua_file, gc_file);
   const ToastHandle toast = UseToast();
+  const sweetedit_huxer::SweetEditorController controller = sweetedit_huxer::UseSweetEditorController();
   const DemoDocument& document = documents[current_file.Get()];
   const auto options = MakeEditorOptions(
       document, diff_enabled.Get(), diff_original.Get(), wrap_enabled.Get(), sticky_enabled.Get(), breakpoints);
@@ -394,7 +395,7 @@ View SweetEditorDemo() {
           diff_enabled = false;
           diff_original = std::string();
         }),
-    sweetedit_huxer::SweetEditor(options)
+    sweetedit_huxer::SweetEditor(options, controller)
         .On<sweetedit_huxer::SweetEditorLinkClicked>([toast](const std::string& url) {
           toast.Show("Link: " + url);
         })

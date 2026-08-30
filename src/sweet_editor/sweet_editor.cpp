@@ -864,11 +864,13 @@ public:
       const SweetEditorOptions& options,
       std::string syntax_json,
       std::function<void()> invalidate,
-      huxerui::EventEmitter events
+      huxerui::EventEmitter events,
+      SweetEditorController controller
   )
       : font_size_(options.font_size),
         invalidate_(std::move(invalidate)),
         events_(std::move(events)),
+        controller_(std::move(controller)),
         completion_provider_(options.completion_provider),
         completion_trigger_characters_(options.completion_trigger_characters) {
     font_metrics_ = measurer.Metrics(Font::Monospace(font_size_));
@@ -981,7 +983,6 @@ public:
     newline_action_ = options.newline_action;
     phantom_text_provider_ = options.phantom_text_provider;
     accept_phantom_on_tab_ = options.accept_phantom_on_tab;
-    on_toggle_search_ = options.on_toggle_search;
   }
 
   // Enables/disables the diff presentation against `original` without touching
@@ -1065,6 +1066,18 @@ public:
   void CloseSearch() {
     se::EditorActionResult result = core_->clearSearch();
     AfterCoreAction(result);
+  }
+
+  // Full document text as UTF-8 (controller Text()).
+  std::string Text() const {
+    return document_ ? document_->getU8Text() : std::string();
+  }
+
+  // Moves the caret to a zero-based line/column (controller SetCursor()).
+  bool SetCursor(uint32_t line, uint32_t column) {
+    se::EditorActionResult result = core_->setCursorPosition(se::TextPosition{line, column});
+    AfterCoreAction(result);
+    return result.handled;
   }
 
   // Common post-core-action refresh (text/selection/scroll invalidation).
@@ -1152,9 +1165,7 @@ public:
       break;
     }
     case 4:
-      if (on_toggle_search_) {
-        on_toggle_search_();
-      }
+      controller_.ToggleSearch();
       break;
     case 5:
       AfterCoreAction(core_->foldAll());
@@ -1377,8 +1388,8 @@ public:
       }
       // Ctrl+F (the web adapter delivers printable characters through
       // `text`; the key enum has no letter keys beyond the edit shortcuts).
-      if (event.modifiers.control && event.text == "f" && on_toggle_search_) {
-        on_toggle_search_();
+      if (event.modifiers.control && event.text == "f") {
+        controller_.ToggleSearch();
         return true;
       }
     }
@@ -2464,7 +2475,7 @@ private:
   FontMetrics completion_badge_metrics_;
   float completion_badge_char_advance_{0.0F};
 
-  std::function<void()> on_toggle_search_;
+  SweetEditorController controller_;
   huxerui::EventEmitter events_;
   std::function<std::string(uint32_t, uint32_t)> newline_action_;
   std::function<std::string(uint32_t)> phantom_text_provider_;
@@ -2529,42 +2540,176 @@ struct SearchBridge {
 
 }  // namespace
 
+namespace detail {
+
+struct SweetEditorControllerState {
+  std::function<void(const std::string&, const std::string&, const std::string&)> load_document;
+  std::function<std::string()> get_text;
+  std::function<bool(uint32_t, uint32_t)> set_cursor;
+  std::function<void(const std::string&)> run_search;
+  std::function<void()> find_next;
+  std::function<void()> find_previous;
+  std::function<void(const std::string&)> replace_current;
+  std::function<void(const std::string&)> replace_all;
+  std::function<void()> clear_search;
+  std::function<void()> toggle_search;
+};
+
+struct SweetEditorControllerAccess {
+  static const std::shared_ptr<SweetEditorControllerState>& State(const SweetEditorController& controller) noexcept {
+    return controller.state_;
+  }
+};
+
+}  // namespace detail
+
+SweetEditorController::SweetEditorController()
+    : state_(std::make_shared<detail::SweetEditorControllerState>()) {}
+
+bool SweetEditorController::IsConnected() const noexcept {
+  return detail::SweetEditorControllerAccess::State(*this)->load_document != nullptr;
+}
+
+bool SweetEditorController::LoadDocument(
+    const std::string& document_key, const std::string& text, const std::string& syntax_json
+) const {
+  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+  if (!state->load_document) {
+    return false;
+  }
+  state->load_document(document_key, text, syntax_json);
+  return true;
+}
+
+std::string SweetEditorController::Text() const {
+  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+  return state->get_text ? state->get_text() : std::string();
+}
+
+bool SweetEditorController::SetCursor(std::uint32_t line, std::uint32_t column) const {
+  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+  return state->set_cursor ? state->set_cursor(line, column) : false;
+}
+
+bool SweetEditorController::RunSearch(const std::string& pattern) const {
+  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+  if (!state->run_search) {
+    return false;
+  }
+  state->run_search(pattern);
+  return true;
+}
+
+bool SweetEditorController::FindNext() const {
+  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+  if (!state->find_next) {
+    return false;
+  }
+  state->find_next();
+  return true;
+}
+
+bool SweetEditorController::FindPrevious() const {
+  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+  if (!state->find_previous) {
+    return false;
+  }
+  state->find_previous();
+  return true;
+}
+
+bool SweetEditorController::ReplaceCurrent(const std::string& replacement) const {
+  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+  if (!state->replace_current) {
+    return false;
+  }
+  state->replace_current(replacement);
+  return true;
+}
+
+bool SweetEditorController::ReplaceAll(const std::string& replacement) const {
+  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+  if (!state->replace_all) {
+    return false;
+  }
+  state->replace_all(replacement);
+  return true;
+}
+
+bool SweetEditorController::ClearSearch() const {
+  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+  if (!state->clear_search) {
+    return false;
+  }
+  state->clear_search();
+  return true;
+}
+
+bool SweetEditorController::ToggleSearch() const {
+  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+  if (!state->toggle_search) {
+    return false;
+  }
+  state->toggle_search();
+  return true;
+}
+
 struct SweetEditorBehavior {
   huxerui::TextMeasurer* measurer = nullptr;
   SweetEditorOptions options;
   std::string syntax_json;
-  std::shared_ptr<SearchBridge> search_bridge;
+  SweetEditorController controller;
   huxerui::EventEmitter events;
 
   struct Extension final : NodeExtension {
     Extension(MountedNode& node, const SweetEditorBehavior& behavior)
-        : holder_(std::make_shared<EditorHolder>(
+        : measurer_(behavior.measurer),
+          options_(behavior.options),
+          syntax_json_(behavior.syntax_json),
+          events_(behavior.events),
+          controller_(behavior.controller),
+          holder_(std::make_shared<EditorHolder>(
               *behavior.measurer,
               behavior.options,
               behavior.syntax_json,
               [this] { InvalidatePaint(); },
-              behavior.events
+              behavior.events,
+              behavior.controller
           )),
           document_key_(behavior.options.document_key) {
-      BindSearchBridge(behavior.search_bridge);
+      BindController(behavior.controller);
       static_cast<void>(node);
     }
 
-    void BindSearchBridge(const std::shared_ptr<SearchBridge>& bridge) {
-      if (!bridge) {
-        return;
-      }
-      bridge->run_search = [this](const std::string& text) { holder_->RunSearch(text); };
-      bridge->find_next = [this] { holder_->FindNext(); };
-      bridge->find_previous = [this] { holder_->FindPrevious(); };
-      bridge->replace_current = [this](const std::string& text) { holder_->ReplaceCurrent(text); };
-      bridge->replace_all = [this](const std::string& text) { holder_->ReplaceAll(text); };
-      bridge->close = [this] { holder_->CloseSearch(); };
+    void BindController(SweetEditorController controller) {
+      auto& state = detail::SweetEditorControllerAccess::State(controller);
+      state->load_document =
+          [this](const std::string& key, const std::string& text, const std::string& syntax) {
+            document_key_ = key;
+            options_.initial_text = text;
+            options_.document_key = key;
+            syntax_json_ = syntax;
+            holder_ = std::make_shared<EditorHolder>(
+                *measurer_, options_, syntax_json_, [this] { InvalidatePaint(); }, events_, controller_
+            );
+          };
+      state->get_text = [this] { return holder_->Text(); };
+      state->set_cursor = [this](uint32_t line, uint32_t column) { return holder_->SetCursor(line, column); };
+      state->run_search = [this](const std::string& text) { holder_->RunSearch(text); };
+      state->find_next = [this] { holder_->FindNext(); };
+      state->find_previous = [this] { holder_->FindPrevious(); };
+      state->replace_current = [this](const std::string& text) { holder_->ReplaceCurrent(text); };
+      state->replace_all = [this](const std::string& text) { holder_->ReplaceAll(text); };
+      state->clear_search = [this] { holder_->CloseSearch(); };
     }
 
     void Update(MountedNode& node, const SweetEditorBehavior& behavior) {
       static_cast<void>(node);
-      BindSearchBridge(behavior.search_bridge);
+      measurer_ = behavior.measurer;
+      options_ = behavior.options;
+      syntax_json_ = behavior.syntax_json;
+      controller_ = behavior.controller;
+      BindController(behavior.controller);
       if (behavior.options.document_key != document_key_) {
         document_key_ = behavior.options.document_key;
         holder_ = std::make_shared<EditorHolder>(
@@ -2572,9 +2717,10 @@ struct SweetEditorBehavior {
             behavior.options,
             behavior.syntax_json,
             [this] { InvalidatePaint(); },
-            behavior.events
+            behavior.events,
+            behavior.controller
         );
-        BindSearchBridge(behavior.search_bridge);
+        BindController(behavior.controller);
         return;
       }
       if (behavior.options.original_text != holder_->CurrentDiffOriginal()) {
@@ -2641,6 +2787,11 @@ struct SweetEditorBehavior {
              position.y >= bounds.y && position.y <= bounds.y + bounds.height;
     }
 
+    huxerui::TextMeasurer* measurer_ = nullptr;
+    SweetEditorOptions options_;
+    std::string syntax_json_;
+    huxerui::EventEmitter events_;
+    SweetEditorController controller_;
     std::shared_ptr<EditorHolder> holder_;
     std::string document_key_;
   };
@@ -2650,38 +2801,22 @@ View SweetEditorSearchBar(
     State<std::string> search_text,
     State<std::string> replace_text,
     State<bool> visible,
-    const std::shared_ptr<SearchBridge>& bridge
+    SweetEditorController controller
 ) {
   return Column {
     Row {
       TextField(TextEditingValue::FromText(search_text.Get()))
           .Placeholder("Find")
-          .OnChanged([search_text, bridge](const TextEditingValue& value) {
+          .OnChanged([search_text, controller](const TextEditingValue& value) {
             search_text = value.text;
-            if (bridge->run_search) {
-              bridge->run_search(value.text);
-            }
+            controller.RunSearch(value.text);
           })
-          .OnSubmitted([bridge] {
-            if (bridge->find_next) {
-              bridge->find_next();
-            }
-          })
+          .OnSubmitted([controller] { controller.FindNext(); })
           .With(Grow{}),
-      Button("Prev").OnClick([bridge] {
-        if (bridge->find_previous) {
-          bridge->find_previous();
-        }
-      }),
-      Button("Next").OnClick([bridge] {
-        if (bridge->find_next) {
-          bridge->find_next();
-        }
-      }),
-      Button("Close").OnClick([visible, bridge] {
-        if (bridge->close) {
-          bridge->close();
-        }
+      Button("Prev").OnClick([controller] { controller.FindPrevious(); }),
+      Button("Next").OnClick([controller] { controller.FindNext(); }),
+      Button("Close").OnClick([visible, controller] {
+        controller.ClearSearch();
         visible = false;
       }),
     }.With(Spacing(4.0F), Padding(4.0F)),
@@ -2690,22 +2825,18 @@ View SweetEditorSearchBar(
           .Placeholder("Replace")
           .OnChanged([replace_text](const TextEditingValue& value) { replace_text = value.text; })
           .With(Grow{}),
-      Button("Replace").OnClick([replace_text, bridge] {
-        if (bridge->replace_current) {
-          bridge->replace_current(replace_text.Get());
-        }
+      Button("Replace").OnClick([replace_text, controller] {
+        controller.ReplaceCurrent(replace_text.Get());
       }),
-      Button("All").OnClick([replace_text, bridge] {
-        if (bridge->replace_all) {
-          bridge->replace_all(replace_text.Get());
-        }
+      Button("All").OnClick([replace_text, controller] {
+        controller.ReplaceAll(replace_text.Get());
       }),
     }.With(Spacing(4.0F), Padding(4.0F)),
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
 }
 
 [[huxerui::scope]]
-View SweetEditor(SweetEditorOptions options) {
+View SweetEditor(SweetEditorOptions options, SweetEditorController controller) {
   TextMeasurer& measurer = UseTextMeasurer();
   const RawAsset cpp_syntax = UseRawResource(RawResource("app", "raw/syntaxes/cpp.json"));
   const std::string syntax_json = options.syntax_json.empty() ? cpp_syntax.ToString() : options.syntax_json;
@@ -2714,20 +2845,17 @@ View SweetEditor(SweetEditorOptions options) {
   auto search_visible = UseState(false);
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
-  auto search_bridge = std::make_shared<SearchBridge>();
   const EventEmitter events = UseEvents();
-  SweetEditorOptions editor_options = std::move(options);
-  if (!editor_options.on_toggle_search) {
-    editor_options.on_toggle_search = [search_visible] { search_visible = !search_visible.Get(); };
-  }
+  detail::SweetEditorControllerAccess::State(controller)->toggle_search =
+      [search_visible] { search_visible = !search_visible.Get(); };
   View editor = Canvas([](PaintContext&, Size) {}).With(
-      SweetEditorBehavior{&measurer, std::move(editor_options), syntax_json, search_bridge, events}, Focusable{}
+      SweetEditorBehavior{&measurer, std::move(options), syntax_json, controller, events}, Focusable{}
   );
   if (!search_visible.Get()) {
     return editor;
   }
   return Column {
-    SweetEditorSearchBar(search_text, replace_text, search_visible, search_bridge),
+    SweetEditorSearchBar(search_text, replace_text, search_visible, controller),
     std::move(editor).With(Grow{}),
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
 }
