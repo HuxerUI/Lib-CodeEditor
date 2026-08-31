@@ -120,7 +120,7 @@ jobs:
           echo "HuxerUI SDK installed at ${sdk}"
 
       - name: Install Linux build dependencies
-        if: matrix.platform == 'linux' || matrix.platform == 'android'
+        if: matrix.platform == 'linux'
         shell: bash
         run: |
           sudo apt-get update
@@ -135,22 +135,6 @@ jobs:
         if: matrix.platform == 'macos'
         shell: bash
         run: brew install ninja
-
-      - name: Set up Java (Android)
-        if: matrix.platform == 'android'
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Set up Android SDK and NDK
-        if: matrix.platform == 'android'
-        uses: android-actions/setup-android@v3
-        with:
-          platforms: 'android-36'
-          build-tools: '36.0.0'
-          ndk: '29.0.14206865'
-          cmake: '3.22.1'
 
       - name: Verify SDK
         shell: bash
