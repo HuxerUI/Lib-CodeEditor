@@ -31,12 +31,20 @@ jobs:
         include:
           - platform: windows
             runs_on: windows-latest
+            pkg: windows-x64
+            ext: zip
           - platform: linux
             runs_on: ubuntu-latest
+            pkg: linux-x64
+            ext: zip
           - platform: macos
             runs_on: macos-latest
+            pkg: macos-arm64
+            ext: zip
           - platform: android
             runs_on: ubuntu-latest
+            pkg: android
+            ext: apk
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -172,7 +180,7 @@ jobs:
 
       - name: Show packaged output
         shell: bash
-        run: find "examples/preview/dist/${{ matrix.platform }}" -maxdepth 4 | sort | head -40
+        run: ls -la "examples/preview/dist" | head -20
 
       - name: Smoke-run the Windows app and sample CPU (diagnose freeze)
         if: matrix.platform == 'windows'
@@ -203,11 +211,37 @@ jobs:
             Write-Host "SMOKE verdict: app exited early (exit code $($p.ExitCode))"
           }
 
+      - name: Package release archive (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        working-directory: examples/preview/dist
+        run: |
+          Compress-Archive -Path "windows/*" -DestinationPath "sweetedit-huxer-windows-x64.zip" -Force
+
+      - name: Package release archive (Unix)
+        if: matrix.platform != 'windows' && matrix.platform != 'android'
+        shell: bash
+        working-directory: examples/preview/dist
+        run: |
+          (cd "${{ matrix.platform }}" && zip -qr "../sweetedit-huxer-${{ matrix.pkg }}.zip" .)
+
+      - name: Package release archive (Android)
+        if: matrix.platform == 'android'
+        shell: bash
+        working-directory: examples/preview/dist
+        run: |
+          apk="$(find android -name '*.apk' | head -1)"
+          if [ -z "${apk}" ]; then
+            echo "no apk found" >&2
+            exit 1
+          fi
+          cp "${apk}" "sweetedit-huxer-android.apk"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.platform }}
-          path: examples/preview/dist/${{ matrix.platform }}/
+          path: examples/preview/dist/sweetedit-huxer-${{ matrix.pkg }}.${{ matrix.ext }}
           if-no-files-found: error
 
   release:
@@ -265,6 +299,14 @@ jobs:
           tag_name: ${{ steps.release_tag.outputs.tag }}
           name: ${{ steps.release_tag.outputs.name }}
           prerelease: ${{ steps.release_tag.outputs.prerelease }}
+          body: |
+            Automatic build of the SweetEdit Huxer demo editor app.
+
+            Artifacts:
+            - Windows x64: `sweetedit-huxer-windows-x64.zip` (exe + resources + DLLs)
+            - Linux x64: `sweetedit-huxer-linux-x64.zip`
+            - macOS arm64: `sweetedit-huxer-macos-arm64.zip` (.app bundle)
+            - Android: `sweetedit-huxer-android.apk` (arm64-v8a + x86_64)
           generate_release_notes: true
           files: |
             dist/**
