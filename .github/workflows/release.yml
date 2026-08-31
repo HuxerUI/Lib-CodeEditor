@@ -212,7 +212,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: ${{ startsWith(github.ref, 'refs/tags/') || inputs.create_release == 'true' }}
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -225,10 +225,28 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
             echo "name=SweetEdit Huxer ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "continuous=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
             echo "name=SweetEdit Huxer v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "continuous=false" >> "$GITHUB_OUTPUT"
+          else
+            # Every successful main build refreshes the continuous pre-release.
+            echo "tag=continuous" >> "$GITHUB_OUTPUT"
+            echo "name=SweetEdit Huxer Continuous" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "continuous=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Clean previous continuous release
+        if: steps.release_tag.outputs.continuous == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete continuous --yes --cleanup-tag 2>/dev/null || true
 
       - name: Download all platform artifacts
         uses: actions/download-artifact@v4
@@ -246,6 +264,7 @@ jobs:
         with:
           tag_name: ${{ steps.release_tag.outputs.tag }}
           name: ${{ steps.release_tag.outputs.name }}
+          prerelease: ${{ steps.release_tag.outputs.prerelease }}
           generate_release_notes: true
           files: |
             dist/**
