@@ -119,12 +119,23 @@ jobs:
           echo "${sdk}/bin" >> "${GITHUB_PATH}"
           echo "HuxerUI SDK installed at ${sdk}"
 
-      - name: Install Linux build dependencies
+      - name: Install Linux build dependencies (desktop)
         if: matrix.platform == 'linux'
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build libgtk-4-dev libsoup-3.0-dev libglib2.0-dev libpango1.0-dev libcairo2-dev
+
+      # Android builds run their library-graph configure on the Linux host,
+      # where HuxerUIConfig.cmake performs pkg_check_modules(gtk4/gio/libsoup)
+      # whenever CMAKE_SYSTEM_NAME is "Linux". The Android target never links
+      # these, but the host configure step still needs the .pc files present.
+      - name: Install host graph dependencies (Android)
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-4-dev libglib2.0-dev libsoup-3.0-dev
 
       - name: Install Ninja (Windows)
         if: matrix.platform == 'windows'
