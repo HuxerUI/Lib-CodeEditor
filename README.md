@@ -248,14 +248,14 @@ sh gradlew :app:assembleRelease \
 - Web: Emscripten WebAssembly (`platform/web/`)
 - iOS: the Xcode project under `platform/ios/`
 
-## CI / Windows Release
+## CI / Multi-Platform Release
 
-The repository ships a GitHub Actions workflow ([`.github/workflows/windows-release.yml`](.github/workflows/windows-release.yml)) that builds the Windows x64 demo app (`examples/preview`) on `windows-latest` and publishes the exe:
+The repository ships a GitHub Actions workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)) that builds the demo app (`examples/preview`) for **Windows, Linux, macOS, and Android** on GitHub-hosted runners and publishes the artifacts:
 
-- on **every push to `main`** it builds and uploads the exe as a workflow artifact;
-- on a **tag push `v*`** or a **manual `workflow_dispatch` run** (with the `create_release` input) it also creates/updates a GitHub Release and attaches the exe, its resources, and any DLLs.
+- on **every push to `main`** it builds all four platforms and uploads the artifacts as workflow artifacts;
+- on a **tag push `v*`** or a **manual `workflow_dispatch` run** (with the `create_release` input) it also creates/updates a GitHub Release and attaches every platform's output (Windows exe/resources/DLLs, Linux binary, macOS app bundle, Android APK).
 
-The workflow installs the HuxerUI SDK with the official installer and populates the `3dparty` gitlinks (SweetEditor/SweetLine) at the exact commits recorded in the repository.
+Each job installs the HuxerUI SDK with the official installer and populates the `3dparty` gitlinks (SweetEditor/SweetLine) at the exact commits recorded in the repository. Android builds use the Android SDK/NDK (API 36, NDK 29.0.14206865) on an Ubuntu runner.
 
 ## Third-Party Dependencies
 

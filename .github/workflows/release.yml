@@ -1,0 +1,256 @@
+name: Multi-Platform Release Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version for the tag (for example 0.1.0)
+        required: false
+        default: "0.1.0"
+      create_release:
+        description: Create or update a GitHub release and attach the built artifacts
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            runs_on: windows-latest
+          - platform: linux
+            runs_on: ubuntu-latest
+          - platform: macos
+            runs_on: macos-latest
+          - platform: android
+            runs_on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # 3dparty/SweetEditor and 3dparty/SweetLine are recorded as gitlinks
+      # (mode 160000) without a .gitmodules file, so a fresh checkout has no
+      # submodule mechanism to populate them. Fetch each vendored repository at
+      # the exact commit the parent records.
+      - name: Populate vendored dependencies (3dparty gitlinks)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for entry in "SweetEditor https://github.com/FinalScave/SweetEditor" "SweetLine https://github.com/FinalScave/SweetLine"; do
+            name="${entry%% *}"
+            url="${entry#* }"
+            sha="$(git ls-tree HEAD "3dparty/${name}" | awk '{print $3}')"
+            if [ -z "${sha}" ]; then
+              echo "3dparty/${name} is not recorded as a gitlink in this repository" >&2
+              exit 1
+            fi
+            dir="3dparty/${name}"
+            mkdir -p "${dir}"
+            git init -q "${dir}"
+            git -C "${dir}" remote add origin "${url}"
+            git -C "${dir}" fetch --depth 1 origin "${sha}"
+            git -C "${dir}" checkout -q FETCH_HEAD
+            echo "Populated 3dparty/${name} at ${sha}"
+          done
+
+      - name: Install HuxerUI SDK (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Join-Path $env:TEMP "huxerui-install.ps1"
+          Invoke-WebRequest -Uri "https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.ps1" -OutFile $installer -UseBasicParsing
+          # The installer resolves the latest version through the GitHub API,
+          # which rate-limits unauthenticated requests from shared runner IPs.
+          # Resolve the version here (with a fallback) and pass it explicitly so
+          # the installer skips the API call.
+          $version = $null
+          try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/HuxerUI/HuxerUI/releases/latest" -Headers @{ "User-Agent" = "sweetedit-ci" }
+            $version = ([string]$release.tag_name).TrimStart("v")
+          } catch {
+            Write-Host "Could not resolve the latest HuxerUI release: $($_.Exception.Message)"
+          }
+          if (-not $version) {
+            $version = "0.1.0"
+            Write-Host "Using fallback version $version"
+          }
+          & $installer -Version $version -Yes
+          $sdk = Join-Path $env:LOCALAPPDATA "HuxerUI"
+          if (-not (Test-Path $sdk)) {
+            throw "HuxerUI SDK was not installed at $sdk"
+          }
+          "HUXERUI_HOME=$sdk" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$sdk\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          Write-Host "HuxerUI SDK installed at $sdk"
+
+      - name: Install HuxerUI SDK (macOS / Linux / Android)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.sh" -o install.sh
+          version="$(curl -fsSL -H "User-Agent: sweetedit-ci" "https://api.github.com/repos/HuxerUI/HuxerUI/releases/latest" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name","").lstrip("v"))' 2>/dev/null || true)"
+          if [ -z "${version}" ]; then
+            version="0.1.0"
+            echo "Using fallback version ${version}"
+          fi
+          sh install.sh --version "${version}" --yes
+          if [ "${{ matrix.platform }}" = "macos" ]; then
+            sdk="${HOME}/Library/Developer/HuxerUI"
+          else
+            sdk="${HOME}/.local/share/HuxerUI"
+          fi
+          echo "HUXERUI_HOME=${sdk}" >> "${GITHUB_ENV}"
+          echo "${sdk}/bin" >> "${GITHUB_PATH}"
+          echo "HuxerUI SDK installed at ${sdk}"
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux' || matrix.platform == 'android'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-4-dev libsoup-3.0-dev libglib2.0-dev libpango1.0-dev libcairo2-dev
+
+      - name: Install Ninja (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: choco install ninja -y --no-progress
+
+      - name: Install Ninja (macOS)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: brew install ninja
+
+      - name: Set up Java (Android)
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK and NDK
+        if: matrix.platform == 'android'
+        uses: android-actions/setup-android@v3
+        with:
+          platforms: 'android-36'
+          build-tools: '36.0.0'
+          ndk: '29.0.14206865'
+          cmake: '3.22.1'
+
+      - name: Verify SDK
+        shell: bash
+        run: |
+          huxerui --version
+          huxerui doctor "${{ matrix.platform }}" || echo "huxerui doctor reported non-fatal issues"
+
+      - name: Build and package (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        working-directory: examples/preview
+        run: |
+          huxerui package windows --profile release
+          if ($LASTEXITCODE -ne 0) {
+            throw "huxerui package windows failed"
+          }
+
+      - name: Build and package (Unix / Android)
+        if: matrix.platform != 'windows'
+        shell: bash
+        working-directory: examples/preview
+        run: |
+          huxerui package "${{ matrix.platform }}" --profile release
+
+      - name: Show packaged output
+        shell: bash
+        run: find "examples/preview/dist/${{ matrix.platform }}" -maxdepth 4 | sort | head -40
+
+      - name: Smoke-run the Windows app and sample CPU (diagnose freeze)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "examples/preview/dist/windows" -Filter *.exe -Recurse | Select-Object -First 1
+          if (-not $exe) {
+            throw "no exe found under examples/preview/dist/windows"
+          }
+          Write-Host "Launching $($exe.FullName)"
+          $p = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 6
+          $p.Refresh()
+          $alive = -not $p.HasExited
+          $cpuMs = 0
+          if ($alive) {
+            $cpuMs = [int]$p.TotalProcessorTime.TotalMilliseconds
+          }
+          Write-Host "SMOKE alive=$alive cpu_ms=$cpuMs"
+          if ($alive) {
+            Stop-Process -Id $p.Id -Force
+            if ($cpuMs -gt 5000) {
+              Write-Host "SMOKE verdict: busy loop / repaint storm (main thread spinning)"
+            } else {
+              Write-Host "SMOKE verdict: idle but unresponsive (blocked or deadlocked)"
+            }
+          } else {
+            Write-Host "SMOKE verdict: app exited early (exit code $($p.ExitCode))"
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          path: examples/preview/dist/${{ matrix.platform }}/
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: ${{ startsWith(github.ref, 'refs/tags/') || inputs.create_release == 'true' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Determine release tag
+        id: release_tag
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=SweetEdit Huxer ${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "name=SweetEdit Huxer v${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: false
+
+      - name: List release assets
+        shell: bash
+        run: find dist -maxdepth 4 -type f | sort | head -60
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          name: ${{ steps.release_tag.outputs.name }}
+          generate_release_notes: true
+          files: |
+            dist/**
