@@ -154,21 +154,18 @@ def registerHuxerUIResourceStaging = { String buildType, File resourceRoot, File
 registerHuxerUIResourceStaging("debug", huxeruiDebugResourceRoot, huxeruiDebugAssets)
 registerHuxerUIResourceStaging("release", huxeruiReleaseResourceRoot, huxeruiReleaseAssets)
 
-// Strip debug/static symbols from the release shared libraries. The custom
-// Termux toolchain bypasses the NDK's default strip step, so the packaged
-// libs carried ~37MB of debug info each. Run NDK llvm-strip on the merged
-// release libs before packaging.
+// Strip debug/static symbols from the release shared libraries. AGP's built-in
+// strip invokes the NDK llvm-strip symlink, which Gradle mis-executes as a
+// shell script on Termux ("Syntax error"), and the Termux toolchain bypasses
+// the default strip step, so the packaged libs carried ~37MB of debug info
+// each. On Termux, run the Termux-native llvm-strip (a real ELF tool) on the
+// merged release libs; everywhere else AGP's own strip already handles it.
 tasks.matching { it.name == "stripReleaseDebugSymbols" }.configureEach {
-    // AGP's built-in strip invokes the NDK llvm-strip symlink, which Gradle
-    // mis-executes as a shell script on Termux ("Syntax error"). AGP then
-    // packages the unstripped libs. Strip the task's own output directory
-    // with the Termux llvm-strip (a real ELF tool) so the packaged libs are
-    // actually stripped.
     doLast {
         def termuxStrip = new File("/data/data/com.termux/files/usr/bin/llvm-strip")
-        def strip = termuxStrip.isFile() ? termuxStrip : null
-        if (strip == null) {
-            throw new GradleException("llvm-strip not found under Termux")
+        if (!termuxStrip.isFile()) {
+            // Not Termux: AGP's default strip step already stripped the libs.
+            return
         }
         def libDir = layout.buildDirectory.dir(
             "intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out/lib").get().asFile
@@ -179,7 +176,7 @@ tasks.matching { it.name == "stripReleaseDebugSymbols" }.configureEach {
             abiDir.listFiles()?.each { lib ->
                 if (lib.name.endsWith(".so")) {
                     def result = exec {
-                        commandLine strip.absolutePath, "--strip-all", lib.absolutePath
+                        commandLine termuxStrip.absolutePath, "--strip-all", lib.absolutePath
                     }
                     if (result.exitValue != 0) {
                         throw new GradleException("strip failed: ${lib}")
