@@ -454,7 +454,7 @@ se::GestureEvent ToGestureEvent(const PointerEvent& event) {
   return out;
 }
 
-se::GestureEvent ToWheelGestureEvent(const ScrollEvent& event) {
+se::GestureEvent ToWheelGestureEvent(const ScrollInputEvent& event) {
   se::GestureEvent out;
   out.type = se::EventType::MOUSE_WHEEL;
   out.wheel_delta_x = event.delta_x;
@@ -1410,7 +1410,7 @@ public:
     }
     const se::Rect& rect = context_menu_.panel_rect;
     paint.DrawRect(ToRect(rect), Argb(0xFFFFFFFF), CornerRadii(6.0F));
-    paint.DrawBorder(ToRect(rect), Argb(0xFFDDDDDD), 1.0F, CornerRadii(6.0F));
+    paint.DrawBorder(ToRect(rect), Argb(0xFFDDDDDD), StrokeStyle{1.0F}, CornerRadii(6.0F));
     const float row_height = 30.0F;
     const TextStyle item_style{Font::System(13.0F), Argb(0xFF1F1F1F), TextDecoration::None};
     float y = rect.origin.y + 4.0F;
@@ -1721,7 +1721,7 @@ public:
     }
   }
 
-  bool HandleScroll(const ScrollEvent& event) {
+  bool HandleScroll(const ScrollInputEvent& event) {
     const se::EditorActionResult result = core_->handleGestureEvent(ToWheelGestureEvent(event));
     if (result.selection_changed || result.cursor_changed) {
       text_input_client_->NotifySelectionChanged();
@@ -2334,7 +2334,7 @@ private:
       path.LineTo(Point{x + char_width_ * 0.45F, mid_y - 3.0F});
       path.MoveTo(Point{x + char_width_ * 0.6F, mid_y});
       path.LineTo(Point{x + char_width_ * 0.45F, mid_y + 3.0F});
-      paint.StrokePath(path, Color{0.0F, 0.0F, 0.0F, 0.3F}, 1.0F);
+      paint.StrokePath(path, Color{0.0F, 0.0F, 0.0F, 0.3F}, StrokeStyle{1.0F});
       return;
     }
     if (run.type == se::VisualRunType::NEWLINE) {
@@ -2346,7 +2346,7 @@ private:
       path.LineTo(Point{x + 8.0F, mid_y});
       path.LineTo(Point{x + 8.0F, mid_y + 4.0F});
       path.LineTo(Point{x + 4.0F, mid_y + 4.0F});
-      paint.StrokePath(path, Color{0.0F, 0.0F, 0.0F, 0.3F}, 1.0F);
+      paint.StrokePath(path, Color{0.0F, 0.0F, 0.0F, 0.3F}, StrokeStyle{1.0F});
       return;
     }
     if (run.text.empty()) {
@@ -2415,7 +2415,7 @@ private:
       diamond.LineTo(Point{center.x, rect.y + rect.height});
       diamond.LineTo(Point{rect.x, center.y});
       diamond.Close();
-      paint.StrokePath(diamond, Argb(kGutterIconColor), 1.5F);
+      paint.StrokePath(diamond, Argb(kGutterIconColor), StrokeStyle{1.5F});
       return;
     }
     if (icon.icon_id == 2) {
@@ -2437,7 +2437,7 @@ private:
       path.LineTo(Point{rect.x + rect.width * 0.5F, rect.y + rect.height * 0.75F});
       path.LineTo(Point{rect.x + rect.width * 0.8F, rect.y + rect.height * 0.35F});
     }
-    paint.StrokePath(path, Argb(kLineNumberColor), 1.5F);
+    paint.StrokePath(path, Argb(kLineNumberColor), StrokeStyle{1.5F});
   }
 
   void DrawUnderline(
@@ -2456,7 +2456,7 @@ private:
         up = !up;
       }
       path.LineTo(Point{r.x + r.width, baseline + (up ? -kAmplitude : kAmplitude)});
-      paint.StrokePath(path, Argb(color), 1.0F);
+      paint.StrokePath(path, Argb(color), StrokeStyle{1.0F});
       return;
     }
     if (style == se::RangeEffectUnderlineStyle::DASHED) {
@@ -2482,7 +2482,7 @@ private:
       Path path;
       path.MoveTo(a);
       path.LineTo(b);
-      paint.StrokePath(path, Argb(color), width);
+      paint.StrokePath(path, Argb(color), StrokeStyle{width});
     };
 
     // DOUBLE style draws a pair of parallel lines straddling the segment.
@@ -2760,7 +2760,7 @@ private:
   void DrawCompletionPanel(PaintContext& paint, const se::Rect& rect) {
     const Rect panel{rect.origin.x, rect.origin.y, rect.width, rect.height};
     paint.DrawRect(panel, Argb(kCompletionPanelBackground), CornerRadii(12.0F));
-    paint.DrawBorder(panel, Argb(kCompletionPanelBorder), 1.0F, CornerRadii(12.0F));
+    paint.DrawBorder(panel, Argb(kCompletionPanelBorder), StrokeStyle{1.0F}, CornerRadii(12.0F));
 
     const float content_left = rect.origin.x + kCompletionPanelPaddingH + kCompletionRowPaddingH;
     float row_center_y = rect.origin.y + kCompletionPanelPaddingV + kCompletionRowHeight * 0.5F;
@@ -2920,7 +2920,7 @@ struct SearchBridge {
 namespace detail {
 
 struct CodeEditorControllerState {
-  std::function<void(const std::string&, const std::string&, const std::string&)> load_document;
+  std::function<void(const std::string&, const std::string&)> load_document;
   std::function<std::string()> get_text;
   std::function<bool(uint32_t, uint32_t)> set_cursor;
   std::function<void(const std::string&)> run_search;
@@ -3109,11 +3109,13 @@ struct CodeEditorBehavior {
       return changed ? PointerResult::Handled : PointerResult::Ignored;
     }
 
-    void OnKey(MountedNode& node, const KeyEvent& event) override {
+    bool OnKey(MountedNode& node, const KeyEvent& event) override {
       static_cast<void>(node);
       if (holder_->HandleKey(event)) {
         InvalidatePaint();
+        return true;
       }
+      return false;
     }
 
     void OnFocusChanged(MountedNode& node, bool focused) override {
@@ -3230,8 +3232,9 @@ View CodeEditor(CodeEditorOptions options, CodeEditorController controller) {
   TextMeasurer& measurer = UseTextMeasurer();
   // An empty document key keeps one default document so callers never have to
   // invent a storage key.
-  if (options.document_key.empty()) {
-    options.document_key = "codeeditor:default";
+  CodeEditorOptions effective_options = options;
+  if (effective_options.document_key.empty()) {
+    effective_options.document_key = "codeeditor:default";
   }
 
   // Search is composed outside the retained editor node; the editor itself only owns editing semantics.
@@ -3242,7 +3245,7 @@ View CodeEditor(CodeEditorOptions options, CodeEditorController controller) {
   detail::CodeEditorControllerAccess::State(controller)->toggle_search =
       [search_visible] { search_visible = !search_visible.Get(); };
   View editor = Canvas([](PaintContext&, Size) {}).With(
-      CodeEditorBehavior{&measurer, std::move(options), controller, events}, Focusable{}
+      CodeEditorBehavior{&measurer, std::move(effective_options), controller, events}, Focusable{}
   );
   if (!search_visible.Get()) {
     return editor;

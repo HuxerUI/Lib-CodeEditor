@@ -26,6 +26,10 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     enable_language(CXX)
 endif ()
 
+# Termux builds pass a source-change stamp so AGP re-runs the configure step
+# (and refreshes staged library sources) whenever library sources change.
+set(CODEEDITOR_SOURCE_STAMP "" CACHE STRING "Termux source change stamp")
+
 if (NOT TARGET HuxerUI::huxerui)
     set(HUXERUI_HOME "$ENV{HUXERUI_HOME}" CACHE PATH "HuxerUI SDK or source directory")
     set(HUXERUI_HOST_TOOL_ROOT "$ENV{HUXERUI_HOST_TOOL_ROOT}" CACHE PATH "HuxerUI host tool root")

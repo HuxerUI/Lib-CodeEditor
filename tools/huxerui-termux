@@ -24,11 +24,24 @@
 set -euo pipefail
 
 HUXERUI_CLI="${HUXERUI_CLI:-"$HOME/huxerui-cli"}"
-HUXERUI_HOME="${HUXERUI_HOME:-/storage/emulated/0/资源/huxerui}"
-HUXERUI_HOST_TOOL_ROOT="${HUXERUI_HOST_TOOL_ROOT:-/data/data/com.termux/files/home/huxerui-tools/host-tools}"
+export HUXERUI_HOME="${HUXERUI_HOME:-/storage/emulated/0/资源/huxerui}"
+export HUXERUI_HOST_TOOL_ROOT="${HUXERUI_HOST_TOOL_ROOT:-/data/data/com.termux/files/home/huxerui-tools/host-tools}"
 AAPT2_OVERRIDE="${AAPT2_OVERRIDE:-/data/data/com.termux/files/usr/bin/aapt2}"
 CXX_STAGING="${CXX_STAGING:-"${HOME:-.}/sweetedit-android-cxx"}"
 ABIS="${ABIS:-arm64-v8a}"
+
+# AGP skips the CMake configure step when only sources changed, leaving the
+# staged library sources stale; a changing cmake argument forces a reconfigure.
+source_stamp() {
+  local script_dir project_root
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  project_root="$(cd "${script_dir}/.." && pwd)"
+  {
+    find "${project_root}/src" "${project_root}/include" "${PWD}/src" \
+        -type f \( -name '*.h' -o -name '*.cpp' \) 2>/dev/null | sort | xargs cat 2>/dev/null
+    cat "${project_root}/CMakeLists.txt" "${PWD}/CMakeLists.txt" 2>/dev/null
+  } | md5sum | cut -d' ' -f1
+}
 
 configure_graph() {
   cmake -G Ninja -S . -B .huxerui/build/library-graph \
@@ -50,6 +63,7 @@ termux_gradle() {
   mkdir -p "$CXX_STAGING"
   cd "$shell_dir"
   sh ./gradlew ":app:assemble${profile^}" \
+    "-PtermuxSourceStamp=$(source_stamp)" \
     "-PtermuxAndroidToolchain=$toolchain" \
     "-PtermuxCxxStaging=$CXX_STAGING" \
     "-PhuxeruiAbis=$ABIS" \

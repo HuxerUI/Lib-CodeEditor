@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version for the tag (for example 0.1.0)
+        description: Release version for the tag (for example 0.2.0)
         required: false
-        default: "0.1.0"
+        default: "0.2.0"
       create_release:
         description: Create or update a GitHub release and attach the built artifacts
         required: false
@@ -93,7 +93,7 @@ jobs:
             Write-Host "Could not resolve the latest HuxerUI release: $($_.Exception.Message)"
           }
           if (-not $version) {
-            $version = "0.1.0"
+            $version = "0.2.0"
             Write-Host "Using fallback version $version"
           }
           & $installer -Version $version -Yes
@@ -114,7 +114,7 @@ jobs:
           version="$(curl -fsSL -H "User-Agent: sweetedit-ci" "https://api.github.com/repos/HuxerUI/HuxerUI/releases/latest" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name","").lstrip("v"))' 2>/dev/null || true)"
           if [ -z "${version}" ]; then
-            version="0.1.0"
+            version="0.2.0"
             echo "Using fallback version ${version}"
           fi
           sh install.sh --version "${version}" --yes

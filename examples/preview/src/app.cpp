@@ -237,11 +237,11 @@ struct DemoDocument {
   std::string syntax;
 };
 
-struct DemoFileSelected : Event<std::size_t> {};
-struct DiffToggleRequested : Event<> {};
-struct WrapToggleRequested : Event<> {};
-struct StickyGutterToggleRequested : Event<> {};
-struct DiffClosed : Event<> {};
+struct DemoFileSelected : Event<void(std::size_t)> {};
+struct DiffToggleRequested : Event<void()> {};
+struct WrapToggleRequested : Event<void()> {};
+struct StickyGutterToggleRequested : Event<void()> {};
+struct DiffClosed : Event<void()> {};
 
 std::array<DemoDocument, kDemoFileCount> LoadDemoDocuments(
     const RawAsset& cpp_syntax,

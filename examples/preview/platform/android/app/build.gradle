@@ -46,6 +46,13 @@ android {
                 if (termuxAndroidToolchain != null) {
                     arguments "-DCMAKE_TOOLCHAIN_FILE=${termuxAndroidToolchain}"
                 }
+                // Changing cmake arguments forces AGP to re-run the configure
+                // step, which refreshes the staged library sources; the stamp
+                // encodes library/demo source changes for exactly that.
+                def termuxSourceStamp = providers.gradleProperty("termuxSourceStamp").orNull
+                if (termuxSourceStamp != null) {
+                    arguments "-DCODEEDITOR_SOURCE_STAMP=${termuxSourceStamp}"
+                }
             }
         }
 

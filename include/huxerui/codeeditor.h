@@ -22,18 +22,18 @@ namespace huxerui::codeeditor {
 //   CodeEditor(options).On<CodeEditorEvents::TextChanged>([] { ... })
 //
 struct CodeEditorEvents {
-  struct TextChanged : huxerui::Event<> {};
-  struct CursorChanged : huxerui::Event<std::uint32_t, std::uint32_t> {};
+  struct TextChanged : huxerui::Event<void()> {};
+  struct CursorChanged : huxerui::Event<void(std::uint32_t, std::uint32_t)> {};
   struct SelectionChanged
-      : huxerui::Event<std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t> {};
-  struct ScrollChanged : huxerui::Event<float, float> {};
-  struct FoldToggled : huxerui::Event<std::size_t> {};
-  struct LongPressed : huxerui::Event<std::uint32_t, std::uint32_t> {};
-  struct DoubleTapped : huxerui::Event<std::uint32_t, std::uint32_t> {};
-  struct LinkClicked : huxerui::Event<const std::string&> {};
-  struct CodeLensClicked : huxerui::Event<std::int32_t> {};
-  struct GutterIconClicked : huxerui::Event<std::uint32_t, std::int32_t> {};
-  struct InlayClicked : huxerui::Event<std::uint32_t, std::uint32_t> {};
+      : huxerui::Event<void(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t)> {};
+  struct ScrollChanged : huxerui::Event<void(float, float)> {};
+  struct FoldToggled : huxerui::Event<void(std::size_t)> {};
+  struct LongPressed : huxerui::Event<void(std::uint32_t, std::uint32_t)> {};
+  struct DoubleTapped : huxerui::Event<void(std::uint32_t, std::uint32_t)> {};
+  struct LinkClicked : huxerui::Event<void(const std::string&)> {};
+  struct CodeLensClicked : huxerui::Event<void(std::int32_t)> {};
+  struct GutterIconClicked : huxerui::Event<void(std::uint32_t, std::int32_t)> {};
+  struct InlayClicked : huxerui::Event<void(std::uint32_t, std::uint32_t)> {};
 };
 
 // Syntax style ids resolved by the default palette the component registers on

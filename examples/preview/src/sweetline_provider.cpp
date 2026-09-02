@@ -58,7 +58,8 @@ size_t FindIgnoreCase(std::string_view text, const char* needle) {
   return std::string::npos;
 }
 
-bool IsSingleLine(const sl::TokenSpan& token) {
+// TokenSpan and BracketToken both expose a single-line `.range`.
+bool IsSingleLine(const auto& token) {
   return token.range.start.line == token.range.end.line;
 }
 
