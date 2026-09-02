@@ -484,14 +484,21 @@ TextStyle MakeTextStyle(int32_t font_style, int32_t argb_color, float font_size)
 // ---- SweetEditor TextMeasurer bridge ---------------------------------------
 class HuxeruiTextMeasurer final : public se::TextMeasurer {
 public:
-  explicit HuxeruiTextMeasurer(huxerui::TextMeasurer& measurer, float font_size)
-      : measurer_(&measurer), font_size_(font_size) {}
+  explicit HuxeruiTextMeasurer(huxerui::TextMeasurer& measurer, float font_size, std::string font_family)
+      : measurer_(&measurer), font_size_(font_size), font_family_(std::move(font_family)) {}
+
+  [[nodiscard]] huxerui::Font ContentFont() const {
+    return font_family_.empty() ? huxerui::Font::Monospace(font_size_)
+                                : huxerui::Font::Named(font_family_, font_size_);
+  }
 
   float measureWidth(const se::U16String& text, int32_t font_style) override {
     if (!measurer_) {
       return 0.0F;
     }
-    return measurer_->MeasureRun(Utf16ToUtf8(text), MakeTextStyle(font_style, 0, font_size_)).advance;
+    huxerui::TextStyle style = MakeTextStyle(font_style, 0, font_size_);
+    style.font = ContentFont();
+    return measurer_->MeasureRun(Utf16ToUtf8(text), style).advance;
   }
 
   float measureInlayHintWidth(const se::U16String& text) override {
@@ -515,11 +522,12 @@ public:
     if (!measurer_) {
       return {0.0F, 0.0F};
     }
-    const huxerui::FontMetrics metrics = measurer_->Metrics(huxerui::Font::Monospace(font_size_));
+    const huxerui::FontMetrics metrics = measurer_->Metrics(ContentFont());
     return {-metrics.ascent, metrics.descent};
   }
 
 private:
+  std::string font_family_;
   huxerui::TextMeasurer* measurer_;
   float font_size_;
 };
@@ -1264,9 +1272,11 @@ public:
         controller_(std::move(controller)),
         completion_provider_(options.completion_provider),
         completion_trigger_characters_(options.completion_trigger_characters),
+        font_family_(options.font_family),
         theme_(options.theme.value_or(CodeEditorTheme::Default())) {
-    font_metrics_ = measurer.Metrics(Font::Monospace(font_size_));
-    char_width_ = measurer.MeasureRun("0", TextStyle{Font::Monospace(font_size_), Color::Black(), TextDecoration::None})
+    const Font content_font = ContentFont();
+    font_metrics_ = measurer.Metrics(content_font);
+    char_width_ = measurer.MeasureRun("0", TextStyle{content_font, Color::Black(), TextDecoration::None})
                       .advance;
     completion_label_metrics_ = measurer.Metrics(Font::System(kCompletionLabelSize));
     completion_detail_metrics_ = measurer.Metrics(Font::System(kCompletionDetailSize));
@@ -1277,7 +1287,7 @@ public:
 
     se::EditorOptions core_options;
     core_ = std::make_shared<se::EditorCore>(
-        std::make_shared<HuxeruiTextMeasurer>(measurer, font_size_), core_options);
+        std::make_shared<HuxeruiTextMeasurer>(measurer, font_size_, font_family_), core_options);
     theme_ = options.theme.value_or(CodeEditorTheme::Default());
     core_->setEditorRenderColors(MakeRenderColors(theme_));
     core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(theme_));
@@ -1964,6 +1974,15 @@ public:
     return font_size_;
   }
 
+  [[nodiscard]] const std::string& FontFamily() const noexcept {
+    return font_family_;
+  }
+
+  // The content font: the platform monospace default or the configured family.
+  [[nodiscard]] Font ContentFont() const {
+    return font_family_.empty() ? Font::Monospace(font_size_) : Font::Named(font_family_, font_size_);
+  }
+
   // Re-applies editing and presentation options that map directly to core
   // setters, so declarative changes take effect without a holder rebuild.
   void SyncEditingOptions(const CodeEditorOptions& options) {
@@ -2467,7 +2486,7 @@ private:
       }
     }
 
-    const TextStyle line_number_style{Font::Monospace(font_size_), theme_.line_number_color, TextDecoration::None};
+    const TextStyle line_number_style{ContentFont(), theme_.line_number_color, TextDecoration::None};
     for (const se::VisualLine& line : model.lines) {
       // line_number_position.y is the text baseline; the row background spans
       // from the line top (baseline - ascent) down the full line height.
@@ -2637,7 +2656,7 @@ private:
     }
 
     if (run.type == se::VisualRunType::PHANTOM_TEXT) {
-      TextStyle phantom{Font::Monospace(font_size_).WithSlant(FontSlant::Italic), Color{0.6F, 0.6F, 0.6F, 0.6F},
+      TextStyle phantom{ContentFont().WithSlant(FontSlant::Italic), Color{0.6F, 0.6F, 0.6F, 0.6F},
                         TextDecoration::None};
       paint.DrawTextRun(Rect{run.x, top, run.width, height}, Point{run.x, run.y}, text, phantom);
       return;
@@ -2668,7 +2687,7 @@ private:
     paint.DrawRect(background, theme_.fold_placeholder_background, CornerRadii(height * 0.2F));
     if (!run.text.empty()) {
       const float text_x = run.x + margin + run.padding;
-      const TextStyle style{Font::Monospace(font_size_), theme_.fold_placeholder_text, TextDecoration::None};
+      const TextStyle style{ContentFont(), theme_.fold_placeholder_text, TextDecoration::None};
       paint.DrawTextRun(Rect{text_x, top, run.width, height}, Point{text_x, run.y}, Utf16ToUtf8(run.text), style);
     }
   }
@@ -3098,6 +3117,7 @@ private:
   std::shared_ptr<se::EditorCore> core_;
   std::shared_ptr<se::Document> document_;
   CodeEditorTheme theme_;
+  std::string font_family_;
   std::vector<std::shared_ptr<CodeEditorDecorationProvider>> providers_;
   std::vector<CodeEditorTextChange> pending_changes_;
   std::string synced_document_text_;
@@ -3357,7 +3377,8 @@ struct CodeEditorBehavior {
       // live; only a document switch or a font change (layout metrics)
       // justifies rebuilding the holder.
       holder_->ApplyTheme(behavior.options.theme.value_or(holder_->Theme()));
-      const bool font_changed = behavior.options.font_size != holder_->FontSize();
+      const bool font_changed = behavior.options.font_size != holder_->FontSize() ||
+          behavior.options.font_family != holder_->FontFamily();
       if (behavior.options.document_key != document_key_ || font_changed) {
         document_key_ = behavior.options.document_key;
         holder_ = std::make_shared<EditorHolder>(

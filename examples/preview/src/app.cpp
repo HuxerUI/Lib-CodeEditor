@@ -294,6 +294,8 @@ struct DemoDocument {
 struct DemoFileSelected : Event<void(std::size_t)> {};
 struct DiffToggleRequested : Event<void()> {};
 struct ThemeToggleRequested : Event<void()> {};
+struct FontToggleRequested : Event<void()> {};
+struct LigatureToggleRequested : Event<void()> {};
 struct WrapToggleRequested : Event<void()> {};
 struct StickyGutterToggleRequested : Event<void()> {};
 struct DiffClosed : Event<void()> {};
@@ -331,13 +333,19 @@ View DemoFileSelector(const std::array<DemoDocument, kDemoFileCount>& documents,
 }
 
 [[huxerui::composable]]
-View DemoToolbar(bool diff_enabled, bool wrap_enabled, bool sticky_enabled, bool dark_theme) {
+View DemoToolbar(
+    bool diff_enabled, bool wrap_enabled, bool sticky_enabled, bool dark_theme, bool maple_font, bool ligature
+) {
   const EventEmitter events = UseEvents();
   return Row {
     Button(diff_enabled ? "Diff: On" : "Diff: Off")
         .OnClick([events] { events.Emit<DiffToggleRequested>(); }),
     Button(dark_theme ? "Theme: Dark" : "Theme: Light")
         .OnClick([events] { events.Emit<ThemeToggleRequested>(); }),
+    Button(maple_font ? "Font: Maple" : "Font: System")
+        .OnClick([events] { events.Emit<FontToggleRequested>(); }),
+    Button(ligature ? "Ligature: On" : "Ligature: Off")
+        .OnClick([events] { events.Emit<LigatureToggleRequested>(); }),
     Button(wrap_enabled ? "Wrap: On" : "Wrap: Off")
         .OnClick([events] { events.Emit<WrapToggleRequested>(); }),
     Button(sticky_enabled ? "Sticky: On" : "Sticky: Off")
@@ -381,6 +389,8 @@ huxerui::codeeditor::CodeEditorOptions MakeEditorOptions(
     bool wrap_enabled,
     bool sticky_enabled,
     bool dark_theme,
+    bool maple_font,
+    bool ligature,
     State<std::vector<uint32_t>> breakpoints
 ) {
   huxerui::codeeditor::CodeEditorOptions options;
@@ -421,6 +431,11 @@ huxerui::codeeditor::CodeEditorOptions MakeEditorOptions(
   if (dark_theme) {
     options.theme = MakeDarkTheme();
   }
+  // Maple Mono ships as an Android asset font; "@noliga" is the bridge's
+  // convention for disabling ligatures at the shaping level.
+  if (maple_font) {
+    options.font_family = ligature ? "MapleMono" : "MapleMono@noliga";
+  }
   options.original_text = diff_enabled ? diff_original : std::string();
   options.wrap_mode = wrap_enabled ? 2 : 0;
   options.sticky_gutter = sticky_enabled;
@@ -435,6 +450,8 @@ View CodeEditorDemo() {
   auto wrap_enabled = UseState(false);
   auto sticky_enabled = UseState(false);
   auto dark_theme = UseState(false);
+  auto maple_font = UseState(false);
+  auto ligature = UseState(true);
   auto breakpoints = UseState(std::vector<uint32_t>());
   auto cursor_status = UseState(std::string("Ln 1, Col 1"));
   auto selection_status = UseState(std::string());
@@ -454,7 +471,7 @@ View CodeEditorDemo() {
   const DemoDocument& document = documents[current_file.Get()];
   const auto options = MakeEditorOptions(
       document, diff_enabled.Get(), diff_original.Get(), wrap_enabled.Get(), sticky_enabled.Get(), dark_theme.Get(),
-      breakpoints);
+      maple_font.Get(), ligature.Get(), breakpoints);
 
   return Column {
     DemoFileSelector(documents, current_file.Get())
@@ -464,7 +481,9 @@ View CodeEditorDemo() {
             diff_original = documents[index].text;
           }
         }),
-    DemoToolbar(diff_enabled.Get(), wrap_enabled.Get(), sticky_enabled.Get(), dark_theme.Get())
+    DemoToolbar(
+        diff_enabled.Get(), wrap_enabled.Get(), sticky_enabled.Get(), dark_theme.Get(), maple_font.Get(),
+        ligature.Get())
         .On<DiffToggleRequested>([current_file, diff_enabled, diff_original, documents] {
           const bool enabled = !diff_enabled.Get();
           diff_enabled = enabled;
@@ -472,6 +491,8 @@ View CodeEditorDemo() {
         })
         .On<WrapToggleRequested>([wrap_enabled] { wrap_enabled = !wrap_enabled.Get(); })
         .On<ThemeToggleRequested>([dark_theme] { dark_theme = !dark_theme.Get(); })
+        .On<FontToggleRequested>([maple_font] { maple_font = !maple_font.Get(); })
+        .On<LigatureToggleRequested>([ligature] { ligature = !ligature.Get(); })
         .On<StickyGutterToggleRequested>([sticky_enabled] { sticky_enabled = !sticky_enabled.Get(); }),
     DemoDiffPanel(diff_enabled.Get(), diff_original)
         .On<DiffClosed>([diff_enabled, diff_original] {

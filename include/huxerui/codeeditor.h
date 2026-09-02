@@ -384,6 +384,12 @@ struct CodeEditorOptions {
   std::string document_key;
 
   float font_size = 14.0F;
+  // Optional custom font family. Empty uses the platform monospace font;
+  // a named family resolves against fonts bundled by the host platform
+  // (for example "MapleMono" from assets/fonts/MapleMono.ttf on Android),
+  // falling back to the system family table. Android additionally honors
+  // an "@noliga" suffix that disables ligatures ("Family@noliga").
+  std::string font_family;
   float line_spacing_add = 0.0F;
   float line_spacing_mult = 1.2F;
   // Explicit visual override; when empty the editor derives its theme from
