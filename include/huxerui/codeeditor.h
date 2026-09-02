@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include <array>
+
 #include <huxerui/color.h>
 #include <huxerui/event.h>
 #include <huxerui/state.h>
@@ -338,6 +340,23 @@ struct CodeEditorTheme {
   Color fold_placeholder_background;
   Color fold_placeholder_text;
   Color gutter_icon_color;
+
+  // Syntax token palette (resolves the CodeEditorStyle ids).
+  Color syntax_keyword;
+  Color syntax_type;
+  Color syntax_class;
+  Color syntax_function;
+  Color syntax_variable;
+  Color syntax_string;
+  Color syntax_number;
+  Color syntax_comment;
+  Color syntax_preprocessor;
+  Color syntax_builtin;
+  Color syntax_punctuation;
+  Color syntax_annotation;
+  Color syntax_url;
+  // Rainbow bracket depth palette (CodeEditorStyle::RainbowFirst..Last).
+  std::array<Color, 8> syntax_rainbow;
 
   // Completion panel.
   Color completion_background;

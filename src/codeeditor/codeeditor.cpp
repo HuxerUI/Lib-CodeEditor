@@ -65,6 +65,24 @@ CodeEditorTheme CodeEditorTheme::Default() {
   theme.fold_placeholder_background = Color::Rgb(116, 141, 176, 0.18F);
   theme.fold_placeholder_text = Color::Rgb(40, 74, 112);
   theme.gutter_icon_color = Color::Rgb(38, 127, 153);
+  theme.syntax_keyword = Color::Rgb(0, 0, 255);
+  theme.syntax_type = Color::Rgb(38, 127, 153);
+  theme.syntax_class = Color::Rgb(38, 127, 153);
+  theme.syntax_function = Color::Rgb(121, 94, 38);
+  theme.syntax_variable = Color::Rgb(0, 16, 128);
+  theme.syntax_string = Color::Rgb(163, 21, 21);
+  theme.syntax_number = Color::Rgb(9, 134, 88);
+  theme.syntax_comment = Color::Rgb(0, 128, 0);
+  theme.syntax_preprocessor = Color::Rgb(155, 79, 150);
+  theme.syntax_builtin = Color::Rgb(0, 0, 255);
+  theme.syntax_punctuation = Color::Rgb(119, 119, 119);
+  theme.syntax_annotation = Color::Rgb(179, 92, 0);
+  theme.syntax_url = Color::Rgb(11, 92, 173);
+  theme.syntax_rainbow = {
+      Color::Rgb(220, 50, 47),  Color::Rgb(38, 139, 210), Color::Rgb(133, 153, 0),
+      Color::Rgb(181, 137, 0),  Color::Rgb(203, 75, 22),  Color::Rgb(108, 113, 196),
+      Color::Rgb(42, 161, 152), Color::Rgb(211, 54, 130),
+  };
   theme.completion_background = Color::Rgb(250, 251, 253, 0.94F);
   theme.completion_border = Color::Rgb(160, 168, 184, 0.19F);
   theme.completion_selected_background = Color::Rgb(59, 130, 246, 0.24F);
@@ -113,6 +131,24 @@ CodeEditorTheme CodeEditorTheme::FromThemeSpec(const ThemeSpec& spec) {
   theme.fold_placeholder_background = with_alpha(colors.outline, 0.25F);
   theme.fold_placeholder_text = colors.on_surface;
   theme.gutter_icon_color = colors.secondary;
+  theme.syntax_keyword = colors.primary;
+  theme.syntax_type = colors.primary;
+  theme.syntax_class = colors.secondary;
+  theme.syntax_function = colors.primary;
+  theme.syntax_variable = colors.on_surface;
+  theme.syntax_string = colors.secondary;
+  theme.syntax_number = colors.error;
+  theme.syntax_comment = colors.on_surface_variant;
+  theme.syntax_preprocessor = colors.error;
+  theme.syntax_builtin = colors.primary;
+  theme.syntax_punctuation = colors.on_surface_variant;
+  theme.syntax_annotation = colors.secondary;
+  theme.syntax_url = colors.primary;
+  theme.syntax_rainbow = {
+      colors.primary,   colors.secondary, colors.error,
+      colors.primary,   colors.secondary, colors.error,
+      colors.primary,   colors.secondary,
+  };
   theme.completion_background = with_alpha(colors.surface, 0.94F);
   theme.completion_border = with_alpha(colors.outline, 0.25F);
   theme.completion_selected_background = with_alpha(colors.primary, 0.24F);
@@ -286,30 +322,38 @@ std::vector<std::pair<size_t, std::vector<se::DocumentHighlight>>> ToCoreDocumen
   return entries;
 }
 
-// Registers the default style palette so CodeEditorStyle ids resolve to
-// colors without any highlighting engine.
-void RegisterDefaultStyles(se::EditorCore& core) {
-  const auto style = [](int32_t argb) { return se::TextStyle{argb, 0, se::FONT_STYLE_NORMAL}; };
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Keyword), style(0xFF0000FF));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Type), style(0xFF267F99));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Class), style(0xFF267F99));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Function), style(0xFF795E26));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Variable), style(0xFF001080));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::String), style(0xFFA31515));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Number), style(0xFF098658));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Comment), style(0xFF008000));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Preprocessor), style(0xFF9B4F96));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Builtin), style(0xFF0000FF));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Punctuation), style(0xFF777777));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Annotation), style(0xFFB35C00));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Url), style(0xFF0B5CAD));
-  static constexpr uint32_t kRainbowColors[8] = {
-      0xFFDC322F, 0xFF268BD2, 0xFF859900, 0xFFB58900,
-      0xFFCB4B16, 0xFF6C71C4, 0xFF2AA198, 0xFFD33682,
+// SweetEditor style objects carry 0xAARRGGBB integers.
+int32_t ToArgb(const Color& color) {
+  const auto channel = [](float value) {
+    const int scaled = static_cast<int>(value * 255.0F + 0.5F);
+    return scaled < 0 ? 0 : (scaled > 255 ? 255 : scaled);
   };
-  for (uint32_t index = 0; index < 8; ++index) {
+  return (channel(color.alpha) << 24) | (channel(color.red) << 16) | (channel(color.green) << 8) | channel(color.blue);
+}
+
+// Registers the syntax token palette so CodeEditorStyle ids resolve to the
+// theme's colors; safe to call again on theme changes (registerTextStyle
+// replaces the previous style).
+void RegisterSyntaxStyles(se::EditorCore& core, const CodeEditorTheme& theme) {
+  const auto style = [](const Color& color) {
+    return se::TextStyle{ToArgb(color), 0, se::FONT_STYLE_NORMAL};
+  };
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Keyword), style(theme.syntax_keyword));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Type), style(theme.syntax_type));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Class), style(theme.syntax_class));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Function), style(theme.syntax_function));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Variable), style(theme.syntax_variable));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::String), style(theme.syntax_string));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Number), style(theme.syntax_number));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Comment), style(theme.syntax_comment));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Preprocessor), style(theme.syntax_preprocessor));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Builtin), style(theme.syntax_builtin));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Punctuation), style(theme.syntax_punctuation));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Annotation), style(theme.syntax_annotation));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Url), style(theme.syntax_url));
+  for (std::size_t index = 0; index < theme.syntax_rainbow.size(); ++index) {
     core.registerTextStyle(
-        static_cast<uint32_t>(CodeEditorStyle::RainbowFirst) + index, style(static_cast<int32_t>(kRainbowColors[index]))
+        static_cast<uint32_t>(CodeEditorStyle::RainbowFirst) + index, style(theme.syntax_rainbow[index])
     );
   }
 }
@@ -657,15 +701,6 @@ std::vector<se::BracketPair> MakeBracketPairs(const std::vector<std::pair<char32
     result.push_back({open, close});
   }
   return result;
-}
-
-// SweetEditor style objects carry 0xAARRGGBB integers.
-int32_t ToArgb(const Color& color) {
-  const auto channel = [](float value) {
-    const int scaled = static_cast<int>(value * 255.0F + 0.5F);
-    return scaled < 0 ? 0 : (scaled > 255 ? 255 : scaled);
-  };
-  return (channel(color.alpha) << 24) | (channel(color.red) << 16) | (channel(color.green) << 8) | channel(color.blue);
 }
 
 se::EditorRenderColors MakeRenderColors(const CodeEditorTheme& theme) {
@@ -1283,7 +1318,7 @@ public:
       core_->computeDiff(current_diff_original_);
     }
 
-    RegisterDefaultStyles(*core_);
+    RegisterSyntaxStyles(*core_, theme_);
     providers_ = options.decoration_providers;
     // Initial decoration pass: publishes whole-document fold regions and
     // lights the first viewport once providers are attached.
@@ -1908,6 +1943,7 @@ public:
     }
     theme_ = std::move(theme);
     if (core_) {
+      RegisterSyntaxStyles(*core_, theme_);
       core_->setEditorRenderColors(MakeRenderColors(theme_));
       core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(theme_));
     }
@@ -3392,6 +3428,15 @@ View CodeEditor(CodeEditorOptions options, CodeEditorController controller) {
   CodeEditorOptions effective_options = options;
   if (effective_options.document_key.empty()) {
     effective_options.document_key = "codeeditor:default";
+  }
+  // Priority: explicit options.theme, then a CodeEditorTheme placed in the
+  // environment through Theme{ThemeDefinition{}.Set(CodeEditorTheme{...})},
+  // then the ambient ThemeSpec.
+  if (!effective_options.theme) {
+    const CodeEditorTheme& environment_style = UseEnvironment<CodeEditorTheme>();
+    if (!(environment_style == CodeEditorTheme::Default())) {
+      effective_options.theme = environment_style;
+    }
   }
   effective_options.theme = effective_options.theme.value_or(CodeEditorTheme::FromThemeSpec(UseTheme()));
 

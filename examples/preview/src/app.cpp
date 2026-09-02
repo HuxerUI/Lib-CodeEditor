@@ -125,6 +125,24 @@ huxerui::codeeditor::CodeEditorTheme MakeDarkTheme() {
   theme.fold_placeholder_background = Color::Rgb(88, 91, 112, 0.30F);
   theme.fold_placeholder_text = Color::Rgb(205, 214, 244);
   theme.gutter_icon_color = Color::Rgb(137, 220, 235);
+  theme.syntax_keyword = Color::Rgb(203, 166, 247);
+  theme.syntax_type = Color::Rgb(239, 213, 128);
+  theme.syntax_class = Color::Rgb(239, 213, 128);
+  theme.syntax_function = Color::Rgb(137, 180, 250);
+  theme.syntax_variable = Color::Rgb(205, 214, 244);
+  theme.syntax_string = Color::Rgb(166, 218, 179);
+  theme.syntax_number = Color::Rgb(250, 179, 135);
+  theme.syntax_comment = Color::Rgb(108, 112, 152);
+  theme.syntax_preprocessor = Color::Rgb(245, 139, 168);
+  theme.syntax_builtin = Color::Rgb(137, 220, 235);
+  theme.syntax_punctuation = Color::Rgb(148, 156, 188);
+  theme.syntax_annotation = Color::Rgb(235, 160, 172);
+  theme.syntax_url = Color::Rgb(137, 220, 235);
+  theme.syntax_rainbow = {
+      Color::Rgb(243, 139, 168), Color::Rgb(250, 179, 135), Color::Rgb(239, 213, 128),
+      Color::Rgb(166, 218, 179), Color::Rgb(137, 220, 235), Color::Rgb(137, 180, 250),
+      Color::Rgb(203, 166, 247), Color::Rgb(245, 194, 231),
+  };
   theme.completion_background = Color::Rgb(24, 24, 37, 0.96F);
   theme.completion_border = Color::Rgb(88, 91, 112, 0.40F);
   theme.completion_selected_background = Color::Rgb(137, 180, 250, 0.28F);
