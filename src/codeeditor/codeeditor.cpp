@@ -476,18 +476,6 @@ se::GestureEvent ToWheelGestureEvent(const ScrollInputEvent& event) {
 }
 
 // ---- Theme defaults --------------------------------------------------------
-constexpr int32_t kEditorBackground = 0xFFFFFFFF;
-constexpr int32_t kGutterBackground = 0xFFF2F3F5;
-constexpr int32_t kLineNumberColor = 0xFF9AA0A6;
-constexpr int32_t kCursorColor = 0xFF1F1F1F;
-constexpr int32_t kSelectionBackground = 0x554A90E2;
-constexpr int32_t kCurrentLineBackground = 0x0F000000;
-constexpr int32_t kGuideColor = 0xFFC8C8C8;
-constexpr int32_t kSeparatorColor = 0xFFB0B7C3;
-constexpr int32_t kInlayHintBackground = 0x143B82F6;
-constexpr int32_t kInlayHintText = 0xB0344A73;
-constexpr int32_t kFoldPlaceholderBackground = 0x2E748DB0;
-constexpr int32_t kFoldPlaceholderText = 0xFF284A70;
 
 // Auto-closing bracket pairs enabled by default (reference platform ships
 // with these); hosts may override via CodeEditorOptions.auto_closing_pairs.
@@ -496,16 +484,9 @@ const std::vector<std::pair<char32_t, char32_t>> kDefaultAutoClosingPairs = {
     {U'{', U'}'},
     {U'[', U']'},
 };
-constexpr int32_t kGutterIconColor = 0xFF267F99;
-constexpr float kCursorWidth = 2.0F;
 
 // Completion panel, matching the SweetEditor reference light theme and
 // dimensions (Android CompletionPopupController / EditorTheme.java).
-constexpr int32_t kCompletionPanelBackground = 0xF0FAFBFD;
-constexpr int32_t kCompletionPanelBorder = 0x30A0A8B8;
-constexpr int32_t kCompletionSelectedBackground = 0x3D3B82F6;
-constexpr int32_t kCompletionLabelColor = 0xFF1F2937;
-constexpr int32_t kCompletionDetailColor = 0xFF8A94A6;
 constexpr float kCompletionPanelWidth = 300.0F;
 constexpr float kCompletionPanelMinWidth = 120.0F;
 constexpr float kCompletionRowHeight = 32.0F;
@@ -586,40 +567,39 @@ std::vector<se::BracketPair> MakeBracketPairs(const std::vector<std::pair<char32
   return result;
 }
 
-se::EditorRenderColors MakeRenderColors() {
+se::EditorRenderColors MakeRenderColors(const CodeEditorTheme& theme) {
   se::EditorRenderColors colors;
-  colors.text_foreground = 0xFF1F1F1F;
-  colors.link_foreground = 0xFF4C9DFF;
-  colors.active_link_foreground = 0xFF4C9DFF;
-  colors.codelens_foreground = 0xB0344A73;
-  colors.active_codelens_foreground = 0xFF3A5FA0;
-  colors.diff_added_line_background = 0x1FA6E22E;
-  colors.diff_removed_line_background = 0x1FF92672;
-  colors.diff_added_gutter_background = 0x2FA6E22E;
-  colors.diff_removed_gutter_background = 0x2FF92672;
+  colors.text_foreground = theme.text_foreground;
+  colors.link_foreground = theme.link_color;
+  colors.active_link_foreground = theme.active_link_color;
+  colors.codelens_foreground = theme.codelens_color;
+  colors.active_codelens_foreground = theme.active_codelens_color;
+  colors.diff_added_line_background = theme.diff_added_background;
+  colors.diff_removed_line_background = theme.diff_removed_background;
+  colors.diff_added_gutter_background = theme.diff_added_gutter;
+  colors.diff_removed_gutter_background = theme.diff_removed_gutter;
   return colors;
 }
 
-se::EditorRangeEffectStyles MakeRangeEffectStyles() {
+se::EditorRangeEffectStyles MakeRangeEffectStyles(const CodeEditorTheme& theme) {
   se::EditorRangeEffectStyles styles;
-  styles.selection.background_color = kSelectionBackground;
-  styles.search_match.background_color = 0x33F59E0B;
-  styles.search_current.background_color = 0x55F59E0B;
-  styles.bracket_match.background_color = 0x260F766E;
-  styles.ime_composition.underline_color = 0xFF2563EB;
+  styles.selection.background_color = theme.selection_background;
+  styles.search_match.background_color = theme.search_match_background;
+  styles.search_current.background_color = theme.search_current_background;
+  styles.bracket_match.background_color = theme.bracket_match_background;
+  styles.ime_composition.underline_color = theme.ime_composition_underline;
   styles.ime_composition.underline_style = se::RangeEffectUnderlineStyle::SOLID;
 
-  // SweetEditor light-theme reference values (platform/Android EditorTheme.java).
-  styles.document_highlight_text.background_color = 0x142563EB;
-  styles.document_highlight_read.background_color = 0x1C2563EB;
-  styles.document_highlight_write.background_color = 0x282563EB;
-  styles.diagnostic_error.underline_color = 0xFFDC2626;
+  styles.document_highlight_text.background_color = theme.document_highlight_text;
+  styles.document_highlight_read.background_color = theme.document_highlight_read;
+  styles.document_highlight_write.background_color = theme.document_highlight_write;
+  styles.diagnostic_error.underline_color = theme.diagnostic_error_underline;
   styles.diagnostic_error.underline_style = se::RangeEffectUnderlineStyle::WAVY;
-  styles.diagnostic_warning.underline_color = 0xFFD97706;
+  styles.diagnostic_warning.underline_color = theme.diagnostic_warning_underline;
   styles.diagnostic_warning.underline_style = se::RangeEffectUnderlineStyle::WAVY;
-  styles.diagnostic_info.underline_color = 0xFF0EA5E9;
+  styles.diagnostic_info.underline_color = theme.diagnostic_info_underline;
   styles.diagnostic_info.underline_style = se::RangeEffectUnderlineStyle::WAVY;
-  styles.diagnostic_hint.underline_color = 0xFF64748B;
+  styles.diagnostic_hint.underline_color = theme.diagnostic_hint_underline;
   styles.diagnostic_hint.underline_style = se::RangeEffectUnderlineStyle::WAVY;
   return styles;
 }
@@ -636,10 +616,13 @@ public:
       std::function<void(const std::vector<se::TextChange>&)> on_text_committed,
       std::function<void()> on_edit,
       std::function<bool()> on_tab,
-      bool read_only
+      bool read_only,
+      CodeEditorTheme theme
   )
       : core_(std::move(core)),
+        theme_(std::move(theme)),
         document_(std::move(document)),
+        on_content_changed_(std::move(on_content_changed)),
         on_change_(std::move(on_change)),
         on_text_committed_(std::move(on_text_committed)),
         on_edit_(std::move(on_edit)),
@@ -684,6 +667,7 @@ public:
   }
 
   void NotifyContentChanged(const std::vector<se::TextChange>& changes) {
+    ++telemetry_notify_calls;
     ++revision_;
     ++content_revision_;
     if (on_content_changed_) {
@@ -707,7 +691,15 @@ public:
     }
   }
 
+  // Live pipeline counters surfaced through the component telemetry hint.
+  uint64_t telemetry_apply_calls = 0;
+  uint64_t telemetry_notify_calls = 0;
+  CodeEditorTheme theme_;
+
   TextInputApplyResult ApplyTextInput(const TextInputCommandBatch& batch) override {
+    ++telemetry_apply_calls;
+    CODEEDITOR_TRACE("client: ApplyTextInput commands=%zu session=%s", batch.commands.size(),
+                     batch.session_id == session_id_ ? "ok" : "MISMATCH");
     if (batch.session_id != session_id_) {
       return {TextInputResultCode::SessionMismatch, TextInputSyncAction::None};
     }
@@ -758,7 +750,7 @@ public:
     }
     const se::CursorRect cursor = core_->getCursorScreenRect();
     result.result_code = TextInputResultCode::Ok;
-    result.caret = Rect{cursor.x, cursor.y, kCursorWidth, cursor.height};
+    result.caret = Rect{cursor.x, cursor.y, theme_.caret_width, cursor.height};
     return result;
   }
 
@@ -1109,7 +1101,8 @@ public:
         events_(std::move(events)),
         controller_(std::move(controller)),
         completion_provider_(options.completion_provider),
-        completion_trigger_characters_(options.completion_trigger_characters) {
+        completion_trigger_characters_(options.completion_trigger_characters),
+        theme_(options.theme) {
     font_metrics_ = measurer.Metrics(Font::Monospace(font_size_));
     char_width_ = measurer.MeasureRun("0", TextStyle{Font::Monospace(font_size_), Color::Black(), TextDecoration::None})
                       .advance;
@@ -1123,8 +1116,8 @@ public:
     se::EditorOptions core_options;
     core_ = std::make_shared<se::EditorCore>(
         std::make_shared<HuxeruiTextMeasurer>(measurer, font_size_), core_options);
-    core_->setEditorRenderColors(MakeRenderColors());
-    core_->setEditorRangeEffectStyles(MakeRangeEffectStyles());
+    core_->setEditorRenderColors(MakeRenderColors(options.theme));
+    core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(options.theme));
     core_->setLineSpacing(options.line_spacing_add, options.line_spacing_mult);
     core_->setReadOnly(options.read_only);
 
@@ -1207,7 +1200,8 @@ public:
           }
         },
         [this]() { return HandleTab(); },
-        options.read_only);
+        options.read_only,
+        options.theme);
     text_input_client_->SetDiffEditHook([this]() {
       if (current_diff_original_.empty()) {
         return;
@@ -1843,6 +1837,20 @@ public:
       MergeDecorations(merged, provider->ProvideDecorations(context));
     }
     cached_phantom_entries_ = merged.phantom_texts;
+    // On-screen pipeline telemetry: refresh counter plus the live client edit
+    // counters, rendered as an inlay hint on line 0 so refresh problems are
+    // visible without logcat.
+    if (text_input_client_) {
+      CodeEditorInlayHint component_hint;
+      component_hint.column = 60;
+      component_hint.text = "<R" + std::to_string(++telemetry_refresh_count_) + " apply" +
+                            std::to_string(text_input_client_->telemetry_apply_calls) + " notify" +
+                            std::to_string(text_input_client_->telemetry_notify_calls) + ">";
+      if (merged.inlay_hints.empty()) {
+        merged.inlay_hints.emplace_back(0, std::vector<CodeEditorInlayHint>{});
+      }
+      merged.inlay_hints.front().second.push_back(std::move(component_hint));
+    }
     ApplyDecorations(*core_, merged);
     model_dirty_ = true;
     CODEEDITOR_TRACE(
@@ -2188,13 +2196,13 @@ private:
     const float ascent = font_metrics_.ascent;
     const float line_height = ascent + font_metrics_.descent;
 
-    paint.DrawRect(Rect{0.0F, 0.0F, width, height}, Argb(kEditorBackground));
+    paint.DrawRect(Rect{0.0F, 0.0F, width, height}, Argb(theme_.background));
 
     // The gutter (line-number column) sits on its own background strip; the
     // core crops text runs with a margin that hides under this strip, so it
     // must be painted or cropped characters bleed into the line-number area.
     if (model.split_x > 0.0F) {
-      paint.DrawRect(Rect{0.0F, 0.0F, model.split_x, height}, Argb(kGutterBackground));
+      paint.DrawRect(Rect{0.0F, 0.0F, model.split_x, height}, Argb(theme_.gutter_background));
       // The split line separates the gutter from the text area (reference
       // renderer draws it when splitLineVisible is set).
       if (model.split_line_visible) {
@@ -2203,7 +2211,7 @@ private:
     }
 
     if (model.current_line_render_mode == se::CurrentLineRenderMode::BACKGROUND) {
-      paint.DrawRect(Rect{0.0F, model.current_line.y, width, LineHeight(model)}, Argb(kCurrentLineBackground));
+      paint.DrawRect(Rect{0.0F, model.current_line.y, width, LineHeight(model)}, Argb(theme_.current_line_background));
     }
 
     for (const se::RangeEffectRenderItem& effect : model.range_effects) {
@@ -2212,7 +2220,7 @@ private:
       }
     }
 
-    const TextStyle line_number_style{Font::Monospace(font_size_), Argb(kLineNumberColor), TextDecoration::None};
+    const TextStyle line_number_style{Font::Monospace(font_size_), Argb(theme_.line_number_color), TextDecoration::None};
     for (const se::VisualLine& line : model.lines) {
       // line_number_position.y is the text baseline; the row background spans
       // from the line top (baseline - ascent) down the full line height.
@@ -2276,8 +2284,8 @@ private:
     const bool caret_visible = model.cursor.visible && focused_ && blink_on_;
     if (caret_visible) {
       paint.DrawRect(
-          Rect{model.cursor.position.x, model.cursor.position.y, kCursorWidth, model.cursor.height},
-          Argb(kCursorColor));
+          Rect{model.cursor.position.x, model.cursor.position.y, theme_.caret_width, model.cursor.height},
+          Argb(theme_.caret_color));
     }
 
     // Handles are drawn here (single owner) because the HuxerUI selection
@@ -2399,10 +2407,10 @@ private:
       return;
     }
     const Rect background{run.x + margin, top, run.width - margin * 2.0F, height};
-    paint.DrawRect(background, Argb(kInlayHintBackground), CornerRadii(height * 0.2F));
+    paint.DrawRect(background, Argb(theme_.inlay_hint_background), CornerRadii(height * 0.2F));
     if (!run.text.empty()) {
       const float text_x = run.x + margin + run.padding;
-      const TextStyle style{Font::System(font_size_ * 0.9F), Argb(kInlayHintText), TextDecoration::None};
+      const TextStyle style{Font::System(font_size_ * 0.9F), Argb(theme_.inlay_hint_text), TextDecoration::None};
       paint.DrawTextRun(Rect{text_x, top, run.width, height}, Point{text_x, run.y}, Utf16ToUtf8(run.text), style);
     }
   }
@@ -2410,10 +2418,10 @@ private:
   void DrawFoldPlaceholder(PaintContext& paint, const se::VisualRun& run, float top, float height) {
     const float margin = run.margin;
     const Rect background{run.x + margin, top, run.width - margin * 2.0F, height};
-    paint.DrawRect(background, Argb(kFoldPlaceholderBackground), CornerRadii(height * 0.2F));
+    paint.DrawRect(background, Argb(theme_.fold_placeholder_background), CornerRadii(height * 0.2F));
     if (!run.text.empty()) {
       const float text_x = run.x + margin + run.padding;
-      const TextStyle style{Font::Monospace(font_size_), Argb(kFoldPlaceholderText), TextDecoration::None};
+      const TextStyle style{Font::Monospace(font_size_), Argb(theme_.fold_placeholder_text), TextDecoration::None};
       paint.DrawTextRun(Rect{text_x, top, run.width, height}, Point{text_x, run.y}, Utf16ToUtf8(run.text), style);
     }
   }
@@ -2431,14 +2439,14 @@ private:
       diamond.LineTo(Point{center.x, rect.y + rect.height});
       diamond.LineTo(Point{rect.x, center.y});
       diamond.Close();
-      paint.StrokePath(diamond, Argb(kGutterIconColor), StrokeStyle{1.5F});
+      paint.StrokePath(diamond, Argb(theme_.gutter_icon_color), StrokeStyle{1.5F});
       return;
     }
     if (icon.icon_id == 2) {
-      paint.DrawCircle(center, rect.width * 0.5F, Argb(kGutterIconColor));
+      paint.DrawCircle(center, rect.width * 0.5F, Argb(theme_.gutter_icon_color));
       return;
     }
-    paint.DrawCircle(center, rect.width * 0.35F, Argb(kGutterIconColor));
+    paint.DrawCircle(center, rect.width * 0.35F, Argb(theme_.gutter_icon_color));
   }
 
   void DrawFoldMarker(PaintContext& paint, const se::FoldMarkerRenderItem& marker) {
@@ -2453,7 +2461,7 @@ private:
       path.LineTo(Point{rect.x + rect.width * 0.5F, rect.y + rect.height * 0.75F});
       path.LineTo(Point{rect.x + rect.width * 0.8F, rect.y + rect.height * 0.35F});
     }
-    paint.StrokePath(path, Argb(kLineNumberColor), StrokeStyle{1.5F});
+    paint.StrokePath(path, Argb(theme_.line_number_color), StrokeStyle{1.5F});
   }
 
   void DrawUnderline(
@@ -2490,7 +2498,7 @@ private:
   }
 
   void DrawGuideSegment(PaintContext& paint, const se::GuideSegment& segment) {
-    const int32_t color = segment.type == se::GuideType::SEPARATOR ? kSeparatorColor : kGuideColor;
+    const int32_t color = segment.type == se::GuideType::SEPARATOR ? theme_.separator_color : theme_.indent_guide_color;
     // Separator and bracket lines are lighter than indent guides (reference
     // renderer uses a separate paint for separators).
     const float width = segment.type == se::GuideType::SEPARATOR ? 1.0F : 1.0F;
@@ -2775,8 +2783,8 @@ private:
 
   void DrawCompletionPanel(PaintContext& paint, const se::Rect& rect) {
     const Rect panel{rect.origin.x, rect.origin.y, rect.width, rect.height};
-    paint.DrawRect(panel, Argb(kCompletionPanelBackground), CornerRadii(12.0F));
-    paint.DrawBorder(panel, Argb(kCompletionPanelBorder), StrokeStyle{1.0F}, CornerRadii(12.0F));
+    paint.DrawRect(panel, Argb(theme_.completion_background), CornerRadii(12.0F));
+    paint.DrawBorder(panel, Argb(theme_.completion_border), StrokeStyle{1.0F}, CornerRadii(12.0F));
 
     const float content_left = rect.origin.x + kCompletionPanelPaddingH + kCompletionRowPaddingH;
     float row_center_y = rect.origin.y + kCompletionPanelPaddingV + kCompletionRowHeight * 0.5F;
@@ -2788,7 +2796,7 @@ private:
         paint.DrawRect(
             Rect{rect.origin.x + kCompletionPanelPaddingH, row_center_y - kCompletionRowHeight * 0.5F,
                  rect.width - kCompletionPanelPaddingH * 2.0F, kCompletionRowHeight},
-            Argb(kCompletionSelectedBackground),
+            Argb(theme_.completion_selected_background),
             CornerRadii(6.0F));
       }
 
@@ -2818,7 +2826,7 @@ private:
                rect.width - (label_x - rect.origin.x) - kCompletionRowPaddingH, kCompletionRowHeight},
           Point{label_x, label_baseline},
           item.label,
-          TextStyle{Font::System(kCompletionLabelSize), Argb(kCompletionLabelColor), TextDecoration::None});
+          TextStyle{Font::System(kCompletionLabelSize), Argb(theme_.completion_label), TextDecoration::None});
 
       if (!item.detail.empty()) {
         // Estimated advance (reference renders an 11sp detail at the row end).
@@ -2831,7 +2839,7 @@ private:
               Rect{detail_x, row_center_y - kCompletionRowHeight * 0.5F, detail_advance, kCompletionRowHeight},
               Point{detail_x, detail_baseline},
               item.detail,
-              TextStyle{Font::System(kCompletionDetailSize), Argb(kCompletionDetailColor), TextDecoration::None});
+              TextStyle{Font::System(kCompletionDetailSize), Argb(theme_.completion_detail), TextDecoration::None});
         }
       }
 
@@ -2841,6 +2849,8 @@ private:
 
   std::shared_ptr<se::EditorCore> core_;
   std::shared_ptr<se::Document> document_;
+  uint64_t telemetry_refresh_count_{0};
+  CodeEditorTheme theme_;
   std::vector<std::shared_ptr<CodeEditorDecorationProvider>> providers_;
   std::vector<CodeEditorTextChange> pending_changes_;
   std::string synced_document_text_;

@@ -77,7 +77,12 @@ phantom text — lives in `examples/preview/src/sweetline_provider.cpp`.
 ## 5. Options
 
 Documents: `initial_text`, `document_key`. Typography: `font_size`, `line_spacing_add`,
-`line_spacing_mult`. Editing: `read_only`, `tab_size`, `backspace_unindent`, `insert_spaces`,
+`line_spacing_mult`, and `theme` (`CodeEditorTheme`) covering every visual surface: component and
+gutter backgrounds, focused-line highlight, caret color/width, line numbers, selection, search and
+bracket-match backgrounds, document highlights, IME composition and diagnostic underlines, diff
+rows and gutters, links and code lens, indent guides, inlay hints, fold placeholders, gutter icons,
+and the completion panel. All colors are `0xAARRGGBB`; the defaults form the light reference
+theme, so a dark theme is a matter of overriding the struct. Editing: `read_only`, `tab_size`, `backspace_unindent`, `insert_spaces`,
 `auto_closing_pairs`. Completion: `completion_provider`, `completion_trigger_characters`.
 Decorations: `decoration_providers`, `accept_phantom_on_tab`. Hooks: `newline_action`.
 Diff: `original_text` (empty disables). Display: `render_whitespace`, `render_line_breaks`,

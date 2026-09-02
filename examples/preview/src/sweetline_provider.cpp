@@ -176,6 +176,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
   // Slice produced by the incremental pass; the analyzer returns it directly
   // (the proven path — getHighlightSlice serves the last full-analysis cache,
   // which the incremental patch does not refresh).
+  const char* analysis_path = "full";
   sl::SharedPtr<sl::DocumentHighlightSlice> incremental_slice;
   if (analyzer_ != nullptr && !context.text_changes.empty()) {
     for (const ce::CodeEditorTextChange& change : context.text_changes) {
@@ -190,9 +191,11 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
     if (context.document_text != nullptr) {
       synced_text_ = *context.document_text;
     }
+    analysis_path = "incr";
     CE_TRACE("provider: incremental changes=%zu", context.text_changes.size());
   } else if (context.document_text != nullptr && *context.document_text != synced_text_) {
     RebuildDocument(*context.document_text);
+    analysis_path = "rebuild";
     CE_TRACE("provider: rebuilt document");
   }
   const size_t total_lines = document_->getLineCount();
@@ -431,6 +434,20 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
       "provider: spans=%zu lines guides=%zu folds=%zu settled=%d", result.syntax_spans.size(),
       result.indent_guides.size(), result.fold_regions.size(), context.viewport_settled ? 1 : 0
   );
+  // On-screen telemetry: an inlay hint on line 0 shows the live pipeline state
+  // (span lines, applied changes, analysis path) so refresh problems are
+  // visible directly in the editor without logcat.
+  size_t span_total = 0;
+  for (const auto& [line, spans] : result.syntax_spans) {
+    static_cast<void>(line);
+    span_total += spans.size();
+  }
+  ce::CodeEditorInlayHint telemetry_hint;
+  telemetry_hint.column = 0;
+  telemetry_hint.text = "[" + std::string(analysis_path) + " lines=" + std::to_string(result.syntax_spans.size()) +
+                        " spans=" + std::to_string(span_total) + " ch=" + std::to_string(context.text_changes.size()) +
+                        " total=" + std::to_string(context.total_line_count) + "]";
+  result.inlay_hints.emplace_back(0, std::vector<ce::CodeEditorInlayHint>{std::move(telemetry_hint)});
   return result;
 }
 

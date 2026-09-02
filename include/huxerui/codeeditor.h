@@ -283,6 +283,66 @@ inline CodeEditorController UseCodeEditorController(
   return huxerui::UseState(CodeEditorController{}, location).Get();
 }
 
+// Visual theme for the editor chrome, range effects, and decorations. All
+// colors are 0xAARRGGBB; defaults form the light reference theme.
+struct CodeEditorTheme {
+  // Surfaces.
+  int32_t background = 0xFFFFFFFF;
+  int32_t gutter_background = 0xFFF2F3F5;
+  // Focused (caret) line highlight drawn across the text area.
+  int32_t current_line_background = 0x0F000000;
+  int32_t separator_color = 0xFFB0B7C3;
+
+  // Text, caret, and gutter.
+  int32_t text_foreground = 0xFF1F1F1F;
+  int32_t line_number_color = 0xFF9AA0A6;
+  int32_t caret_color = 0xFF1F1F1F;
+  float caret_width = 2.0F;
+
+  // Links and code lens.
+  int32_t link_color = 0xFF4C9DFF;
+  int32_t active_link_color = 0xFF4C9DFF;
+  int32_t codelens_color = 0xB0344A73;
+  int32_t active_codelens_color = 0xFF3A5FA0;
+
+  // Selection, search, bracket match, and document highlights.
+  int32_t selection_background = 0x554A90E2;
+  int32_t search_match_background = 0x33F59E0B;
+  int32_t search_current_background = 0x55F59E0B;
+  int32_t bracket_match_background = 0x260F766E;
+  int32_t document_highlight_text = 0x142563EB;
+  int32_t document_highlight_read = 0x1C2563EB;
+  int32_t document_highlight_write = 0x282563EB;
+  int32_t ime_composition_underline = 0xFF2563EB;
+
+  // Diagnostic underlines (wavy).
+  int32_t diagnostic_error_underline = 0xFFDC2626;
+  int32_t diagnostic_warning_underline = 0xFFD97706;
+  int32_t diagnostic_info_underline = 0xFF0EA5E9;
+  int32_t diagnostic_hint_underline = 0xFF64748B;
+
+  // Diff presentation.
+  int32_t diff_added_background = 0x1FA6E22E;
+  int32_t diff_removed_background = 0x1FF92672;
+  int32_t diff_added_gutter = 0x2FA6E22E;
+  int32_t diff_removed_gutter = 0x2FF92672;
+
+  // Decorations.
+  int32_t indent_guide_color = 0xFFC8C8C8;
+  int32_t inlay_hint_background = 0x143B82F6;
+  int32_t inlay_hint_text = 0xB0344A73;
+  int32_t fold_placeholder_background = 0x2E748DB0;
+  int32_t fold_placeholder_text = 0xFF284A70;
+  int32_t gutter_icon_color = 0xFF267F99;
+
+  // Completion panel.
+  int32_t completion_background = 0xF0FAFBFD;
+  int32_t completion_border = 0x30A0A8B8;
+  int32_t completion_selected_background = 0x3D3B82F6;
+  int32_t completion_label = 0xFF1F2937;
+  int32_t completion_detail = 0xFF8A94A6;
+};
+
 // ---- Options ----
 
 // Declarative configuration for a CodeEditor instance.
@@ -297,6 +357,8 @@ struct CodeEditorOptions {
   float font_size = 14.0F;
   float line_spacing_add = 0.0F;
   float line_spacing_mult = 1.2F;
+  // Visual theme (colors, caret width); defaults form the light reference.
+  CodeEditorTheme theme;
 
   bool read_only = false;
   uint32_t tab_size = 4;
