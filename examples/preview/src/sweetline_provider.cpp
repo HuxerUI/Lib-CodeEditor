@@ -173,10 +173,13 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
   // Keep the analyzer document in sync with the editor document: incremental
   // analysis for edits, full rebuild only when the text diverges with no
   // reported changes (first load, reload, or an external reset).
-  bool applied_incrementally = false;
+  // Slice produced by the incremental pass; the analyzer returns it directly
+  // (the proven path — getHighlightSlice serves the last full-analysis cache,
+  // which the incremental patch does not refresh).
+  sl::SharedPtr<sl::DocumentHighlightSlice> incremental_slice;
   if (analyzer_ != nullptr && !context.text_changes.empty()) {
     for (const ce::CodeEditorTextChange& change : context.text_changes) {
-      analyzer_->analyzeIncrementalInLineRange(
+      incremental_slice = analyzer_->analyzeIncrementalInLineRange(
           sl::TextRange{
               sl::TextPosition{change.start_line, change.start_column},
               sl::TextPosition{change.end_line, change.end_column},
@@ -187,20 +190,19 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
     if (context.document_text != nullptr) {
       synced_text_ = *context.document_text;
     }
-    // The incremental call guarantees the visible range is present in the
-    // analyzer cache; re-running the full overscan analysis over freshly
-    // patched state produces misaligned spans, so serve the slice directly.
-    applied_incrementally = true;
     CE_TRACE("provider: incremental changes=%zu", context.text_changes.size());
   } else if (context.document_text != nullptr && *context.document_text != synced_text_) {
     RebuildDocument(*context.document_text);
     CE_TRACE("provider: rebuilt document");
   }
   const size_t total_lines = document_->getLineCount();
-  if (!applied_incrementally) {
+  sl::SharedPtr<sl::DocumentHighlightSlice> slice;
+  if (incremental_slice) {
+    slice = std::move(incremental_slice);
+  } else {
     analyzer_->analyzeLineRange(OverscanRange(viewport, total_lines));
+    slice = analyzer_->getHighlightSlice(viewport);
   }
-  const sl::SharedPtr<sl::DocumentHighlightSlice> slice = analyzer_->getHighlightSlice(viewport);
 
   // Syntax spans (fast path, kept up to date while scrolling).
   if (slice) {
