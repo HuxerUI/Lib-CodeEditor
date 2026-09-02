@@ -40,7 +40,22 @@ source_stamp() {
     find "${project_root}/src" "${project_root}/include" "${PWD}/src" \
         -type f \( -name '*.h' -o -name '*.cpp' \) 2>/dev/null | sort | xargs cat 2>/dev/null
     cat "${project_root}/CMakeLists.txt" "${PWD}/CMakeLists.txt" 2>/dev/null
+    # Host tool changes alter generated code/resources; include their bytes so
+    # a stale ${HUXERUI_HOST_TOOL_ROOT} copy cannot silently mismatch.
+    cat "${HUXERUI_HOME}/tools/prebuilt/android/arm64-v8a/hrc" \
+        "${HUXERUI_HOME}/tools/prebuilt/android/arm64-v8a/hcg" 2>/dev/null
   } | md5sum | cut -d' ' -f1
+}
+
+# Keep the deployed host tools in lockstep with the HuxerUI checkout so a
+# stale copy can never generate resources/code the runtime rejects.
+sync_host_tools() {
+  local src_dir="${HUXERUI_HOME}/tools/prebuilt/android/arm64-v8a"
+  local dst_dir="${HUXERUI_HOST_TOOL_ROOT}/android/arm64-v8a"
+  [ -d "${src_dir}" ] || return 0
+  mkdir -p "${dst_dir}"
+  cp -f "${src_dir}/hrc" "${src_dir}/hcg" "${dst_dir}/" 2>/dev/null || true
+  chmod 755 "${dst_dir}/hrc" "${dst_dir}/hcg" 2>/dev/null || true
 }
 
 configure_graph() {
@@ -73,7 +88,8 @@ termux_gradle() {
 
 android_build() {
   local profile="${1:-debug}"
-  configure_graph
+  sync_host_tools
+configure_graph
   termux_gradle "$profile"
 }
 
