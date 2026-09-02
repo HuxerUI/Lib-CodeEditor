@@ -99,6 +99,40 @@ std::vector<CompletionItem> ProvideCompletions(const CompletionContext& context)
 
 }  // namespace
 
+// Dark showcase theme: starts from the light reference and overrides every
+// major surface, demonstrating partial theming on top of CodeEditorTheme.
+huxerui::codeeditor::CodeEditorTheme MakeDarkTheme() {
+  auto theme = huxerui::codeeditor::CodeEditorTheme::Default();
+  theme.background = Color::Rgb(30, 30, 46);
+  theme.gutter_background = Color::Rgb(24, 24, 37);
+  theme.current_line_background = Color::Rgb(255, 255, 255, 0.06F);
+  theme.separator_color = Color::Rgb(88, 91, 112);
+  theme.text_foreground = Color::Rgb(205, 214, 244);
+  theme.line_number_color = Color::Rgb(108, 112, 152);
+  theme.caret_color = Color::Rgb(245, 224, 220);
+  theme.link_color = Color::Rgb(137, 180, 250);
+  theme.active_link_color = Color::Rgb(137, 220, 235);
+  theme.codelens_color = Color::Rgb(166, 173, 200, 0.69F);
+  theme.active_codelens_color = Color::Rgb(137, 180, 250);
+  theme.selection_background = Color::Rgb(137, 180, 250, 0.33F);
+  theme.bracket_match_background = Color::Rgb(137, 220, 235, 0.16F);
+  theme.document_highlight_text = Color::Rgb(137, 180, 250, 0.10F);
+  theme.document_highlight_read = Color::Rgb(137, 180, 250, 0.14F);
+  theme.document_highlight_write = Color::Rgb(137, 180, 250, 0.20F);
+  theme.indent_guide_color = Color::Rgb(88, 91, 112);
+  theme.inlay_hint_background = Color::Rgb(137, 180, 250, 0.12F);
+  theme.inlay_hint_text = Color::Rgb(166, 173, 200);
+  theme.fold_placeholder_background = Color::Rgb(88, 91, 112, 0.30F);
+  theme.fold_placeholder_text = Color::Rgb(205, 214, 244);
+  theme.gutter_icon_color = Color::Rgb(137, 220, 235);
+  theme.completion_background = Color::Rgb(24, 24, 37, 0.96F);
+  theme.completion_border = Color::Rgb(88, 91, 112, 0.40F);
+  theme.completion_selected_background = Color::Rgb(137, 180, 250, 0.28F);
+  theme.completion_label = Color::Rgb(205, 214, 244);
+  theme.completion_detail = Color::Rgb(108, 112, 152);
+  return theme;
+}
+
 // Demo documents: each entry pairs a label with its source text and SweetLine
 // syntax definition, mirroring the SweetEditor demo's file picker.
 struct DemoFile {
@@ -239,6 +273,7 @@ struct DemoDocument {
 
 struct DemoFileSelected : Event<void(std::size_t)> {};
 struct DiffToggleRequested : Event<void()> {};
+struct ThemeToggleRequested : Event<void()> {};
 struct WrapToggleRequested : Event<void()> {};
 struct StickyGutterToggleRequested : Event<void()> {};
 struct DiffClosed : Event<void()> {};
@@ -276,11 +311,13 @@ View DemoFileSelector(const std::array<DemoDocument, kDemoFileCount>& documents,
 }
 
 [[huxerui::composable]]
-View DemoToolbar(bool diff_enabled, bool wrap_enabled, bool sticky_enabled) {
+View DemoToolbar(bool diff_enabled, bool wrap_enabled, bool sticky_enabled, bool dark_theme) {
   const EventEmitter events = UseEvents();
   return Row {
     Button(diff_enabled ? "Diff: On" : "Diff: Off")
         .OnClick([events] { events.Emit<DiffToggleRequested>(); }),
+    Button(dark_theme ? "Theme: Dark" : "Theme: Light")
+        .OnClick([events] { events.Emit<ThemeToggleRequested>(); }),
     Button(wrap_enabled ? "Wrap: On" : "Wrap: Off")
         .OnClick([events] { events.Emit<WrapToggleRequested>(); }),
     Button(sticky_enabled ? "Sticky: On" : "Sticky: Off")
@@ -323,6 +360,7 @@ huxerui::codeeditor::CodeEditorOptions MakeEditorOptions(
     const std::string& diff_original,
     bool wrap_enabled,
     bool sticky_enabled,
+    bool dark_theme,
     State<std::vector<uint32_t>> breakpoints
 ) {
   huxerui::codeeditor::CodeEditorOptions options;
@@ -350,6 +388,11 @@ huxerui::codeeditor::CodeEditorOptions MakeEditorOptions(
       },
       [](uint32_t line) { return line == 0 ? std::string(" // TODO: implement") : std::string(); }
   ));
+  // Explicit theme override demonstrates live restyling; empty follows the
+  // ambient HuxerUI theme.
+  if (dark_theme) {
+    options.theme = MakeDarkTheme();
+  }
   options.original_text = diff_enabled ? diff_original : std::string();
   options.wrap_mode = wrap_enabled ? 2 : 0;
   options.sticky_gutter = sticky_enabled;
@@ -363,6 +406,7 @@ View CodeEditorDemo() {
   auto diff_original = UseState(std::string());
   auto wrap_enabled = UseState(false);
   auto sticky_enabled = UseState(false);
+  auto dark_theme = UseState(false);
   auto breakpoints = UseState(std::vector<uint32_t>());
   auto cursor_status = UseState(std::string("Ln 1, Col 1"));
   auto selection_status = UseState(std::string());
@@ -381,7 +425,8 @@ View CodeEditorDemo() {
   const huxerui::codeeditor::CodeEditorController controller = huxerui::codeeditor::UseCodeEditorController();
   const DemoDocument& document = documents[current_file.Get()];
   const auto options = MakeEditorOptions(
-      document, diff_enabled.Get(), diff_original.Get(), wrap_enabled.Get(), sticky_enabled.Get(), breakpoints);
+      document, diff_enabled.Get(), diff_original.Get(), wrap_enabled.Get(), sticky_enabled.Get(), dark_theme.Get(),
+      breakpoints);
 
   return Column {
     DemoFileSelector(documents, current_file.Get())
@@ -391,13 +436,14 @@ View CodeEditorDemo() {
             diff_original = documents[index].text;
           }
         }),
-    DemoToolbar(diff_enabled.Get(), wrap_enabled.Get(), sticky_enabled.Get())
+    DemoToolbar(diff_enabled.Get(), wrap_enabled.Get(), sticky_enabled.Get(), dark_theme.Get())
         .On<DiffToggleRequested>([current_file, diff_enabled, diff_original, documents] {
           const bool enabled = !diff_enabled.Get();
           diff_enabled = enabled;
           diff_original = enabled ? documents[current_file.Get()].text : std::string();
         })
         .On<WrapToggleRequested>([wrap_enabled] { wrap_enabled = !wrap_enabled.Get(); })
+        .On<ThemeToggleRequested>([dark_theme] { dark_theme = !dark_theme.Get(); })
         .On<StickyGutterToggleRequested>([sticky_enabled] { sticky_enabled = !sticky_enabled.Get(); }),
     DemoDiffPanel(diff_enabled.Get(), diff_original)
         .On<DiffClosed>([diff_enabled, diff_original] {

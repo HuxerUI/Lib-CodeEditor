@@ -29,6 +29,98 @@
 #include <vector>
 
 namespace huxerui::codeeditor {
+
+CodeEditorTheme CodeEditorTheme::Default() {
+  CodeEditorTheme theme;
+  theme.background = Color::Rgb(255, 255, 255);
+  theme.gutter_background = Color::Rgb(242, 243, 245);
+  theme.current_line_background = Color::Rgb(0, 0, 0, 0.06F);
+  theme.separator_color = Color::Rgb(176, 183, 195);
+  theme.text_foreground = Color::Rgb(31, 31, 31);
+  theme.line_number_color = Color::Rgb(154, 160, 166);
+  theme.caret_color = Color::Rgb(31, 31, 31);
+  theme.link_color = Color::Rgb(76, 157, 255);
+  theme.active_link_color = Color::Rgb(76, 157, 255);
+  theme.codelens_color = Color::Rgb(52, 74, 115, 0.69F);
+  theme.active_codelens_color = Color::Rgb(58, 95, 160);
+  theme.selection_background = Color::Rgb(74, 144, 226, 0.33F);
+  theme.search_match_background = Color::Rgb(245, 158, 11, 0.2F);
+  theme.search_current_background = Color::Rgb(245, 158, 11, 0.33F);
+  theme.bracket_match_background = Color::Rgb(15, 118, 110, 0.15F);
+  theme.document_highlight_text = Color::Rgb(37, 99, 235, 0.08F);
+  theme.document_highlight_read = Color::Rgb(37, 99, 235, 0.11F);
+  theme.document_highlight_write = Color::Rgb(37, 99, 235, 0.16F);
+  theme.ime_composition_underline = Color::Rgb(37, 99, 235);
+  theme.diagnostic_error_underline = Color::Rgb(220, 38, 38);
+  theme.diagnostic_warning_underline = Color::Rgb(217, 119, 6);
+  theme.diagnostic_info_underline = Color::Rgb(14, 165, 233);
+  theme.diagnostic_hint_underline = Color::Rgb(100, 116, 139);
+  theme.diff_added_background = Color::Rgb(166, 226, 46, 0.12F);
+  theme.diff_removed_background = Color::Rgb(249, 38, 114, 0.12F);
+  theme.diff_added_gutter = Color::Rgb(166, 226, 46, 0.18F);
+  theme.diff_removed_gutter = Color::Rgb(249, 38, 114, 0.18F);
+  theme.indent_guide_color = Color::Rgb(200, 200, 200);
+  theme.inlay_hint_background = Color::Rgb(59, 130, 246, 0.08F);
+  theme.inlay_hint_text = Color::Rgb(52, 74, 115, 0.69F);
+  theme.fold_placeholder_background = Color::Rgb(116, 141, 176, 0.18F);
+  theme.fold_placeholder_text = Color::Rgb(40, 74, 112);
+  theme.gutter_icon_color = Color::Rgb(38, 127, 153);
+  theme.completion_background = Color::Rgb(250, 251, 253, 0.94F);
+  theme.completion_border = Color::Rgb(160, 168, 184, 0.19F);
+  theme.completion_selected_background = Color::Rgb(59, 130, 246, 0.24F);
+  theme.completion_label = Color::Rgb(31, 41, 55);
+  theme.completion_detail = Color::Rgb(138, 148, 166);
+  return theme;
+}
+
+CodeEditorTheme CodeEditorTheme::FromThemeSpec(const ThemeSpec& spec) {
+  const ColorScheme& colors = spec.colors;
+  const auto with_alpha = [](Color color, float alpha) {
+    color.alpha = alpha;
+    return color;
+  };
+  CodeEditorTheme theme;
+  theme.background = colors.surface;
+  theme.gutter_background = colors.surface_container_highest;
+  theme.current_line_background = with_alpha(colors.on_surface, 0.06F);
+  theme.separator_color = colors.outline;
+  theme.text_foreground = colors.on_surface;
+  theme.line_number_color = colors.on_surface_variant;
+  theme.caret_color = colors.primary;
+  theme.link_color = colors.primary;
+  theme.active_link_color = colors.primary;
+  theme.codelens_color = with_alpha(colors.on_surface_variant, 0.69F);
+  theme.active_codelens_color = colors.primary;
+  theme.selection_background = with_alpha(colors.primary, 0.33F);
+  theme.search_match_background = with_alpha(colors.secondary, 0.30F);
+  theme.search_current_background = with_alpha(colors.secondary, 0.45F);
+  theme.bracket_match_background = with_alpha(colors.secondary, 0.18F);
+  theme.document_highlight_text = with_alpha(colors.primary, 0.08F);
+  theme.document_highlight_read = with_alpha(colors.primary, 0.11F);
+  theme.document_highlight_write = with_alpha(colors.primary, 0.16F);
+  theme.ime_composition_underline = colors.primary;
+  theme.diagnostic_error_underline = colors.error;
+  theme.diagnostic_warning_underline = with_alpha(colors.error, 0.75F);
+  theme.diagnostic_info_underline = colors.primary;
+  theme.diagnostic_hint_underline = colors.on_surface_variant;
+  theme.diff_added_background = with_alpha(colors.primary, 0.10F);
+  theme.diff_removed_background = with_alpha(colors.error, 0.10F);
+  theme.diff_added_gutter = with_alpha(colors.primary, 0.16F);
+  theme.diff_removed_gutter = with_alpha(colors.error, 0.16F);
+  theme.indent_guide_color = with_alpha(colors.outline, 0.55F);
+  theme.inlay_hint_background = with_alpha(colors.primary, 0.08F);
+  theme.inlay_hint_text = with_alpha(colors.on_surface_variant, 0.85F);
+  theme.fold_placeholder_background = with_alpha(colors.outline, 0.25F);
+  theme.fold_placeholder_text = colors.on_surface;
+  theme.gutter_icon_color = colors.secondary;
+  theme.completion_background = with_alpha(colors.surface, 0.94F);
+  theme.completion_border = with_alpha(colors.outline, 0.25F);
+  theme.completion_selected_background = with_alpha(colors.primary, 0.24F);
+  theme.completion_label = colors.on_surface;
+  theme.completion_detail = colors.on_surface_variant;
+  return theme;
+}
+
 namespace {
 
 namespace se = sweeteditor;
@@ -567,39 +659,48 @@ std::vector<se::BracketPair> MakeBracketPairs(const std::vector<std::pair<char32
   return result;
 }
 
+// SweetEditor style objects carry 0xAARRGGBB integers.
+int32_t ToArgb(const Color& color) {
+  const auto channel = [](float value) {
+    const int scaled = static_cast<int>(value * 255.0F + 0.5F);
+    return scaled < 0 ? 0 : (scaled > 255 ? 255 : scaled);
+  };
+  return (channel(color.alpha) << 24) | (channel(color.red) << 16) | (channel(color.green) << 8) | channel(color.blue);
+}
+
 se::EditorRenderColors MakeRenderColors(const CodeEditorTheme& theme) {
   se::EditorRenderColors colors;
-  colors.text_foreground = theme.text_foreground;
-  colors.link_foreground = theme.link_color;
-  colors.active_link_foreground = theme.active_link_color;
-  colors.codelens_foreground = theme.codelens_color;
-  colors.active_codelens_foreground = theme.active_codelens_color;
-  colors.diff_added_line_background = theme.diff_added_background;
-  colors.diff_removed_line_background = theme.diff_removed_background;
-  colors.diff_added_gutter_background = theme.diff_added_gutter;
-  colors.diff_removed_gutter_background = theme.diff_removed_gutter;
+  colors.text_foreground = ToArgb(theme.text_foreground);
+  colors.link_foreground = ToArgb(theme.link_color);
+  colors.active_link_foreground = ToArgb(theme.active_link_color);
+  colors.codelens_foreground = ToArgb(theme.codelens_color);
+  colors.active_codelens_foreground = ToArgb(theme.active_codelens_color);
+  colors.diff_added_line_background = ToArgb(theme.diff_added_background);
+  colors.diff_removed_line_background = ToArgb(theme.diff_removed_background);
+  colors.diff_added_gutter_background = ToArgb(theme.diff_added_gutter);
+  colors.diff_removed_gutter_background = ToArgb(theme.diff_removed_gutter);
   return colors;
 }
 
 se::EditorRangeEffectStyles MakeRangeEffectStyles(const CodeEditorTheme& theme) {
   se::EditorRangeEffectStyles styles;
-  styles.selection.background_color = theme.selection_background;
-  styles.search_match.background_color = theme.search_match_background;
-  styles.search_current.background_color = theme.search_current_background;
-  styles.bracket_match.background_color = theme.bracket_match_background;
-  styles.ime_composition.underline_color = theme.ime_composition_underline;
+  styles.selection.background_color = ToArgb(theme.selection_background);
+  styles.search_match.background_color = ToArgb(theme.search_match_background);
+  styles.search_current.background_color = ToArgb(theme.search_current_background);
+  styles.bracket_match.background_color = ToArgb(theme.bracket_match_background);
+  styles.ime_composition.underline_color = ToArgb(theme.ime_composition_underline);
   styles.ime_composition.underline_style = se::RangeEffectUnderlineStyle::SOLID;
 
-  styles.document_highlight_text.background_color = theme.document_highlight_text;
-  styles.document_highlight_read.background_color = theme.document_highlight_read;
-  styles.document_highlight_write.background_color = theme.document_highlight_write;
-  styles.diagnostic_error.underline_color = theme.diagnostic_error_underline;
+  styles.document_highlight_text.background_color = ToArgb(theme.document_highlight_text);
+  styles.document_highlight_read.background_color = ToArgb(theme.document_highlight_read);
+  styles.document_highlight_write.background_color = ToArgb(theme.document_highlight_write);
+  styles.diagnostic_error.underline_color = ToArgb(theme.diagnostic_error_underline);
   styles.diagnostic_error.underline_style = se::RangeEffectUnderlineStyle::WAVY;
-  styles.diagnostic_warning.underline_color = theme.diagnostic_warning_underline;
+  styles.diagnostic_warning.underline_color = ToArgb(theme.diagnostic_warning_underline);
   styles.diagnostic_warning.underline_style = se::RangeEffectUnderlineStyle::WAVY;
-  styles.diagnostic_info.underline_color = theme.diagnostic_info_underline;
+  styles.diagnostic_info.underline_color = ToArgb(theme.diagnostic_info_underline);
   styles.diagnostic_info.underline_style = se::RangeEffectUnderlineStyle::WAVY;
-  styles.diagnostic_hint.underline_color = theme.diagnostic_hint_underline;
+  styles.diagnostic_hint.underline_color = ToArgb(theme.diagnostic_hint_underline);
   styles.diagnostic_hint.underline_style = se::RangeEffectUnderlineStyle::WAVY;
   return styles;
 }
@@ -695,6 +796,8 @@ public:
   uint64_t telemetry_apply_calls = 0;
   uint64_t telemetry_notify_calls = 0;
   CodeEditorTheme theme_;
+
+  void SetTheme(const CodeEditorTheme& theme) { theme_ = theme; }
 
   TextInputApplyResult ApplyTextInput(const TextInputCommandBatch& batch) override {
     ++telemetry_apply_calls;
@@ -1102,7 +1205,7 @@ public:
         controller_(std::move(controller)),
         completion_provider_(options.completion_provider),
         completion_trigger_characters_(options.completion_trigger_characters),
-        theme_(options.theme) {
+        theme_(options.theme.value_or(CodeEditorTheme::Default())) {
     font_metrics_ = measurer.Metrics(Font::Monospace(font_size_));
     char_width_ = measurer.MeasureRun("0", TextStyle{Font::Monospace(font_size_), Color::Black(), TextDecoration::None})
                       .advance;
@@ -1116,8 +1219,9 @@ public:
     se::EditorOptions core_options;
     core_ = std::make_shared<se::EditorCore>(
         std::make_shared<HuxeruiTextMeasurer>(measurer, font_size_), core_options);
-    core_->setEditorRenderColors(MakeRenderColors(options.theme));
-    core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(options.theme));
+    theme_ = options.theme.value_or(CodeEditorTheme::Default());
+    core_->setEditorRenderColors(MakeRenderColors(theme_));
+    core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(theme_));
     core_->setLineSpacing(options.line_spacing_add, options.line_spacing_mult);
     core_->setReadOnly(options.read_only);
 
@@ -1201,7 +1305,7 @@ public:
         },
         [this]() { return HandleTab(); },
         options.read_only,
-        options.theme);
+        theme_);
     text_input_client_->SetDiffEditHook([this]() {
       if (current_diff_original_.empty()) {
         return;
@@ -1793,6 +1897,29 @@ public:
     return true;
   }
 
+  [[nodiscard]] const CodeEditorTheme& Theme() const noexcept {
+    return theme_;
+  }
+
+  // Applies a resolved theme change without resetting retained state.
+  void ApplyTheme(CodeEditorTheme theme) {
+    if (theme == theme_) {
+      return;
+    }
+    theme_ = std::move(theme);
+    if (core_) {
+      core_->setEditorRenderColors(MakeRenderColors(theme_));
+      core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(theme_));
+    }
+    if (text_input_client_) {
+      text_input_client_->SetTheme(theme_);
+    }
+    model_dirty_ = true;
+    if (invalidate_) {
+      invalidate_();
+    }
+  }
+
   // ---- Decoration provider pipeline -----------------------------------------
 
   // Buffers incremental edits so providers receive them on the next refresh.
@@ -2196,13 +2323,13 @@ private:
     const float ascent = font_metrics_.ascent;
     const float line_height = ascent + font_metrics_.descent;
 
-    paint.DrawRect(Rect{0.0F, 0.0F, width, height}, Argb(theme_.background));
+    paint.DrawRect(Rect{0.0F, 0.0F, width, height}, theme_.background);
 
     // The gutter (line-number column) sits on its own background strip; the
     // core crops text runs with a margin that hides under this strip, so it
     // must be painted or cropped characters bleed into the line-number area.
     if (model.split_x > 0.0F) {
-      paint.DrawRect(Rect{0.0F, 0.0F, model.split_x, height}, Argb(theme_.gutter_background));
+      paint.DrawRect(Rect{0.0F, 0.0F, model.split_x, height}, theme_.gutter_background);
       // The split line separates the gutter from the text area (reference
       // renderer draws it when splitLineVisible is set).
       if (model.split_line_visible) {
@@ -2211,7 +2338,7 @@ private:
     }
 
     if (model.current_line_render_mode == se::CurrentLineRenderMode::BACKGROUND) {
-      paint.DrawRect(Rect{0.0F, model.current_line.y, width, LineHeight(model)}, Argb(theme_.current_line_background));
+      paint.DrawRect(Rect{0.0F, model.current_line.y, width, LineHeight(model)}, theme_.current_line_background);
     }
 
     for (const se::RangeEffectRenderItem& effect : model.range_effects) {
@@ -2220,7 +2347,7 @@ private:
       }
     }
 
-    const TextStyle line_number_style{Font::Monospace(font_size_), Argb(theme_.line_number_color), TextDecoration::None};
+    const TextStyle line_number_style{Font::Monospace(font_size_), theme_.line_number_color, TextDecoration::None};
     for (const se::VisualLine& line : model.lines) {
       // line_number_position.y is the text baseline; the row background spans
       // from the line top (baseline - ascent) down the full line height.
@@ -2285,7 +2412,7 @@ private:
     if (caret_visible) {
       paint.DrawRect(
           Rect{model.cursor.position.x, model.cursor.position.y, theme_.caret_width, model.cursor.height},
-          Argb(theme_.caret_color));
+          theme_.caret_color);
     }
 
     // Handles are drawn here (single owner) because the HuxerUI selection
@@ -2407,10 +2534,10 @@ private:
       return;
     }
     const Rect background{run.x + margin, top, run.width - margin * 2.0F, height};
-    paint.DrawRect(background, Argb(theme_.inlay_hint_background), CornerRadii(height * 0.2F));
+    paint.DrawRect(background, theme_.inlay_hint_background, CornerRadii(height * 0.2F));
     if (!run.text.empty()) {
       const float text_x = run.x + margin + run.padding;
-      const TextStyle style{Font::System(font_size_ * 0.9F), Argb(theme_.inlay_hint_text), TextDecoration::None};
+      const TextStyle style{Font::System(font_size_ * 0.9F), theme_.inlay_hint_text, TextDecoration::None};
       paint.DrawTextRun(Rect{text_x, top, run.width, height}, Point{text_x, run.y}, Utf16ToUtf8(run.text), style);
     }
   }
@@ -2418,10 +2545,10 @@ private:
   void DrawFoldPlaceholder(PaintContext& paint, const se::VisualRun& run, float top, float height) {
     const float margin = run.margin;
     const Rect background{run.x + margin, top, run.width - margin * 2.0F, height};
-    paint.DrawRect(background, Argb(theme_.fold_placeholder_background), CornerRadii(height * 0.2F));
+    paint.DrawRect(background, theme_.fold_placeholder_background, CornerRadii(height * 0.2F));
     if (!run.text.empty()) {
       const float text_x = run.x + margin + run.padding;
-      const TextStyle style{Font::Monospace(font_size_), Argb(theme_.fold_placeholder_text), TextDecoration::None};
+      const TextStyle style{Font::Monospace(font_size_), theme_.fold_placeholder_text, TextDecoration::None};
       paint.DrawTextRun(Rect{text_x, top, run.width, height}, Point{text_x, run.y}, Utf16ToUtf8(run.text), style);
     }
   }
@@ -2439,14 +2566,14 @@ private:
       diamond.LineTo(Point{center.x, rect.y + rect.height});
       diamond.LineTo(Point{rect.x, center.y});
       diamond.Close();
-      paint.StrokePath(diamond, Argb(theme_.gutter_icon_color), StrokeStyle{1.5F});
+      paint.StrokePath(diamond, theme_.gutter_icon_color, StrokeStyle{1.5F});
       return;
     }
     if (icon.icon_id == 2) {
-      paint.DrawCircle(center, rect.width * 0.5F, Argb(theme_.gutter_icon_color));
+      paint.DrawCircle(center, rect.width * 0.5F, theme_.gutter_icon_color);
       return;
     }
-    paint.DrawCircle(center, rect.width * 0.35F, Argb(theme_.gutter_icon_color));
+    paint.DrawCircle(center, rect.width * 0.35F, theme_.gutter_icon_color);
   }
 
   void DrawFoldMarker(PaintContext& paint, const se::FoldMarkerRenderItem& marker) {
@@ -2461,7 +2588,7 @@ private:
       path.LineTo(Point{rect.x + rect.width * 0.5F, rect.y + rect.height * 0.75F});
       path.LineTo(Point{rect.x + rect.width * 0.8F, rect.y + rect.height * 0.35F});
     }
-    paint.StrokePath(path, Argb(theme_.line_number_color), StrokeStyle{1.5F});
+    paint.StrokePath(path, theme_.line_number_color, StrokeStyle{1.5F});
   }
 
   void DrawUnderline(
@@ -2498,7 +2625,8 @@ private:
   }
 
   void DrawGuideSegment(PaintContext& paint, const se::GuideSegment& segment) {
-    const int32_t color = segment.type == se::GuideType::SEPARATOR ? theme_.separator_color : theme_.indent_guide_color;
+    const Color color =
+        segment.type == se::GuideType::SEPARATOR ? theme_.separator_color : theme_.indent_guide_color;
     // Separator and bracket lines are lighter than indent guides (reference
     // renderer uses a separate paint for separators).
     const float width = segment.type == se::GuideType::SEPARATOR ? 1.0F : 1.0F;
@@ -2506,7 +2634,7 @@ private:
       Path path;
       path.MoveTo(a);
       path.LineTo(b);
-      paint.StrokePath(path, Argb(color), StrokeStyle{width});
+      paint.StrokePath(path, color, StrokeStyle{width});
     };
 
     // DOUBLE style draws a pair of parallel lines straddling the segment.
@@ -2783,8 +2911,8 @@ private:
 
   void DrawCompletionPanel(PaintContext& paint, const se::Rect& rect) {
     const Rect panel{rect.origin.x, rect.origin.y, rect.width, rect.height};
-    paint.DrawRect(panel, Argb(theme_.completion_background), CornerRadii(12.0F));
-    paint.DrawBorder(panel, Argb(theme_.completion_border), StrokeStyle{1.0F}, CornerRadii(12.0F));
+    paint.DrawRect(panel, theme_.completion_background, CornerRadii(12.0F));
+    paint.DrawBorder(panel, theme_.completion_border, StrokeStyle{1.0F}, CornerRadii(12.0F));
 
     const float content_left = rect.origin.x + kCompletionPanelPaddingH + kCompletionRowPaddingH;
     float row_center_y = rect.origin.y + kCompletionPanelPaddingV + kCompletionRowHeight * 0.5F;
@@ -2796,7 +2924,7 @@ private:
         paint.DrawRect(
             Rect{rect.origin.x + kCompletionPanelPaddingH, row_center_y - kCompletionRowHeight * 0.5F,
                  rect.width - kCompletionPanelPaddingH * 2.0F, kCompletionRowHeight},
-            Argb(theme_.completion_selected_background),
+            theme_.completion_selected_background,
             CornerRadii(6.0F));
       }
 
@@ -2826,7 +2954,7 @@ private:
                rect.width - (label_x - rect.origin.x) - kCompletionRowPaddingH, kCompletionRowHeight},
           Point{label_x, label_baseline},
           item.label,
-          TextStyle{Font::System(kCompletionLabelSize), Argb(theme_.completion_label), TextDecoration::None});
+          TextStyle{Font::System(kCompletionLabelSize), theme_.completion_label, TextDecoration::None});
 
       if (!item.detail.empty()) {
         // Estimated advance (reference renders an 11sp detail at the row end).
@@ -2839,7 +2967,7 @@ private:
               Rect{detail_x, row_center_y - kCompletionRowHeight * 0.5F, detail_advance, kCompletionRowHeight},
               Point{detail_x, detail_baseline},
               item.detail,
-              TextStyle{Font::System(kCompletionDetailSize), Argb(theme_.completion_detail), TextDecoration::None});
+              TextStyle{Font::System(kCompletionDetailSize), theme_.completion_detail, TextDecoration::None});
         }
       }
 
@@ -3105,6 +3233,8 @@ struct CodeEditorBehavior {
       options_ = behavior.options;
       controller_ = behavior.controller;
       BindController(behavior.controller);
+      // Reconcile declarative style changes without resetting the editor.
+      holder_->ApplyTheme(behavior.options.theme.value_or(holder_->Theme()));
       if (behavior.options.document_key != document_key_) {
         document_key_ = behavior.options.document_key;
         holder_ = std::make_shared<EditorHolder>(
@@ -3257,11 +3387,13 @@ View CodeEditorSearchBar(
 View CodeEditor(CodeEditorOptions options, CodeEditorController controller) {
   TextMeasurer& measurer = UseTextMeasurer();
   // An empty document key keeps one default document so callers never have to
-  // invent a storage key.
+  // invent a storage key. The theme resolves from the ambient HuxerUI theme
+  // unless explicitly overridden, so the editor follows Theme changes live.
   CodeEditorOptions effective_options = options;
   if (effective_options.document_key.empty()) {
     effective_options.document_key = "codeeditor:default";
   }
+  effective_options.theme = effective_options.theme.value_or(CodeEditorTheme::FromThemeSpec(UseTheme()));
 
   // Search is composed outside the retained editor node; the editor itself only owns editing semantics.
   auto search_visible = UseState(false);
