@@ -10,9 +10,9 @@ if (HUXERUI_PROJECT_PLAN_OUTPUT)
 {
   "schema": 1,
   "kind": "app",
-  "name": "sweetedit_core Preview",
-  "id": "com.example.sweeteditcore.preview",
-  "target": "example_sweetedit_core"
+  "name": "CodeEditor Preview",
+  "id": "com.example.codeeditor.preview",
+  "target": "example_codeeditor"
 }
 ]=])
 endif ()
@@ -20,7 +20,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(example_sweetedit_core VERSION 0.1.0 LANGUAGES NONE)
+project(example_codeeditor VERSION 0.1.0 LANGUAGES NONE)
 
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     enable_language(CXX)
@@ -62,6 +62,23 @@ elseif (EMSCRIPTEN)
     include("${CMAKE_CURRENT_SOURCE_DIR}/platform/web/huxerui.cmake" OPTIONAL)
 endif ()
 
+# SweetLine powers the demo's optional syntax highlighting through the
+# CodeEditorDecorationProvider interface; the editor library itself never
+# depends on it.
+if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
+    set(SWEETLINE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(SWEETLINE_BUILD_STATIC ON CACHE BOOL "" FORCE)
+    set(SWEETLINE_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(SWEETLINE_BUILD_ANDROID_JNI OFF CACHE BOOL "" FORCE)
+    set(SWEETLINE_BUILD_WASM_EMBIND OFF CACHE BOOL "" FORCE)
+    set(SWEETLINE_BUILD_APPLE_FRAMEWORK OFF CACHE BOOL "" FORCE)
+    add_subdirectory(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../../3dparty/SweetLine"
+        "${CMAKE_BINARY_DIR}/sweetline"
+        EXCLUDE_FROM_ALL
+    )
+endif ()
+
 file(GLOB_RECURSE APP_SOURCE_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc"
@@ -89,7 +106,7 @@ if (ANDROID AND HUXERUI_ANDROID_RESOURCE_OUTPUT_ROOT)
     )
 endif ()
 
-huxerui_add_app(example_sweetedit_core
+huxerui_add_app(example_codeeditor
         SOURCES
             ${APP_SOURCE_FILES}
         RESOURCES
@@ -98,9 +115,9 @@ huxerui_add_app(example_sweetedit_core
             app
         ${HUXERUI_APP_RESOURCE_OUTPUT_ARGUMENTS}
         BUNDLE_NAME
-            "sweetedit_core Preview"
+            "CodeEditor Preview"
         BUNDLE_IDENTIFIER
-            "com.example.sweeteditcore.preview"
+            "com.example.codeeditor.preview"
 )
 
 # windows.h defines min/max macros (breaking std::min/std::max in the editor
@@ -108,23 +125,31 @@ huxerui_add_app(example_sweetedit_core
 # as `float small`). NOMINMAX keeps the std versions intact and
 # WIN32_LEAN_AND_MEAN keeps rpcndr.h out; both match upstream configurations.
 if (WIN32 AND NOT HUXERUI_LIBRARY_GRAPH_ONLY)
-    target_compile_definitions(example_sweetedit_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_definitions(example_codeeditor PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif ()
 
 if (WIN32 AND HUXERUI_WINDOWS_MANIFEST)
-    target_sources(example_sweetedit_core PRIVATE "${HUXERUI_WINDOWS_MANIFEST}")
+    target_sources(example_codeeditor PRIVATE "${HUXERUI_WINDOWS_MANIFEST}")
 endif ()
 if (APPLE AND NOT IOS AND HUXERUI_MACOS_INFO_PLIST)
-    set_target_properties(example_sweetedit_core PROPERTIES
+    set_target_properties(example_codeeditor PROPERTIES
             MACOSX_BUNDLE_INFO_PLIST "${HUXERUI_MACOS_INFO_PLIST}"
     )
 endif ()
 if (EMSCRIPTEN AND COMMAND huxerui_configure_web_app)
-    huxerui_configure_web_app(example_sweetedit_core)
+    huxerui_configure_web_app(example_codeeditor)
 endif ()
 
 # The editor component library lives in the repository root.
-huxerui_use_library(example_sweetedit_core
-        TARGET SweeteditCore::SweeteditCore
+if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
+    target_link_libraries(
+        example_codeeditor
+        PRIVATE
+            SweetLine::sweetline_static
+    )
+endif ()
+
+huxerui_use_library(example_codeeditor
+        TARGET CodeEditor::CodeEditor
         PATH "${CMAKE_CURRENT_SOURCE_DIR}/../.."
 )

@@ -10,9 +10,9 @@ if (HUXERUI_PROJECT_PLAN_OUTPUT)
 {
   "schema": 1,
   "kind": "library",
-  "name": "sweetedit_core",
-  "id": "com.example.sweeteditcore",
-  "target": "sweetedit_core"
+  "name": "codeeditor",
+  "id": "com.example.codeeditor",
+  "target": "codeeditor"
 }
 ]=])
 endif ()
@@ -20,7 +20,7 @@ if (HUXERUI_PROJECT_PLAN_ONLY)
     return()
 endif ()
 
-project(sweetedit_core VERSION 0.1.0 LANGUAGES NONE)
+project(codeeditor VERSION 0.1.0 LANGUAGES NONE)
 
 enable_language(CXX)
 
@@ -68,20 +68,9 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     )
 endif ()
 
-# SweetLine — third-party native syntax highlighting engine (C++17, vendored).
-if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
-    set(SWEETLINE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(SWEETLINE_BUILD_STATIC ON CACHE BOOL "" FORCE)
-    set(SWEETLINE_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-    set(SWEETLINE_BUILD_ANDROID_JNI OFF CACHE BOOL "" FORCE)
-    set(SWEETLINE_BUILD_WASM_EMBIND OFF CACHE BOOL "" FORCE)
-    set(SWEETLINE_BUILD_APPLE_FRAMEWORK OFF CACHE BOOL "" FORCE)
-    add_subdirectory(
-        "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/SweetLine"
-        "${CMAKE_BINARY_DIR}/sweetline"
-        EXCLUDE_FROM_ALL
-    )
-endif ()
+# SweetLine is intentionally NOT a dependency: highlighting plugs in through
+# the CodeEditorDecorationProvider interface (see examples/preview for the
+# optional SweetLine integration).
 
 file(GLOB_RECURSE LIBRARY_SOURCE_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
@@ -93,13 +82,9 @@ set(HUXERUI_LIBRARY_GRAPH_OUTPUT
         "${CMAKE_CURRENT_SOURCE_DIR}/.huxerui/generated/libraries.json"
 )
 
-huxerui_add_library(sweetedit_core
+huxerui_add_library(codeeditor
         SOURCES
             ${LIBRARY_SOURCE_FILES}
-        RESOURCES
-            resources
-        RESOURCE_NAMESPACE
-            sweetedit_core
 )
 
 # windows.h defines min/max macros (breaking std::min/std::max in the vendored
@@ -107,7 +92,7 @@ huxerui_add_library(sweetedit_core
 # fields such as `float small`). NOMINMAX keeps the std versions intact and
 # WIN32_LEAN_AND_MEAN keeps rpcndr.h out; both match upstream configurations.
 if (WIN32)
-    target_compile_definitions(sweetedit_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_definitions(codeeditor PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif ()
 
 # ShouldCommitFocusOnPointerUp is a newer HuxerUI NodeExtension hook (keeps
@@ -126,24 +111,23 @@ if (HUXERUI_HOME AND IS_DIRECTORY "${HUXERUI_HOME}/include/huxerui")
 endif ()
 if (HUXERUI_HAS_FOCUS_POINTER_HOOK)
     target_compile_definitions(
-        sweetedit_core
+        codeeditor
         PRIVATE
-            SWEETEDIT_CORE_HAS_SHOULD_COMMIT_FOCUS_ON_POINTER_UP
+            CODEEDITOR_HAS_SHOULD_COMMIT_FOCUS_ON_POINTER_UP
     )
 endif ()
 
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     target_link_libraries(
-        sweetedit_core
+        codeeditor
         PRIVATE
             SweetEditor::sweeteditor_static
-            SweetLine::sweetline_static
     )
 endif ()
 
-target_include_directories(sweetedit_core PUBLIC
+target_include_directories(codeeditor PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
         "$<INSTALL_INTERFACE:include>"
 )
 
-add_library(SweeteditCore::SweeteditCore ALIAS sweetedit_core)
+add_library(CodeEditor::CodeEditor ALIAS codeeditor)

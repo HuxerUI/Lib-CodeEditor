@@ -1,273 +1,137 @@
-# SweetEdit Huxer
+# CodeEditor
 
-A cross-platform code editor implemented as a declarative HuxerUI component. The component reuses the SweetEditor editor core and the SweetLine syntax highlighting engine, exposing text editing, syntax highlighting, completion, search and replace, and more to the application layer the HuxerUI-native way.
+A cross-platform code editor for [HuxerUI](https://github.com/HuxerUI/HuxerUI), built on the
+[SweetEditor](3dparty/SweetEditor) core. The component is a declarative `View`; documents, editing,
+completion, search, decorations, and events are exposed the HuxerUI-native way.
+
+- Header: `<huxerui/codeeditor.h>` — namespace `huxerui::codeeditor`
+- CMake target: `codeeditor` (alias `CodeEditor::CodeEditor`)
+- Platforms: Windows, macOS, Linux, Web, Android, iOS (following HuxerUI)
 
 ## Features
 
-- Declarative component: `SweetEditor(options, controller)` returns an ordinary HuxerUI `View`
-- Retained `NodeExtension`: the editor core, document, highlighter, and input state are held by the mounted node
-- Syntax highlighting: SweetLine JSON grammar rules, incremental analysis, bracket matching, indentation guides, rainbow brackets
-- Editing: caret/selection, undo/redo, auto-indent, auto-closing brackets, Tab/space policy, read-only
-- Code completion: provider-driven completion panel, snippet expansion, replacement ranges
-- Search and replace: built-in declarative search bar, or programmatic control via `SweetEditorController`
-- Decorations: diagnostics, inlay hints, code lens, gutter icons, diff presentation, phantom text
-- Folding and links: code folding, clickable links
-- Typed events: caret/selection/text/scroll/fold/gesture/click events are all emitted through the HuxerUI event system
-- Platforms: Windows, macOS, Linux, Web, Android, iOS (following HuxerUI platform support)
+- Declarative component: `CodeEditor(options, controller)` returns an ordinary HuxerUI `View`
+- Retained `NodeExtension`: the editor core, document, and input state live on the mounted node
+- Editing: caret/selection, undo/redo, auto-indent, auto-closing brackets, Tab/space policy, read-only, pinch zoom
+- Completion: provider-driven panel, snippet expansion, replacement ranges
+- Search and replace: built-in declarative search bar or programmatic `CodeEditorController`
+- Decorations: syntax spans, diagnostics, inlay hints, code lens, links, gutter icons, indent guides,
+  fold regions, document highlights, bracket matching, phantom text, diff — all through **one
+  unified provider interface**
+- No built-in highlighting engine: wire SweetLine, a language server, or your own analyzer through
+  `CodeEditorDecorationProvider` (the demo shows the optional SweetLine integration)
+- Typed events aggregated in `CodeEditorEvents`
 
-## Quick Start
+## Quick start
 
 ```cpp
 #include <huxerui/huxerui.h>
-
-#include "sweet_editor/sweet_editor.h"
+#include <huxerui/codeeditor.h>
 
 using namespace huxerui;
-using namespace sweetedit_huxer;
 
 View App() {
-  SweetEditorOptions options;
-  options.document_key = "hello.cpp";
-  options.initial_text =
-      "#include <iostream>\n"
-      "int main() {\n"
-      "  std::cout << \"Hello\";\n"
-      "  return 0;\n"
-      "}\n";
+  huxerui::codeeditor::CodeEditorOptions options;
+  options.initial_text = "int main() {\n  return 0;\n}\n";
 
-  return SweetEditor(std::move(options)).With(Grow{});
+  return huxerui::codeeditor::CodeEditor(std::move(options)).With(Grow{});
 }
 
 const Application application{
     App,
-    {.window = {.title = "SweetEdit Huxer", .initial_size = {900.0F, 640.0F}}},
+    {.window = {.title = "CodeEditor", .initial_size = {900.0F, 640.0F}}},
 };
 ```
 
-## Repository Layout
+`document_key` is optional: leave it empty to keep one default document, or set it when switching
+between documents so the editor recreates its document state.
 
-```text
-sweetedit_huxer/
-├── CMakeLists.txt                   # dependency library (sweetedit_core)
-├── include/sweetedit_core/
-│   └── sweet_editor.h               # public API: options, events, controller
-├── src/sweet_editor/                # component implementation (retained extension)
-│   ├── sweet_editor.cpp
-│   ├── sweetline_highlighter.h
-│   └── sweetline_highlighter.cpp
-├── resources/                       # built-in component syntax rules
-├── examples/preview/                # demo app that uses the library
-│   ├── CMakeLists.txt
-│   ├── src/app.cpp
-│   ├── platform/                    # per-platform shells
-│   └── resources/                   # demo sample files and grammars
-├── docs/
-│   └── sweet_editor.md              # detailed component documentation
-└── 3dparty/
-    ├── SweetEditor/                 # editor core (vendored, gitlink)
-    └── SweetLine/                   # syntax highlighting engine (vendored, gitlink)
+## Using the library
+
+Consume the library from any HuxerUI application with `huxerui_use_library`:
+
+```cmake
+# In your app's CMakeLists.txt, after huxerui_add_app(...):
+huxerui_use_library(your_app
+        TARGET CodeEditor::CodeEditor
+        PATH "/path/to/Lib-CodeEditor"
+)
 ```
 
-## Public API Overview
+The library links the vendored SweetEditor core itself. Building requires the HuxerUI SDK
+(`HUXERUI_HOME`); see the
+[HuxerUI installation guide](https://github.com/HuxerUI/HuxerUI/blob/main/docs/guide/installation.md).
+
+## Highlighting: implement a decoration provider
+
+The editor never depends on a highlighting engine. Implement
+`CodeEditorDecorationProvider` and return whatever you can compute for the visible range —
+syntax spans, diagnostics, inlay hints, code lens, links, gutter icons, indent guides, fold
+regions, document highlights, bracket matches, and phantom text:
 
 ```cpp
-// Declarative configuration + providers (document, font, editing behavior, completion, decorations, diff, display)
-struct SweetEditorOptions;
+class MyHighlighting final : public huxerui::codeeditor::CodeEditorDecorationProvider {
+ public:
+  huxerui::codeeditor::CodeEditorDecorationResult ProvideDecorations(
+      const huxerui::codeeditor::CodeEditorDecorationContext& context) override {
+    huxerui::codeeditor::CodeEditorDecorationResult result;
+    result.syntax_spans.emplace_back(
+        0, std::vector{{huxerui::codeeditor::CodeEditorStyleSpan{0, 3, huxerui::codeeditor::CodeEditorStyle::Keyword}}}
+    );
+    return result;
+  }
+};
 
-// Document and search control
-class SweetEditorController;
-inline SweetEditorController UseSweetEditorController();
-
-// Typed events (bound on the View returned by SweetEditor())
-struct SweetEditorTextChanged;
-struct SweetEditorCursorChanged;
-struct SweetEditorSelectionChanged;
-struct SweetEditorScrollChanged;
-struct SweetEditorFoldToggled;
-struct SweetEditorLongPressed;
-struct SweetEditorDoubleTapped;
-struct SweetEditorLinkClicked;
-struct SweetEditorCodeLensClicked;
-struct SweetEditorGutterIconClicked;
-struct SweetEditorInlayClicked;
-
-View SweetEditor(SweetEditorOptions options = {}, SweetEditorController controller = {});
+options.decoration_providers.push_back(std::make_shared<MyHighlighting>());
 ```
 
-## HuxerUI Dependency and Installation
+Style ids come from the `CodeEditorStyle` palette the editor registers by default. For a full
+reference — incremental analysis, overscan, folds, rainbow brackets — see the optional SweetLine
+integration in [`examples/preview/src/sweetline_provider.cpp`](examples/preview/src/sweetline_provider.cpp).
 
-This repository is a **HuxerUI dependency library**: `sweetedit_core` is built on top of the HuxerUI SDK (it links `HuxerUI::huxerui`) and does not contain HuxerUI sources itself. **Machines without HuxerUI installed cannot build this project** — install it first as described in this section.
+## Events and controller
 
-### Where HuxerUI Is Installed (HUXERUI_HOME)
-
-The HuxerUI installer places the SDK in the following default locations and does two things at the same time:
-
-- writes the `HUXERUI_HOME` environment variable (pointing at the SDK root);
-- adds `$HUXERUI_HOME/bin` to `PATH` (providing the `huxerui` CLI).
-
-| Platform | Default install location |
-|---|---|
-| Windows | `%LOCALAPPDATA%\HuxerUI` |
-| macOS | `~/Library/Developer/HuxerUI` |
-| Linux | `~/.local/share/HuxerUI` |
-| Android (Termux) | `~/.local/share/HuxerUI` |
-
-### Installing HuxerUI
-
-Windows (PowerShell):
-
-```powershell
-irm https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.ps1 | iex
+```cpp
+huxerui::codeeditor::CodeEditor(options, controller)
+    .On<huxerui::codeeditor::CodeEditorEvents::TextChanged>([] { /* document changed */ })
+    .On<huxerui::codeeditor::CodeEditorEvents::CursorChanged>([](uint32_t line, uint32_t column) {})
+    .On<huxerui::codeeditor::CodeEditorEvents::LinkClicked>([](const std::string& url) {});
 ```
 
-macOS, Linux, and Android (works on Termux too):
+`UseCodeEditorController()` creates scope state for programmatic control — `LoadDocument`,
+`Text`, `SetCursor`, search/replace, and `ToggleSearch`. All methods return `false` while no
+editor is mounted.
 
-```bash
-curl -fsSL https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.sh | sh
+## Repository layout
+
+```text
+Lib-CodeEditor/
+├── CMakeLists.txt                 # codeeditor library (links SweetEditor only)
+├── include/huxerui/codeeditor.h   # public API
+├── src/codeeditor/                # component implementation
+├── examples/preview/              # demo app; wires optional SweetLine highlighting
+│   ├── src/sweetline_provider.*   # reference CodeEditorDecorationProvider
+│   └── platform/                  # per-platform shells
+└── 3dparty/SweetEditor/           # editor core (vendored gitlink)
 ```
 
-**Open a new terminal** after installation, then verify:
+## Building and CI
 
-```bash
-huxerui doctor
-```
-
-Explicit version or custom prefix:
-
-```bash
-curl -fsSLO https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.sh
-sh install.sh --version 0.1.0 --prefix "$HOME/Environment/HuxerUI" --yes
-```
-
-Offline install from a downloaded archive (place the matching `.sha256` file beside it):
-
-```bash
-sh install.sh --archive ./huxerui-sdk-0.1.0-android-arm64-v8a.tar.gz --yes
-```
-
-Uninstall (use the same prefix used for installation):
-
-```bash
-sh install.sh --uninstall --yes
-```
-
-> Installing HuxerUI does not include platform SDKs, compilers, or Android tooling (NDK, CMake, ninja, and so on); those still need to be prepared separately. Use `huxerui doctor` / `huxerui setup` to check.
-
-### How This Repository Uses HuxerUI
-
-The root `CMakeLists.txt` reads `HUXERUI_HOME` at configure time and supports two modes:
-
-1. **Point at an installed SDK** (recommended): the SDK ships CMake package files and the project finds `HuxerUI::huxerui` through `find_package(HuxerUI CONFIG REQUIRED)`;
-2. **Point at a HuxerUI source directory**: if `$HUXERUI_HOME` contains `CMakeLists.txt` and `include/huxerui/huxerui.h`, the project adds the SDK directly with `add_subdirectory` and builds it from source (useful when developing HuxerUI itself).
-
-The component build also needs the host code generation tools `hrc`/`hcg`: an installed SDK provides them automatically under `share/huxerui/tools`; a source directory keeps them under `tools/prebuilt/<platform>/<architecture>/`. Termux-specific handling is described below.
-
-## Building
-
-### Android (on a normal computer)
-
-`HUXERUI_HOME` is normally written by the HuxerUI installer, so it needs no manual export; this just shows how to override it with another SDK location:
-
-```bash
-cd examples/preview/platform/android
-HUXERUI_HOME=/path/to/huxerui sh gradlew :app:assembleRelease --no-daemon
-```
-
-### No computer? Build in Termux (important)
-
-This repository supports completing an Android build **using only a phone (Termux environment)**, but Termux differs a lot from a normal computer, so please note the following carefully.
-
-#### 1. Environment preparation
-
-First install the HuxerUI SDK (Termux supports the official installer; it defaults to `~/.local/share/HuxerUI` on the /data partition, where tools run directly):
-
-```bash
-curl -fsSL https://github.com/HuxerUI/HuxerUI/releases/latest/download/install.sh | sh
-```
-
-Then install the build tools:
-
-```bash
-pkg install clang cmake ninja openjdk-21 python
-```
-
-You also need the Android SDK and NDK (install them under the Termux private directory, not on shared storage):
-
-```bash
-export ANDROID_HOME=$HOME/android-sdk
-export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865
-```
-
-And the HuxerUI host code generation tools (hrc/hcg). **If HuxerUI was installed with the installer on the /data partition, the tools are included and executable — skip this step**; only when `HUXERUI_HOME` points at a HuxerUI source directory on shared storage (/sdcard) do you need to **copy the tools to the /data partition and mark them executable**:
-
-```bash
-mkdir -p $HOME/huxerui-tools/host-tools/android/arm64-v8a
-cp <huxerui>/tools/prebuilt/android/arm64-v8a/{hrc,hcg} $HOME/huxerui-tools/host-tools/android/arm64-v8a/
-chmod 755 $HOME/huxerui-tools/host-tools/android/arm64-v8a/{hrc,hcg}
-```
-
-> The FUSE filesystem on shared storage (/sdcard) **does not support setting the executable bit**; only tools on the /data partition can run.
-
-#### 2. Use the dedicated huxerui-termux tool
-
-This repository provides `tools/huxerui-termux`, which wraps every Termux-specific step (working around the missing exec bit, injecting the cross toolchain, redirecting staging, overriding aapt2):
-
-```bash
-cd examples/preview
-bash ../tools/huxerui-termux build android [--profile debug|release]
-bash ../tools/huxerui-termux run android        # requires an adb-connected device
-```
-
-#### 3. Manual build (without the tool)
-
-```bash
-cd examples/preview/platform/android
-export HUXERUI_HOME=/storage/emulated/0/资源/huxerui
-export HUXERUI_HOST_TOOL_ROOT=$HOME/huxerui-tools/host-tools
-sh gradlew :app:assembleRelease \
-  -PtermuxAndroidToolchain=$PWD/termux-android-toolchain.cmake \
-  -PtermuxCxxStaging=$HOME/sweetedit-android-cxx \
-  -PhuxeruiAbis=arm64-v8a \
-  -Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2 \
-  --no-daemon
-```
-
-#### 4. Key Termux gotchas
-
-- **gradlew cannot be executed directly**: shared storage has no exec bit, so use `sh gradlew ...`;
-- **aapt2 must be overridden**: the SDK's bundled aapt2 is a Linux ELF and cannot run under Termux; `-Pandroid.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2` points at the Termux-native version;
-- **staging on a non-FUSE partition**: `-PtermuxCxxStaging=$HOME/...`, otherwise stale mtimes on shared storage make ninja rebuild/miss builds repeatedly;
-- **host tool path**: newer HuxerUI resolves `android/arm64-v8a` on Termux; an installed SDK keeps the tools under `share/huxerui/tools/`, a source directory under `tools/prebuilt/`. If automatic resolution fails (for example `HUXERUI_HOME` points at shared storage), copy the tools to the /data partition as in step 1;
-- **CMake cross toolchain**: `-PtermuxAndroidToolchain=platform/android/termux-android-toolchain.cmake` (shipped in the repository); Termux's Android userland cannot use the NDK toolchain;
-- **HUXERUI_HOST_TOOL_ROOT**: newer HuxerUI needs this variable to point at the host tool directory (an installed SDK sets it automatically through the CMake package, so it only needs to be set manually for a source directory on shared storage; otherwise it falls back to a shared-storage path without exec permission);
-- a full `assembleRelease` may fail under Termux because of system limits; prefer `buildCMakeRelease[arm64-v8a]` or the tool above.
-
-### Desktop / Web / iOS
-
-- Windows, Linux, macOS: `huxerui::RunApplication()` platform entry
-- Web: Emscripten WebAssembly (`platform/web/`)
-- iOS: the Xcode project under `platform/ios/`
-
-## CI / Multi-Platform Release
-
-The repository ships a GitHub Actions workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)) that builds the demo app (`examples/preview`) for **Windows, Linux, macOS, and Android** on GitHub-hosted runners and publishes the artifacts:
-
-- on **every push to `main`** it builds all four platforms and uploads the artifacts as workflow artifacts;
-- on a **tag push `v*`** or a **manual `workflow_dispatch` run** (with the `create_release` input) it also creates/updates a GitHub Release and attaches every platform's output (Windows exe/resources/DLLs, Linux binary, macOS app bundle, Android APK).
-
-Each job installs the HuxerUI SDK with the official installer and populates the `3dparty` gitlinks (SweetEditor/SweetLine) at the exact commits recorded in the repository. Android builds use the Android SDK/NDK (API 36, NDK 29.0.14206865) on an Ubuntu runner.
-
-## Third-Party Dependencies
-
-- [SweetEditor](3dparty/SweetEditor) — cross-platform editor core (vendored, independent repo as gitlink)
-- [SweetLine](3dparty/SweetLine) — cross-platform syntax highlighting engine (vendored, independent repo as gitlink)
-
-Both third-party repositories are recorded as gitlinks and their contents are never modified.
+Desktop, Android, and Termux builds follow the standard HuxerUI flows (`huxerui package <platform>`,
+see the [HuxerUI docs](https://github.com/HuxerUI/HuxerUI/tree/main/docs)). The GitHub Actions
+workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)) builds Windows, Linux,
+macOS, and Android on every push to `main` and publishes the artifacts to a continuous GitHub
+Release; tag pushes (`v*`) publish stable releases.
 
 ## Documentation
 
-- [Component documentation](docs/sweet_editor.md) — API, architecture, examples, limitations, and validation checklist
+- [Component documentation](docs/codeeditor.md) — API, decoration contract, architecture, limitations
+
+## Third-party dependencies
+
+- [SweetEditor](3dparty/SweetEditor) — cross-platform editor core (vendored gitlink, never modified)
+- [SweetLine](3dparty/SweetLine) — highlighting engine, used only by the demo (vendored gitlink)
 
 ## License
 
-Component code license is pending; SweetEditor and SweetLine follow the licenses of their respective upstream repositories.
+Component code license is pending; SweetEditor and SweetLine follow their upstream licenses.

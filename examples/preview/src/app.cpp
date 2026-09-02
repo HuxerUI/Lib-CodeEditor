@@ -4,15 +4,17 @@
 #include <array>
 #include <cstdio>
 
-#include <sweetedit_core/sweet_editor.h>
+#include <huxerui/codeeditor.h>
+
+#include "sweetline_provider.h"
 
 using namespace huxerui;
 
 namespace {
 
-using sweetedit_huxer::CompletionContext;
-using sweetedit_huxer::CompletionItem;
-using sweetedit_huxer::CompletionItemKind;
+using huxerui::codeeditor::CompletionContext;
+using huxerui::codeeditor::CompletionItem;
+using huxerui::codeeditor::CompletionItemKind;
 
 CompletionItem MakeItem(
     std::string label,
@@ -315,7 +317,7 @@ View EditorStatusBar(State<std::string> cursor_status, State<std::string> select
   }.With(Spacing(16.0F), Padding(8.0F));
 }
 
-sweetedit_huxer::SweetEditorOptions MakeEditorOptions(
+huxerui::codeeditor::CodeEditorOptions MakeEditorOptions(
     const DemoDocument& document,
     bool diff_enabled,
     const std::string& diff_original,
@@ -323,26 +325,31 @@ sweetedit_huxer::SweetEditorOptions MakeEditorOptions(
     bool sticky_enabled,
     State<std::vector<uint32_t>> breakpoints
 ) {
-  sweetedit_huxer::SweetEditorOptions options;
+  huxerui::codeeditor::CodeEditorOptions options;
   options.initial_text = document.text;
-  options.syntax_json = document.syntax;
   options.document_key = document.key;
   options.completion_provider = ProvideCompletions;
   options.completion_trigger_characters = [](const std::string& character) {
     return character == "." || character == ":";
   };
-  options.gutter_icon_provider = [breakpoints](uint32_t start_line, uint32_t end_line) {
-    std::vector<std::pair<uint32_t, int32_t>> icons;
-    for (uint32_t line : breakpoints.Get()) {
-      if (line >= start_line && line <= end_line) {
-        icons.emplace_back(line, 2);
-      }
-    }
-    return icons;
-  };
-  options.phantom_text_provider = [](uint32_t line) {
-    return line == 0 ? std::string(" // TODO: implement") : std::string();
-  };
+  // Syntax highlighting plugs in through the decoration interface: the demo
+  // wires SweetLine (plus its breakpoints and phantom suggestion) as one
+  // optional provider instead of the editor shipping an engine.
+  options.decoration_providers.push_back(std::make_shared<demo::SweetLineDecorationProvider>(
+      document.syntax,
+      document.text,
+      document.key,
+      [breakpoints](uint32_t start_line, uint32_t end_line) {
+        std::vector<std::pair<uint32_t, int32_t>> icons;
+        for (uint32_t line : breakpoints.Get()) {
+          if (line >= start_line && line <= end_line) {
+            icons.emplace_back(line, 2);
+          }
+        }
+        return icons;
+      },
+      [](uint32_t line) { return line == 0 ? std::string(" // TODO: implement") : std::string(); }
+  ));
   options.original_text = diff_enabled ? diff_original : std::string();
   options.wrap_mode = wrap_enabled ? 2 : 0;
   options.sticky_gutter = sticky_enabled;
@@ -350,7 +357,7 @@ sweetedit_huxer::SweetEditorOptions MakeEditorOptions(
 }
 
 [[huxerui::composable]]
-View SweetEditorDemo() {
+View CodeEditorDemo() {
   auto current_file = UseState<std::size_t>(0);
   auto diff_enabled = UseState(false);
   auto diff_original = UseState(std::string());
@@ -371,7 +378,7 @@ View SweetEditorDemo() {
   const auto documents = LoadDemoDocuments(
       cpp_syntax, java_syntax, kotlin_syntax, lua_syntax, java_file, kotlin_file, lua_file, gc_file);
   const ToastHandle toast = UseToast();
-  const sweetedit_huxer::SweetEditorController controller = sweetedit_huxer::UseSweetEditorController();
+  const huxerui::codeeditor::CodeEditorController controller = huxerui::codeeditor::UseCodeEditorController();
   const DemoDocument& document = documents[current_file.Get()];
   const auto options = MakeEditorOptions(
       document, diff_enabled.Get(), diff_original.Get(), wrap_enabled.Get(), sticky_enabled.Get(), breakpoints);
@@ -397,14 +404,14 @@ View SweetEditorDemo() {
           diff_enabled = false;
           diff_original = std::string();
         }),
-    sweetedit_huxer::SweetEditor(options, controller)
-        .On<sweetedit_huxer::SweetEditorLinkClicked>([toast](const std::string& url) {
+    huxerui::codeeditor::CodeEditor(options, controller)
+        .On<huxerui::codeeditor::CodeEditorEvents::LinkClicked>([toast](const std::string& url) {
           toast.Show("Link: " + url);
         })
-        .On<sweetedit_huxer::SweetEditorCodeLensClicked>([toast](int32_t command_id) {
+        .On<huxerui::codeeditor::CodeEditorEvents::CodeLensClicked>([toast](int32_t command_id) {
           toast.Show("CodeLens: " + std::to_string(command_id));
         })
-        .On<sweetedit_huxer::SweetEditorGutterIconClicked>([toast, breakpoints](uint32_t line, int32_t) {
+        .On<huxerui::codeeditor::CodeEditorEvents::GutterIconClicked>([toast, breakpoints](uint32_t line, int32_t) {
           std::vector<uint32_t> lines = breakpoints.Get();
           const auto found = std::find(lines.begin(), lines.end(), line);
           if (found == lines.end()) {
@@ -416,13 +423,13 @@ View SweetEditorDemo() {
           }
           breakpoints = std::move(lines);
         })
-        .On<sweetedit_huxer::SweetEditorInlayClicked>([toast](uint32_t line, uint32_t column) {
+        .On<huxerui::codeeditor::CodeEditorEvents::InlayClicked>([toast](uint32_t line, uint32_t column) {
           toast.Show("Inlay: " + std::to_string(line + 1) + ":" + std::to_string(column + 1));
         })
-        .On<sweetedit_huxer::SweetEditorCursorChanged>([cursor_status](uint32_t line, uint32_t column) {
+        .On<huxerui::codeeditor::CodeEditorEvents::CursorChanged>([cursor_status](uint32_t line, uint32_t column) {
           cursor_status = "Ln " + std::to_string(line + 1) + ", Col " + std::to_string(column + 1);
         })
-        .On<sweetedit_huxer::SweetEditorSelectionChanged>(
+        .On<huxerui::codeeditor::CodeEditorEvents::SelectionChanged>(
             [selection_status](uint32_t, uint32_t, uint32_t line, uint32_t column) {
               selection_status = "Selection Ln " + std::to_string(line + 1) + ", Col " +
                                  std::to_string(column + 1);
@@ -434,13 +441,13 @@ View SweetEditorDemo() {
 }
 
 View App() {
-  return SweetEditorDemo();
+  return CodeEditorDemo();
 }
 
 const Application application{
     App,
     {
-        .window = {.title = "sweetedit_huxer"},
+        .window = {.title = "CodeEditor"},
         .show_debug_overlay = true,
     },
 };

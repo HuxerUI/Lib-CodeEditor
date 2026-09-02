@@ -1,5 +1,4 @@
-#include <sweetedit_core/sweet_editor.h>
-#include "sweetline_highlighter.h"
+#include <huxerui/codeeditor.h>
 
 #include <huxerui/huxerui.h>
 
@@ -13,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <string>
@@ -20,7 +20,7 @@
 #include <utility>
 #include <vector>
 
-namespace sweetedit_huxer {
+namespace huxerui::codeeditor {
 namespace {
 
 namespace se = sweeteditor;
@@ -62,6 +62,227 @@ std::string Utf16ToUtf8(std::u16string_view input) {
 std::string Utf16ToUtf8(const se::U16String& input) {
   static_assert(sizeof(se::U16Char) == 2, "SweetEditor UTF-16 code units must be 16-bit");
   return Utf16ToUtf8(std::u16string_view(reinterpret_cast<const char16_t*>(input.data()), input.size()));
+}
+
+// ---- Decoration result -> SweetEditor core conversions --------------------
+
+std::vector<std::pair<size_t, std::vector<se::StyleSpan>>> ToCoreSpanEntries(
+    const CodeEditorLineEntries<CodeEditorStyleSpan>& spans
+) {
+  std::vector<std::pair<size_t, std::vector<se::StyleSpan>>> entries;
+  for (const auto& [line, items] : spans) {
+    std::vector<se::StyleSpan> converted;
+    for (const CodeEditorStyleSpan& span : items) {
+      if (span.length == 0) {
+        continue;
+      }
+      converted.push_back({span.column, span.length, static_cast<uint32_t>(span.style)});
+    }
+    if (!converted.empty()) {
+      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
+    }
+  }
+  return entries;
+}
+
+std::vector<std::pair<size_t, std::vector<se::InlayHint>>> ToCoreInlayEntries(
+    const CodeEditorLineEntries<CodeEditorInlayHint>& hints
+) {
+  std::vector<std::pair<size_t, std::vector<se::InlayHint>>> entries;
+  for (const auto& [line, items] : hints) {
+    std::vector<se::InlayHint> converted;
+    for (const CodeEditorInlayHint& hint : items) {
+      converted.push_back({se::InlayType::TEXT, hint.column, 0, se::U8String(hint.text)});
+    }
+    if (!converted.empty()) {
+      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
+    }
+  }
+  return entries;
+}
+
+std::vector<std::pair<size_t, std::vector<se::Diagnostic>>> ToCoreDiagnosticEntries(
+    const CodeEditorLineEntries<CodeEditorDiagnostic>& diagnostics
+) {
+  std::vector<std::pair<size_t, std::vector<se::Diagnostic>>> entries;
+  for (const auto& [line, items] : diagnostics) {
+    std::vector<se::Diagnostic> converted;
+    for (const CodeEditorDiagnostic& diagnostic : items) {
+      converted.push_back(
+          {diagnostic.column, diagnostic.length, static_cast<se::DiagnosticSeverity>(diagnostic.severity)}
+      );
+    }
+    if (!converted.empty()) {
+      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
+    }
+  }
+  return entries;
+}
+
+std::vector<std::pair<size_t, std::vector<se::CodeLensItem>>> ToCoreCodeLensEntries(
+    const CodeEditorLineEntries<CodeEditorCodeLens>& lenses
+) {
+  std::vector<std::pair<size_t, std::vector<se::CodeLensItem>>> entries;
+  for (const auto& [line, items] : lenses) {
+    std::vector<se::CodeLensItem> converted;
+    for (const CodeEditorCodeLens& lens : items) {
+      converted.push_back({static_cast<int32_t>(lens.column), lens.command_id, se::U8String(lens.title)});
+    }
+    if (!converted.empty()) {
+      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
+    }
+  }
+  return entries;
+}
+
+std::vector<std::pair<size_t, std::vector<se::LinkSpan>>> ToCoreLinkEntries(
+    const CodeEditorLineEntries<CodeEditorLink>& links
+) {
+  std::vector<std::pair<size_t, std::vector<se::LinkSpan>>> entries;
+  for (const auto& [line, items] : links) {
+    std::vector<se::LinkSpan> converted;
+    for (const CodeEditorLink& link : items) {
+      converted.push_back({link.column, link.length, se::U8String(link.url)});
+    }
+    if (!converted.empty()) {
+      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
+    }
+  }
+  return entries;
+}
+
+std::vector<std::pair<size_t, std::vector<se::GutterIcon>>> ToCoreGutterIconEntries(
+    const CodeEditorLineEntries<CodeEditorGutterIcon>& icons
+) {
+  std::vector<std::pair<size_t, std::vector<se::GutterIcon>>> entries;
+  for (const auto& [line, items] : icons) {
+    std::vector<se::GutterIcon> converted;
+    for (const CodeEditorGutterIcon& icon : items) {
+      converted.push_back({icon.icon_id});
+    }
+    if (!converted.empty()) {
+      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
+    }
+  }
+  return entries;
+}
+
+std::vector<std::pair<size_t, std::vector<se::DocumentHighlight>>> ToCoreDocumentHighlightEntries(
+    const CodeEditorLineEntries<CodeEditorStyleSpan>& highlights
+) {
+  std::vector<std::pair<size_t, std::vector<se::DocumentHighlight>>> entries;
+  for (const auto& [line, items] : highlights) {
+    std::vector<se::DocumentHighlight> converted;
+    for (const CodeEditorStyleSpan& span : items) {
+      if (span.length == 0) {
+        continue;
+      }
+      converted.push_back({span.column, span.length, se::DocumentHighlightKind::TEXT});
+    }
+    if (!converted.empty()) {
+      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
+    }
+  }
+  return entries;
+}
+
+// Registers the default style palette so CodeEditorStyle ids resolve to
+// colors without any highlighting engine.
+void RegisterDefaultStyles(se::EditorCore& core) {
+  const auto style = [](int32_t argb) { return se::TextStyle{argb, 0, se::FONT_STYLE_NORMAL}; };
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Keyword), style(0xFF0000FF));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Type), style(0xFF267F99));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Class), style(0xFF267F99));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Function), style(0xFF795E26));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Variable), style(0xFF001080));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::String), style(0xFFA31515));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Number), style(0xFF098658));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Comment), style(0xFF008000));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Preprocessor), style(0xFF9B4F96));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Builtin), style(0xFF0000FF));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Punctuation), style(0xFF777777));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Annotation), style(0xFFB35C00));
+  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Url), style(0xFF0B5CAD));
+  static constexpr uint32_t kRainbowColors[8] = {
+      0xFFDC322F, 0xFF268BD2, 0xFF859900, 0xFFB58900,
+      0xFFCB4B16, 0xFF6C71C4, 0xFF2AA198, 0xFFD33682,
+  };
+  for (uint32_t index = 0; index < 8; ++index) {
+    core.registerTextStyle(
+        static_cast<uint32_t>(CodeEditorStyle::RainbowFirst) + index, style(static_cast<int32_t>(kRainbowColors[index]))
+    );
+  }
+}
+
+void MergeDecorations(CodeEditorDecorationResult& target, CodeEditorDecorationResult part) {
+  const auto append_entries = []<typename T>(CodeEditorLineEntries<T>& dst, CodeEditorLineEntries<T>&& src) {
+    dst.insert(dst.end(), std::make_move_iterator(src.begin()), std::make_move_iterator(src.end()));
+  };
+  append_entries(target.syntax_spans, std::move(part.syntax_spans));
+  append_entries(target.overlay_spans, std::move(part.overlay_spans));
+  append_entries(target.document_highlights, std::move(part.document_highlights));
+  append_entries(target.inlay_hints, std::move(part.inlay_hints));
+  append_entries(target.diagnostics, std::move(part.diagnostics));
+  append_entries(target.code_lens, std::move(part.code_lens));
+  append_entries(target.links, std::move(part.links));
+  append_entries(target.gutter_icons, std::move(part.gutter_icons));
+  append_entries(target.phantom_texts, std::move(part.phantom_texts));
+  target.indent_guides.insert(
+      target.indent_guides.end(), std::make_move_iterator(part.indent_guides.begin()),
+      std::make_move_iterator(part.indent_guides.end())
+  );
+  target.fold_regions.insert(
+      target.fold_regions.end(), std::make_move_iterator(part.fold_regions.begin()),
+      std::make_move_iterator(part.fold_regions.end())
+  );
+  if (part.matched_bracket) {
+    target.matched_bracket = part.matched_bracket;
+  }
+}
+
+void ApplyDecorations(se::EditorCore& core, const CodeEditorDecorationResult& decorations) {
+  core.clearHighlights(se::SpanLayer::SYNTAX);
+  core.setBatchLineSpans(se::SpanLayer::SYNTAX, ToCoreSpanEntries(decorations.syntax_spans));
+  core.clearHighlights(se::SpanLayer::OVERLAY);
+  core.setBatchLineSpans(se::SpanLayer::OVERLAY, ToCoreSpanEntries(decorations.overlay_spans));
+  if (decorations.document_highlights.empty()) {
+    core.clearDocumentHighlights();
+  } else {
+    core.setBatchLineDocumentHighlights(ToCoreDocumentHighlightEntries(decorations.document_highlights));
+  }
+  core.setBatchLineInlayHints(ToCoreInlayEntries(decorations.inlay_hints));
+  core.setBatchLineDiagnostics(ToCoreDiagnosticEntries(decorations.diagnostics));
+  core.setBatchLineCodeLens(ToCoreCodeLensEntries(decorations.code_lens));
+  core.setBatchLineLinks(ToCoreLinkEntries(decorations.links));
+  core.setBatchLineGutterIcons(ToCoreGutterIconEntries(decorations.gutter_icons));
+  std::vector<se::IndentGuide> guides;
+  guides.reserve(decorations.indent_guides.size());
+  for (const CodeEditorIndentGuide& guide : decorations.indent_guides) {
+    if (guide.end_line < guide.start_line) {
+      continue;
+    }
+    guides.push_back(
+        {se::TextPosition{guide.start_line, guide.column}, se::TextPosition{guide.end_line, guide.column}}
+    );
+  }
+  core.setIndentGuides(std::move(guides));
+  std::vector<se::FoldRegion> folds;
+  folds.reserve(decorations.fold_regions.size());
+  for (const CodeEditorFoldRegion& fold : decorations.fold_regions) {
+    if (fold.end_line <= fold.start_line) {
+      continue;
+    }
+    folds.push_back({fold.start_line, fold.end_line, false});
+  }
+  core.setFoldRegions(std::move(folds));
+  if (decorations.matched_bracket) {
+    core.setMatchedBrackets(
+        se::TextPosition{decorations.matched_bracket->line, decorations.matched_bracket->column},
+        se::TextPosition{decorations.matched_bracket->partner_line, decorations.matched_bracket->partner_column}
+    );
+  } else {
+    core.clearMatchedBrackets();
+  }
 }
 
 // ---- ARGB color ------------------------------------------------------------
@@ -256,7 +477,7 @@ constexpr int32_t kFoldPlaceholderBackground = 0x2E748DB0;
 constexpr int32_t kFoldPlaceholderText = 0xFF284A70;
 
 // Auto-closing bracket pairs enabled by default (reference platform ships
-// with these); hosts may override via SweetEditorOptions.auto_closing_pairs.
+// with these); hosts may override via CodeEditorOptions.auto_closing_pairs.
 const std::vector<std::pair<char32_t, char32_t>> kDefaultAutoClosingPairs = {
     {U'(', U')'},
     {U'{', U'}'},
@@ -392,12 +613,12 @@ se::EditorRangeEffectStyles MakeRangeEffectStyles() {
 
 
 // ---- Text input bridge (HuxerUI IME session -> SweetEditor core) -----------
-class SweetEditorTextInputClient final : public TextInputClient, public TextSelectionClient {
+class CodeEditorTextInputClient final : public TextInputClient, public TextSelectionClient {
 public:
-  SweetEditorTextInputClient(
+  CodeEditorTextInputClient(
       std::shared_ptr<se::EditorCore> core,
       std::shared_ptr<se::Document> document,
-      std::shared_ptr<SweetLineHighlighter> highlighter,
+      std::function<void(const std::vector<se::TextChange>&)> on_content_changed,
       std::function<void()> on_change,
       std::function<void(const std::vector<se::TextChange>&)> on_text_committed,
       std::function<void()> on_edit,
@@ -406,7 +627,6 @@ public:
   )
       : core_(std::move(core)),
         document_(std::move(document)),
-        highlighter_(std::move(highlighter)),
         on_change_(std::move(on_change)),
         on_text_committed_(std::move(on_text_committed)),
         on_edit_(std::move(on_edit)),
@@ -453,9 +673,8 @@ public:
   void NotifyContentChanged(const std::vector<se::TextChange>& changes) {
     ++revision_;
     ++content_revision_;
-    if (highlighter_) {
-      highlighter_->ApplyChanges(*core_, changes);
-      highlighter_->RefreshBracketMatch(*core_);
+    if (on_content_changed_) {
+      on_content_changed_(changes);
     }
     // Live diff: re-run the comparison after every edit while a diff original
     // is active so added/removed rows track typing. computeDiff emits no text
@@ -843,7 +1062,7 @@ private:
 
   std::shared_ptr<se::EditorCore> core_;
   std::shared_ptr<se::Document> document_;
-  std::shared_ptr<SweetLineHighlighter> highlighter_;
+  std::function<void(const std::vector<se::TextChange>&)> on_content_changed_;
   std::function<void()> on_change_;
   std::function<void(const std::vector<se::TextChange>&)> on_text_committed_;
   std::function<void()> on_edit_;
@@ -867,11 +1086,10 @@ class EditorHolder {
 public:
   EditorHolder(
       TextMeasurer& measurer,
-      const SweetEditorOptions& options,
-      std::string syntax_json,
+      const CodeEditorOptions& options,
       std::function<void()> invalidate,
       huxerui::EventEmitter events,
-      SweetEditorController controller
+      CodeEditorController controller
   )
       : font_size_(options.font_size),
         invalidate_(std::move(invalidate)),
@@ -955,17 +1173,19 @@ public:
       core_->computeDiff(current_diff_original_);
     }
 
-    highlighter_ = std::make_shared<SweetLineHighlighter>(
-        std::move(syntax_json), options.initial_text, options.document_key);
-    highlighter_->RegisterStyles(*core_);
-    highlighter_->SetHostDecorationProviders(options.decoration_providers);
-    highlighter_->SetGutterIconProvider(options.gutter_icon_provider);
-    // Publish fold regions once, right after the document loads, so fold
-    // arrows are available across the whole file (not just the first viewport).
-    highlighter_->PublishFoldRegions(*core_);
+    RegisterDefaultStyles(*core_);
+    providers_ = options.decoration_providers;
+    // Initial decoration pass: publishes whole-document fold regions and
+    // lights the first viewport once providers are attached.
+    RefreshDecorations(true);
 
-    text_input_client_ = std::make_shared<SweetEditorTextInputClient>(
-        core_, document_, highlighter_, invalidate_,
+    text_input_client_ = std::make_shared<CodeEditorTextInputClient>(
+        core_, document_,
+        [this](const std::vector<se::TextChange>& changes) {
+          RecordPendingChanges(changes);
+          RefreshDecorations(true);
+        },
+        invalidate_,
         [this](const std::vector<se::TextChange>& changes) { UpdateCompletion(changes); },
         [this]() {
           model_dirty_ = true;
@@ -987,7 +1207,6 @@ public:
     });
 
     newline_action_ = options.newline_action;
-    phantom_text_provider_ = options.phantom_text_provider;
     accept_phantom_on_tab_ = options.accept_phantom_on_tab;
   }
 
@@ -1090,11 +1309,11 @@ public:
   void AfterCoreAction(const se::EditorActionResult& result) {
     if (!result.text_changes.empty()) {
       text_input_client_->NotifyContentChanged(result.text_changes);
-      highlighter_->RefreshBracketMatch(*core_);
+      RefreshDecorations(true);
       FireTextChanged();
     } else if (result.selection_changed || result.cursor_changed || result.scroll_changed) {
       text_input_client_->NotifySelectionChanged();
-      highlighter_->RefreshBracketMatch(*core_);
+      RefreshDecorations(true);
     }
     model_dirty_ = true;
     if (invalidate_) {
@@ -1319,8 +1538,7 @@ public:
           core_->handleGestureEvent(touch ? BuildTouchGestureEvent(event) : ToGestureEvent(event));
       if (result.selection_changed || result.cursor_changed) {
         text_input_client_->NotifySelectionChanged();
-        highlighter_->RefreshBracketMatch(*core_);
-        highlighter_->RefreshDocumentHighlights(*core_, nullptr);
+        RefreshDecorations(true);
         FireCaretEvents();
       }
       // Decoration hits (reference fireGestureEvents): fold toggles are
@@ -1336,25 +1554,25 @@ public:
           // The core's gesture pipeline already folded the line
           // (intent.toggle_fold -> toggleFoldAtInternal); do NOT toggle again
           // here or the double toggle cancels out. Just refresh and notify.
-          highlighter_->RefreshVisible(*core_);
+          RefreshDecorations(false);
           FireFoldToggle(target.line);
           // Folding changes the visible line set, so the cached render model
           // must be rebuilt on the next frame.
           model_dirty_ = true;
           return true;
         case se::HitTargetType::LINK:
-          events_.Emit<SweetEditorLinkClicked>(LinkTextAt(target.line, target.column));
+          events_.Emit<CodeEditorEvents::LinkClicked>(LinkTextAt(target.line, target.column));
           return true;
         case se::HitTargetType::CODELENS:
-          events_.Emit<SweetEditorCodeLensClicked>(target.icon_id);
+          events_.Emit<CodeEditorEvents::CodeLensClicked>(target.icon_id);
           return true;
         case se::HitTargetType::GUTTER_ICON:
-          events_.Emit<SweetEditorGutterIconClicked>(static_cast<uint32_t>(target.line), target.icon_id);
+          events_.Emit<CodeEditorEvents::GutterIconClicked>(static_cast<uint32_t>(target.line), target.icon_id);
           return true;
         case se::HitTargetType::INLAY_HINT_TEXT:
         case se::HitTargetType::INLAY_HINT_ICON:
         case se::HitTargetType::INLAY_HINT_COLOR:
-          events_.Emit<SweetEditorInlayClicked>(
+          events_.Emit<CodeEditorEvents::InlayClicked>(
               static_cast<uint32_t>(target.line), static_cast<uint32_t>(target.column)
           );
           return true;
@@ -1450,7 +1668,7 @@ public:
               core_->replaceText(core_->getSelection().normalized(), replacement);
           if (!result.text_changes.empty()) {
             text_input_client_->NotifyContentChanged(result.text_changes);
-            highlighter_->RefreshBracketMatch(*core_);
+            RefreshDecorations(true);
             FireTextChanged();
           }
           model_dirty_ = true;
@@ -1481,7 +1699,7 @@ public:
       const se::EditorActionResult result = core_->handleKeyEvent(ToKeyEvent(event));
       if (!result.text_changes.empty()) {
         text_input_client_->NotifyContentChanged(result.text_changes);
-        highlighter_->RefreshBracketMatch(*core_);
+        RefreshDecorations(true);
         FireTextChanged();
         UpdateCompletion(result.text_changes);
       } else if (result.selection_changed || result.cursor_changed) {
@@ -1491,8 +1709,7 @@ public:
           DismissCompletion();
         }
         text_input_client_->NotifySelectionChanged();
-        highlighter_->RefreshBracketMatch(*core_);
-        highlighter_->RefreshDocumentHighlights(*core_, nullptr);
+        RefreshDecorations(true);
         FireCaretEvents();
       }
       if (result.needs_redraw) {
@@ -1511,7 +1728,7 @@ public:
     }
     if (result.scroll_changed) {
       const se::ViewState view = core_->getViewState();
-      events_.Emit<SweetEditorScrollChanged>(view.scroll_x, view.scroll_y);
+      events_.Emit<CodeEditorEvents::ScrollChanged>(view.scroll_x, view.scroll_y);
     }
     if (result.needs_redraw) {
       model_dirty_ = true;
@@ -1537,7 +1754,7 @@ public:
     }
   }
 
-  std::shared_ptr<SweetEditorTextInputClient> TextInputClient() const {
+  std::shared_ptr<CodeEditorTextInputClient> TextInputClient() const {
     return text_input_client_;
   }
 
@@ -1567,6 +1784,54 @@ public:
     }
     ++highlight_bootstrap_attempts_;
     return true;
+  }
+
+  // ---- Decoration provider pipeline -----------------------------------------
+
+  // Buffers incremental edits so providers receive them on the next refresh.
+  void RecordPendingChanges(const std::vector<se::TextChange>& changes) {
+    for (const se::TextChange& change : changes) {
+      CodeEditorTextChange pending;
+      pending.start_line = static_cast<uint32_t>(change.range.start.line);
+      pending.start_column = static_cast<uint32_t>(change.range.start.column);
+      pending.end_line = static_cast<uint32_t>(change.range.end.line);
+      pending.end_column = static_cast<uint32_t>(change.range.end.column);
+      pending.new_text = change.new_text;
+      pending_changes_.push_back(std::move(pending));
+    }
+  }
+
+  // Collects results from every registered provider and applies the merged
+  // decoration set to the core.
+  void RefreshDecorations(bool settled) {
+    if (!core_ || !document_) {
+      return;
+    }
+    synced_document_text_ = document_->getU8Text();
+    CodeEditorDecorationContext context;
+    const se::IntRange visible = core_->getVisibleLineRange();
+    context.visible_start_line =
+        visible.isEmpty() ? 0U : static_cast<uint32_t>(std::max(0, visible.start));
+    context.visible_end_line = visible.isEmpty() ? 0U : static_cast<uint32_t>(std::max(0, visible.end));
+    context.total_line_count = static_cast<uint32_t>(document_->getLineCount());
+    const se::TextPosition cursor = core_->getCursorPosition();
+    context.cursor_line = static_cast<uint32_t>(cursor.line);
+    context.cursor_column = static_cast<uint32_t>(cursor.column);
+    context.viewport_settled = settled;
+    context.document_text = &synced_document_text_;
+    context.text_changes = std::move(pending_changes_);
+    pending_changes_.clear();
+
+    CodeEditorDecorationResult merged;
+    for (const std::shared_ptr<CodeEditorDecorationProvider>& provider : providers_) {
+      if (!provider) {
+        continue;
+      }
+      MergeDecorations(merged, provider->ProvideDecorations(context));
+    }
+    cached_phantom_entries_ = merged.phantom_texts;
+    ApplyDecorations(*core_, merged);
+    model_dirty_ = true;
   }
 
   // Whether the latest tap hit a command area (gutter icon, code lens, link,
@@ -1607,9 +1872,9 @@ public:
 
   void FireCaretEvents() {
     const se::TextPosition cursor = core_->getCursorPosition();
-    events_.Emit<SweetEditorCursorChanged>(static_cast<uint32_t>(cursor.line), static_cast<uint32_t>(cursor.column));
+    events_.Emit<CodeEditorEvents::CursorChanged>(static_cast<uint32_t>(cursor.line), static_cast<uint32_t>(cursor.column));
     const se::TextRange selection = core_->getSelection();
-    events_.Emit<SweetEditorSelectionChanged>(
+    events_.Emit<CodeEditorEvents::SelectionChanged>(
         static_cast<uint32_t>(selection.start.line),
         static_cast<uint32_t>(selection.start.column),
         static_cast<uint32_t>(selection.end.line),
@@ -1620,13 +1885,13 @@ public:
   void FirePointerEvents(const se::EditorActionResult& result) {
     switch (result.gesture_type) {
     case se::GestureType::LONG_PRESS:
-      events_.Emit<SweetEditorLongPressed>(
+      events_.Emit<CodeEditorEvents::LongPressed>(
           static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
       );
       ShowContextMenu(result.tap_point);
       break;
     case se::GestureType::DOUBLE_TAP:
-      events_.Emit<SweetEditorDoubleTapped>(
+      events_.Emit<CodeEditorEvents::DoubleTapped>(
           static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
       );
       ShowContextMenu(result.tap_point);
@@ -1637,11 +1902,11 @@ public:
   }
 
   void FireFoldToggle(size_t line) {
-    events_.Emit<SweetEditorFoldToggled>(line);
+    events_.Emit<CodeEditorEvents::FoldToggled>(line);
   }
 
   void FireTextChanged() {
-    events_.Emit<SweetEditorTextChanged>();
+    events_.Emit<CodeEditorEvents::TextChanged>();
   }
 
   // Applies phantom (ghost) text for the visible lines (reference phantom text
@@ -1652,16 +1917,13 @@ public:
       return false;
     }
     std::map<uint32_t, std::string> next;
-    if (phantom_text_provider_) {
-      for (int32_t line = start_line;; ++line) {
-        const uint32_t document_line = static_cast<uint32_t>(line);
-        const std::string text = phantom_text_provider_(document_line);
-        if (!text.empty()) {
-          next[document_line] = text;
-        }
-        // Inclusive ranges must terminate explicitly: INT32_MAX + 1 overflows.
-        if (line == end_line) {
-          break;
+    for (const auto& [line, items] : cached_phantom_entries_) {
+      if (static_cast<int32_t>(line) < start_line || static_cast<int32_t>(line) > end_line) {
+        continue;
+      }
+      for (const CodeEditorPhantomText& phantom : items) {
+        if (!phantom.text.empty()) {
+          next[line] = phantom.text;
         }
       }
     }
@@ -1713,7 +1975,7 @@ public:
     const se::EditorActionResult result = core_->handleKeyEvent(tab_event);
     if (!result.text_changes.empty()) {
       text_input_client_->NotifyContentChanged(result.text_changes);
-      highlighter_->RefreshBracketMatch(*core_);
+      RefreshDecorations(true);
       FireTextChanged();
       UpdateCompletion(result.text_changes);
     } else if (result.selection_changed || result.cursor_changed) {
@@ -1728,18 +1990,28 @@ public:
 
   // Commits the caret-line phantom text (copilot accept via Tab).
   bool AcceptPhantomText() {
-    if (!accept_phantom_on_tab_ || !phantom_text_provider_) {
+    if (!accept_phantom_on_tab_) {
       return false;
     }
     const se::TextPosition cursor = core_->getCursorPosition();
-    const std::string text = phantom_text_provider_(static_cast<uint32_t>(cursor.line));
+    std::string text;
+    for (const auto& [line, items] : cached_phantom_entries_) {
+      if (line != static_cast<uint32_t>(cursor.line)) {
+        continue;
+      }
+      for (const CodeEditorPhantomText& phantom : items) {
+        if (!phantom.text.empty()) {
+          text = phantom.text;
+        }
+      }
+    }
     if (text.empty()) {
       return false;
     }
     const se::EditorActionResult result = core_->insertText(text);
     if (!result.text_changes.empty()) {
       text_input_client_->NotifyContentChanged(result.text_changes);
-      highlighter_->RefreshBracketMatch(*core_);
+      RefreshDecorations(true);
       FireTextChanged();
     }
     model_dirty_ = true;
@@ -1844,7 +2116,7 @@ public:
     const bool first_highlight = !highlight_published_ && !visible.isEmpty();
     if (first_highlight || visible.start != last_visible_range_.start || visible.end != last_visible_range_.end) {
       if (first_highlight || !visible.isEmpty()) {
-        highlighter_->PublishVisible(*core_);
+        RefreshDecorations(false);
         if (first_highlight) {
           highlight_published_ = true;
         }
@@ -1853,7 +2125,7 @@ public:
       }
       last_visible_range_ = visible;
     } else if (decorations_pending_) {
-      highlighter_->RefreshVisibleDecorations(*core_);
+      RefreshDecorations(true);
       decorations_pending_ = false;
       model_dirty_ = true;
     }
@@ -1863,7 +2135,7 @@ public:
     cached_scrollbar_v_ = model.vertical_scrollbar;
     cached_scrollbar_h_ = model.horizontal_scrollbar;
 
-    if (!visible.isEmpty() && !decorations_pending_ && (phantom_text_provider_ || !cached_phantom_.empty())) {
+    if (!visible.isEmpty() && !decorations_pending_ && !cached_phantom_entries_.empty()) {
       if (ApplyPhantomTexts(visible.start, visible.end)) {
         model_dirty_ = true;
       }
@@ -2553,8 +2825,11 @@ private:
 
   std::shared_ptr<se::EditorCore> core_;
   std::shared_ptr<se::Document> document_;
-  std::shared_ptr<SweetLineHighlighter> highlighter_;
-  std::shared_ptr<SweetEditorTextInputClient> text_input_client_;
+  std::vector<std::shared_ptr<CodeEditorDecorationProvider>> providers_;
+  std::vector<CodeEditorTextChange> pending_changes_;
+  std::string synced_document_text_;
+  CodeEditorLineEntries<CodeEditorPhantomText> cached_phantom_entries_;
+  std::shared_ptr<CodeEditorTextInputClient> text_input_client_;
   std::function<void()> invalidate_;
   se::Size viewport_;
   se::IntRange last_visible_range_{0, -1};
@@ -2568,10 +2843,9 @@ private:
   FontMetrics completion_badge_metrics_;
   float completion_badge_char_advance_{0.0F};
 
-  SweetEditorController controller_;
+  CodeEditorController controller_;
   huxerui::EventEmitter events_;
   std::function<std::string(uint32_t, uint32_t)> newline_action_;
-  std::function<std::string(uint32_t)> phantom_text_provider_;
   bool accept_phantom_on_tab_{true};
   std::string current_diff_original_;
   int current_wrap_mode_{0};
@@ -2645,7 +2919,7 @@ struct SearchBridge {
 
 namespace detail {
 
-struct SweetEditorControllerState {
+struct CodeEditorControllerState {
   std::function<void(const std::string&, const std::string&, const std::string&)> load_document;
   std::function<std::string()> get_text;
   std::function<bool(uint32_t, uint32_t)> set_cursor;
@@ -2658,44 +2932,42 @@ struct SweetEditorControllerState {
   std::function<void()> toggle_search;
 };
 
-struct SweetEditorControllerAccess {
-  static const std::shared_ptr<SweetEditorControllerState>& State(const SweetEditorController& controller) noexcept {
+struct CodeEditorControllerAccess {
+  static const std::shared_ptr<CodeEditorControllerState>& State(const CodeEditorController& controller) noexcept {
     return controller.state_;
   }
 };
 
 }  // namespace detail
 
-SweetEditorController::SweetEditorController()
-    : state_(std::make_shared<detail::SweetEditorControllerState>()) {}
+CodeEditorController::CodeEditorController()
+    : state_(std::make_shared<detail::CodeEditorControllerState>()) {}
 
-bool SweetEditorController::IsConnected() const noexcept {
-  return detail::SweetEditorControllerAccess::State(*this)->load_document != nullptr;
+bool CodeEditorController::IsConnected() const noexcept {
+  return detail::CodeEditorControllerAccess::State(*this)->load_document != nullptr;
 }
 
-bool SweetEditorController::LoadDocument(
-    const std::string& document_key, const std::string& text, const std::string& syntax_json
-) const {
-  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+bool CodeEditorController::LoadDocument(const std::string& document_key, const std::string& text) const {
+  const auto& state = detail::CodeEditorControllerAccess::State(*this);
   if (!state->load_document) {
     return false;
   }
-  state->load_document(document_key, text, syntax_json);
+  state->load_document(document_key, text);
   return true;
 }
 
-std::string SweetEditorController::Text() const {
-  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+std::string CodeEditorController::Text() const {
+  const auto& state = detail::CodeEditorControllerAccess::State(*this);
   return state->get_text ? state->get_text() : std::string();
 }
 
-bool SweetEditorController::SetCursor(std::uint32_t line, std::uint32_t column) const {
-  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+bool CodeEditorController::SetCursor(std::uint32_t line, std::uint32_t column) const {
+  const auto& state = detail::CodeEditorControllerAccess::State(*this);
   return state->set_cursor ? state->set_cursor(line, column) : false;
 }
 
-bool SweetEditorController::RunSearch(const std::string& pattern) const {
-  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+bool CodeEditorController::RunSearch(const std::string& pattern) const {
+  const auto& state = detail::CodeEditorControllerAccess::State(*this);
   if (!state->run_search) {
     return false;
   }
@@ -2703,8 +2975,8 @@ bool SweetEditorController::RunSearch(const std::string& pattern) const {
   return true;
 }
 
-bool SweetEditorController::FindNext() const {
-  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+bool CodeEditorController::FindNext() const {
+  const auto& state = detail::CodeEditorControllerAccess::State(*this);
   if (!state->find_next) {
     return false;
   }
@@ -2712,8 +2984,8 @@ bool SweetEditorController::FindNext() const {
   return true;
 }
 
-bool SweetEditorController::FindPrevious() const {
-  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+bool CodeEditorController::FindPrevious() const {
+  const auto& state = detail::CodeEditorControllerAccess::State(*this);
   if (!state->find_previous) {
     return false;
   }
@@ -2721,8 +2993,8 @@ bool SweetEditorController::FindPrevious() const {
   return true;
 }
 
-bool SweetEditorController::ReplaceCurrent(const std::string& replacement) const {
-  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+bool CodeEditorController::ReplaceCurrent(const std::string& replacement) const {
+  const auto& state = detail::CodeEditorControllerAccess::State(*this);
   if (!state->replace_current) {
     return false;
   }
@@ -2730,8 +3002,8 @@ bool SweetEditorController::ReplaceCurrent(const std::string& replacement) const
   return true;
 }
 
-bool SweetEditorController::ReplaceAll(const std::string& replacement) const {
-  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+bool CodeEditorController::ReplaceAll(const std::string& replacement) const {
+  const auto& state = detail::CodeEditorControllerAccess::State(*this);
   if (!state->replace_all) {
     return false;
   }
@@ -2739,8 +3011,8 @@ bool SweetEditorController::ReplaceAll(const std::string& replacement) const {
   return true;
 }
 
-bool SweetEditorController::ClearSearch() const {
-  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+bool CodeEditorController::ClearSearch() const {
+  const auto& state = detail::CodeEditorControllerAccess::State(*this);
   if (!state->clear_search) {
     return false;
   }
@@ -2748,8 +3020,8 @@ bool SweetEditorController::ClearSearch() const {
   return true;
 }
 
-bool SweetEditorController::ToggleSearch() const {
-  const auto& state = detail::SweetEditorControllerAccess::State(*this);
+bool CodeEditorController::ToggleSearch() const {
+  const auto& state = detail::CodeEditorControllerAccess::State(*this);
   if (!state->toggle_search) {
     return false;
   }
@@ -2757,24 +3029,21 @@ bool SweetEditorController::ToggleSearch() const {
   return true;
 }
 
-struct SweetEditorBehavior {
+struct CodeEditorBehavior {
   huxerui::TextMeasurer* measurer = nullptr;
-  SweetEditorOptions options;
-  std::string syntax_json;
-  SweetEditorController controller;
+  CodeEditorOptions options;
+  CodeEditorController controller;
   huxerui::EventEmitter events;
 
   struct Extension final : NodeExtension {
-    Extension(MountedNode& node, const SweetEditorBehavior& behavior)
+    Extension(MountedNode& node, const CodeEditorBehavior& behavior)
         : measurer_(behavior.measurer),
           options_(behavior.options),
-          syntax_json_(behavior.syntax_json),
           events_(behavior.events),
           controller_(behavior.controller),
           holder_(std::make_shared<EditorHolder>(
               *behavior.measurer,
               behavior.options,
-              behavior.syntax_json,
               [this] { InvalidatePaint(); },
               behavior.events,
               behavior.controller
@@ -2784,18 +3053,16 @@ struct SweetEditorBehavior {
       static_cast<void>(node);
     }
 
-    void BindController(SweetEditorController controller) {
-      auto& state = detail::SweetEditorControllerAccess::State(controller);
-      state->load_document =
-          [this](const std::string& key, const std::string& text, const std::string& syntax) {
-            document_key_ = key;
-            options_.initial_text = text;
-            options_.document_key = key;
-            syntax_json_ = syntax;
-            holder_ = std::make_shared<EditorHolder>(
-                *measurer_, options_, syntax_json_, [this] { InvalidatePaint(); }, events_, controller_
-            );
-          };
+    void BindController(CodeEditorController controller) {
+      auto& state = detail::CodeEditorControllerAccess::State(controller);
+      state->load_document = [this](const std::string& key, const std::string& text) {
+        document_key_ = key;
+        options_.initial_text = text;
+        options_.document_key = key;
+        holder_ =
+            std::make_shared<EditorHolder>(*measurer_, options_, [this] { InvalidatePaint(); }, events_, controller_);
+        InvalidatePaint();
+      };
       state->get_text = [this] { return holder_->Text(); };
       state->set_cursor = [this](uint32_t line, uint32_t column) { return holder_->SetCursor(line, column); };
       state->run_search = [this](const std::string& text) { holder_->RunSearch(text); };
@@ -2806,11 +3073,10 @@ struct SweetEditorBehavior {
       state->clear_search = [this] { holder_->CloseSearch(); };
     }
 
-    void Update(MountedNode& node, const SweetEditorBehavior& behavior) {
+    void Update(MountedNode& node, const CodeEditorBehavior& behavior) {
       static_cast<void>(node);
       measurer_ = behavior.measurer;
       options_ = behavior.options;
-      syntax_json_ = behavior.syntax_json;
       controller_ = behavior.controller;
       BindController(behavior.controller);
       if (behavior.options.document_key != document_key_) {
@@ -2818,7 +3084,6 @@ struct SweetEditorBehavior {
         holder_ = std::make_shared<EditorHolder>(
             *behavior.measurer,
             behavior.options,
-            behavior.syntax_json,
             [this] { InvalidatePaint(); },
             behavior.events,
             behavior.controller
@@ -2857,7 +3122,7 @@ struct SweetEditorBehavior {
       InvalidatePaint();
     }
 
-#if defined(SWEETEDIT_CORE_HAS_SHOULD_COMMIT_FOCUS_ON_POINTER_UP)
+#if defined(CODEEDITOR_HAS_SHOULD_COMMIT_FOCUS_ON_POINTER_UP)
     bool ShouldCommitFocusOnPointerUp() const noexcept override {
       return !holder_->SuppressFocusOnPointerUp();
     }
@@ -2914,20 +3179,19 @@ struct SweetEditorBehavior {
     }
 
     huxerui::TextMeasurer* measurer_ = nullptr;
-    SweetEditorOptions options_;
-    std::string syntax_json_;
+    CodeEditorOptions options_;
     huxerui::EventEmitter events_;
-    SweetEditorController controller_;
+    CodeEditorController controller_;
     std::shared_ptr<EditorHolder> holder_;
     std::string document_key_;
   };
 };
 
-View SweetEditorSearchBar(
+View CodeEditorSearchBar(
     State<std::string> search_text,
     State<std::string> replace_text,
     State<bool> visible,
-    SweetEditorController controller
+    CodeEditorController controller
 ) {
   return Column {
     Row {
@@ -2962,28 +3226,31 @@ View SweetEditorSearchBar(
 }
 
 [[huxerui::composable]]
-View SweetEditor(SweetEditorOptions options, SweetEditorController controller) {
+View CodeEditor(CodeEditorOptions options, CodeEditorController controller) {
   TextMeasurer& measurer = UseTextMeasurer();
-  const RawAsset cpp_syntax = UseRawResource(RawResource("sweetedit_core", "raw/syntaxes/cpp.json"));
-  const std::string syntax_json = options.syntax_json.empty() ? cpp_syntax.ToString() : options.syntax_json;
+  // An empty document key keeps one default document so callers never have to
+  // invent a storage key.
+  if (options.document_key.empty()) {
+    options.document_key = "codeeditor:default";
+  }
 
   // Search is composed outside the retained editor node; the editor itself only owns editing semantics.
   auto search_visible = UseState(false);
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
   const EventEmitter events = UseEvents();
-  detail::SweetEditorControllerAccess::State(controller)->toggle_search =
+  detail::CodeEditorControllerAccess::State(controller)->toggle_search =
       [search_visible] { search_visible = !search_visible.Get(); };
   View editor = Canvas([](PaintContext&, Size) {}).With(
-      SweetEditorBehavior{&measurer, std::move(options), syntax_json, controller, events}, Focusable{}
+      CodeEditorBehavior{&measurer, std::move(options), controller, events}, Focusable{}
   );
   if (!search_visible.Get()) {
     return editor;
   }
   return Column {
-    SweetEditorSearchBar(search_text, replace_text, search_visible, controller),
+    CodeEditorSearchBar(search_text, replace_text, search_visible, controller),
     std::move(editor).With(Grow{}),
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
 }
 
-}  // namespace sweetedit_huxer
+}  // namespace huxerui::codeeditor
