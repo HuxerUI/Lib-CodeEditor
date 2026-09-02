@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <map>
+#include <memory>
 
 #include <huxerui/codeeditor.h>
 
@@ -390,22 +392,30 @@ huxerui::codeeditor::CodeEditorOptions MakeEditorOptions(
   };
   // Syntax highlighting plugs in through the decoration interface: the demo
   // wires SweetLine (plus its breakpoints and phantom suggestion) as one
-  // optional provider instead of the editor shipping an engine.
-  options.decoration_providers.push_back(std::make_shared<demo::SweetLineDecorationProvider>(
-      document.syntax,
-      document.text,
-      document.key,
-      [breakpoints](uint32_t start_line, uint32_t end_line) {
-        std::vector<std::pair<uint32_t, int32_t>> icons;
-        for (uint32_t line : breakpoints.Get()) {
-          if (line >= start_line && line <= end_line) {
-            icons.emplace_back(line, 2);
+  // optional provider instead of the editor shipping an engine. Providers are
+  // memoized per document key: building one compiles the grammar and creates
+  // a fresh analyzer, which must not repeat on every recomposition.
+  static std::map<std::string, std::shared_ptr<demo::SweetLineDecorationProvider>> provider_cache;
+  auto provider = provider_cache.find(document.key);
+  if (provider == provider_cache.end()) {
+    auto created = std::make_shared<demo::SweetLineDecorationProvider>(
+        document.syntax,
+        document.text,
+        document.key,
+        [breakpoints](uint32_t start_line, uint32_t end_line) {
+          std::vector<std::pair<uint32_t, int32_t>> icons;
+          for (uint32_t line : breakpoints.Get()) {
+            if (line >= start_line && line <= end_line) {
+              icons.emplace_back(line, 2);
+            }
           }
-        }
-        return icons;
-      },
-      [](uint32_t line) { return line == 0 ? std::string(" // TODO: implement") : std::string(); }
-  ));
+          return icons;
+        },
+        [](uint32_t line) { return line == 0 ? std::string(" // TODO: implement") : std::string(); }
+    );
+    provider = provider_cache.emplace(document.key, std::move(created)).first;
+  }
+  options.decoration_providers.push_back(provider->second);
   // Explicit theme override demonstrates live restyling; empty follows the
   // ambient HuxerUI theme.
   if (dark_theme) {

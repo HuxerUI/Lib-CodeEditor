@@ -384,9 +384,31 @@ void MergeDecorations(CodeEditorDecorationResult& target, CodeEditorDecorationRe
   }
 }
 
-void ApplyDecorations(se::EditorCore& core, const CodeEditorDecorationResult& decorations) {
+void ApplyDecorations(
+    se::EditorCore& core, const CodeEditorDecorationResult& decorations, bool settled
+) {
+  // Unsettled refreshes (fast scroll, viewport resize) publish only the light
+  // slice — syntax spans and indent guides — and deliberately leave every
+  // heavier category untouched: providers omit them there, and overwriting
+  // with empty sets would blink rainbows, diagnostics, inlay hints, code lens,
+  // and links in and out of existence on every scroll frame. The settled pass
+  // applies the complete result, including legitimate clears.
   core.clearHighlights(se::SpanLayer::SYNTAX);
   core.setBatchLineSpans(se::SpanLayer::SYNTAX, ToCoreSpanEntries(decorations.syntax_spans));
+  if (!settled) {
+    std::vector<se::IndentGuide> guides;
+    guides.reserve(decorations.indent_guides.size());
+    for (const CodeEditorIndentGuide& guide : decorations.indent_guides) {
+      if (guide.end_line < guide.start_line) {
+        continue;
+      }
+      guides.push_back(
+          {se::TextPosition{guide.start_line, guide.column}, se::TextPosition{guide.end_line, guide.column}}
+      );
+    }
+    core.setIndentGuides(std::move(guides));
+    return;
+  }
   core.clearHighlights(se::SpanLayer::OVERLAY);
   core.setBatchLineSpans(se::SpanLayer::OVERLAY, ToCoreSpanEntries(decorations.overlay_spans));
   if (decorations.document_highlights.empty()) {
@@ -833,6 +855,8 @@ public:
   CodeEditorTheme theme_;
 
   void SetTheme(const CodeEditorTheme& theme) { theme_ = theme; }
+
+  void SetReadOnly(bool read_only) { read_only_ = read_only; }
 
   TextInputApplyResult ApplyTextInput(const TextInputCommandBatch& batch) override {
     ++telemetry_apply_calls;
@@ -1936,6 +1960,43 @@ public:
     return theme_;
   }
 
+  [[nodiscard]] float FontSize() const noexcept {
+    return font_size_;
+  }
+
+  // Re-applies editing and presentation options that map directly to core
+  // setters, so declarative changes take effect without a holder rebuild.
+  void SyncEditingOptions(const CodeEditorOptions& options) {
+    core_->setLineSpacing(options.line_spacing_add, options.line_spacing_mult);
+    core_->setReadOnly(options.read_only);
+    if (text_input_client_) {
+      text_input_client_->SetReadOnly(options.read_only);
+    }
+    core_->setTabSize(options.tab_size > 0 ? options.tab_size : 4);
+    core_->setBackspaceUnindent(options.backspace_unindent);
+    core_->setInsertSpaces(options.insert_spaces);
+    const auto& closing_pairs =
+        options.auto_closing_pairs.empty() ? kDefaultAutoClosingPairs : options.auto_closing_pairs;
+    core_->setAutoClosingPairs(MakeBracketPairs(closing_pairs));
+    core_->setRenderWhitespace(
+        options.render_whitespace ? se::WhitespaceRenderMode::ALL : se::WhitespaceRenderMode::NONE
+    );
+    core_->setRenderLineBreaks(options.render_line_breaks);
+    model_dirty_ = true;
+    if (invalidate_) {
+      invalidate_();
+    }
+  }
+
+  // Swaps holder-held hooks and provider lists; cheap and stateless.
+  void SyncRuntimeOptions(const CodeEditorOptions& options) {
+    completion_provider_ = options.completion_provider;
+    completion_trigger_characters_ = options.completion_trigger_characters;
+    newline_action_ = options.newline_action;
+    accept_phantom_on_tab_ = options.accept_phantom_on_tab;
+    providers_ = options.decoration_providers;
+  }
+
   // Applies a resolved theme change without resetting retained state.
   void ApplyTheme(CodeEditorTheme theme) {
     if (theme == theme_) {
@@ -1977,7 +2038,12 @@ public:
     if (!core_ || !document_) {
       return;
     }
-    synced_document_text_ = document_->getU8Text();
+    // Providers only need the full text when incremental changes must be
+    // validated; copying megabyte documents on every scroll frame is waste.
+    const bool needs_document_text = !pending_changes_.empty();
+    if (needs_document_text) {
+      synced_document_text_ = document_->getU8Text();
+    }
     CodeEditorDecorationContext context;
     const se::IntRange visible = core_->getVisibleLineRange();
     context.visible_start_line =
@@ -1988,7 +2054,7 @@ public:
     context.cursor_line = static_cast<uint32_t>(cursor.line);
     context.cursor_column = static_cast<uint32_t>(cursor.column);
     context.viewport_settled = settled;
-    context.document_text = &synced_document_text_;
+    context.document_text = needs_document_text ? &synced_document_text_ : nullptr;
     context.text_changes = std::move(pending_changes_);
     pending_changes_.clear();
 
@@ -2000,7 +2066,7 @@ public:
       MergeDecorations(merged, provider->ProvideDecorations(context));
     }
     cached_phantom_entries_ = merged.phantom_texts;
-    ApplyDecorations(*core_, merged);
+    ApplyDecorations(*core_, merged, settled);
     model_dirty_ = true;
     CODEEDITOR_TRACE(
         "refresh: providers=%zu spans=%zu settled=%d", providers_.size(), merged.syntax_spans.size(), settled ? 1 : 0
@@ -3277,9 +3343,13 @@ struct CodeEditorBehavior {
       options_ = behavior.options;
       controller_ = behavior.controller;
       BindController(behavior.controller);
-      // Reconcile declarative style changes without resetting the editor.
+      // Reconcile declarative configuration without resetting the editor:
+      // theme, editing/presentation options, hooks, and provider lists apply
+      // live; only a document switch or a font change (layout metrics)
+      // justifies rebuilding the holder.
       holder_->ApplyTheme(behavior.options.theme.value_or(holder_->Theme()));
-      if (behavior.options.document_key != document_key_) {
+      const bool font_changed = behavior.options.font_size != holder_->FontSize();
+      if (behavior.options.document_key != document_key_ || font_changed) {
         document_key_ = behavior.options.document_key;
         holder_ = std::make_shared<EditorHolder>(
             *behavior.measurer,
@@ -3291,6 +3361,8 @@ struct CodeEditorBehavior {
         BindController(behavior.controller);
         return;
       }
+      holder_->SyncEditingOptions(behavior.options);
+      holder_->SyncRuntimeOptions(behavior.options);
       if (behavior.options.original_text != holder_->CurrentDiffOriginal()) {
         holder_->SetDiffOriginal(behavior.options.original_text);
       }
