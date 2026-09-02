@@ -2262,8 +2262,22 @@ public:
       viewport_ = viewport;
       core_->setViewport(viewport);
       // A viewport change (e.g. IME insets resizing the editor) invalidates the
-      // visible range and scrollbar geometry; force a rebuild.
+      // visible range and scrollbar geometry; force a rebuild. Refresh the
+      // decorations BEFORE the rebuild so the newly revealed slice paints with
+      // its highlighting in this very frame — rebuilding first would render
+      // one unhighlighted frame and repaint after (visible flash every time
+      // the keyboard opens or closes).
+      RefreshDecorations(false);
+      const se::IntRange resized = core_->getVisibleLineRange();
+      if (!resized.isEmpty()) {
+        highlight_published_ = true;
+      }
+      last_visible_range_ = resized;
+      decorations_pending_ = true;
       model_dirty_ = true;
+      if (invalidate_) {
+        invalidate_();
+      }
     }
 
     // Rebuild the render model first: buildRenderModel also refreshes the
