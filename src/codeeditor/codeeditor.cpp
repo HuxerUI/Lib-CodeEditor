@@ -2322,17 +2322,33 @@ public:
     return Utf16ToUtf8(text.substr(column, end - column));
   }
 
+  // buildRenderModel appends into the model, so a fresh (empty) model is
+  // required each rebuild; reusing the cached instance would accumulate stale
+  // lines/decorations and ghost on every update. The rebuild also refreshes
+  // the core's visible line range.
+  void RebuildModelIfDirty() {
+    if (!model_dirty_) {
+      return;
+    }
+    cached_model_ = se::EditorRenderModel{};
+    core_->buildRenderModel(cached_model_);
+    model_dirty_ = false;
+  }
+
   void Render(PaintContext& paint, Size size) {
     const se::Size viewport{size.width, size.height};
     if (viewport_.width != viewport.width || viewport_.height != viewport.height) {
       viewport_ = viewport;
       core_->setViewport(viewport);
-      // A viewport change (e.g. IME insets resizing the editor) invalidates the
-      // visible range and scrollbar geometry; force a rebuild. Refresh the
-      // decorations BEFORE the rebuild so the newly revealed slice paints with
-      // its highlighting in this very frame — rebuilding first would render
-      // one unhighlighted frame and repaint after (visible flash every time
-      // the keyboard opens or closes).
+      // A viewport change (e.g. IME insets resizing the editor, first paint
+      // after mount, or a document switch) invalidates the visible range and
+      // scrollbar geometry. The core only refreshes its visible line range
+      // during buildRenderModel, so build once to publish the new range, apply
+      // the decoration slice for it, and build again below — the frame then
+      // paints with its highlighting instead of flashing unhighlighted and
+      // repainting a frame later.
+      model_dirty_ = true;
+      RebuildModelIfDirty();
       RefreshDecorations(false);
       const se::IntRange resized = core_->getVisibleLineRange();
       if (!resized.isEmpty()) {
@@ -2348,14 +2364,7 @@ public:
 
     // Rebuild the render model first: buildRenderModel also refreshes the
     // core's visible line range, so the viewport slice below is always current.
-    if (model_dirty_) {
-      // buildRenderModel appends into the model, so a fresh (empty) model is
-      // required each rebuild; reusing the cached instance would accumulate
-      // stale lines/decorations and ghost on every update.
-      cached_model_ = se::EditorRenderModel{};
-      core_->buildRenderModel(cached_model_);
-      model_dirty_ = false;
-    }
+    RebuildModelIfDirty();
     const se::EditorRenderModel& model = cached_model_;
 
     // Re-publish the viewport highlight slice when the visible range changed
