@@ -123,6 +123,10 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
         PRIVATE
             SweetEditor::sweeteditor_static
     )
+    if (ANDROID)
+        # android/log.h diagnostics for on-device tracing.
+        target_link_libraries(codeeditor PRIVATE log)
+    endif ()
 endif ()
 
 target_include_directories(codeeditor PUBLIC

@@ -1,5 +1,13 @@
 #include <huxerui/codeeditor.h>
 
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define CODEEDITOR_TRACE(...) __android_log_print(ANDROID_LOG_INFO, "CodeEditor", __VA_ARGS__)
+#else
+#include <cstdio>
+#define CODEEDITOR_TRACE(...) std::fprintf(stderr, __VA_ARGS__)
+#endif
+
 #include <huxerui/huxerui.h>
 
 #include <sweeteditor/decoration.h>
@@ -1832,6 +1840,9 @@ public:
     cached_phantom_entries_ = merged.phantom_texts;
     ApplyDecorations(*core_, merged);
     model_dirty_ = true;
+    CODEEDITOR_TRACE(
+        "refresh: providers=%zu spans=%zu settled=%d", providers_.size(), merged.syntax_spans.size(), settled ? 1 : 0
+    );
   }
 
   // Whether the latest tap hit a command area (gutter icon, code lens, link,

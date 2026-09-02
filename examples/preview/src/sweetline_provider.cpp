@@ -1,8 +1,16 @@
 #include "sweetline_provider.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <map>
 #include <string_view>
+
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define CE_TRACE(...) __android_log_print(ANDROID_LOG_INFO, "CodeEditor", __VA_ARGS__)
+#else
+#define CE_TRACE(...) std::fprintf(stderr, __VA_ARGS__)
+#endif
 
 namespace demo {
 namespace {
@@ -157,17 +165,32 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
     return result;
   }
 
-  // Keep the analyzer document in sync with the editor document. Full rebuild
-  // whenever the text diverges (the demo documents are small; incremental
-  // analyzeIncrementalInLineRange can replace this for larger files).
-  if (context.document_text != nullptr && *context.document_text != synced_text_) {
-    RebuildDocument(*context.document_text);
-  }
-
   const sl::LineRange viewport{
       context.visible_start_line,
       context.visible_end_line > context.visible_start_line ? context.visible_end_line - context.visible_start_line + 1 : 1,
   };
+
+  // Keep the analyzer document in sync with the editor document: incremental
+  // analysis for edits, full rebuild only when the text diverges with no
+  // reported changes (first load, reload, or an external reset).
+  if (analyzer_ != nullptr && !context.text_changes.empty()) {
+    for (const ce::CodeEditorTextChange& change : context.text_changes) {
+      analyzer_->analyzeIncrementalInLineRange(
+          sl::TextRange{
+              sl::TextPosition{change.start_line, change.start_column},
+              sl::TextPosition{change.end_line, change.end_column},
+          },
+          sl::U8String(change.new_text), viewport
+      );
+    }
+    if (context.document_text != nullptr) {
+      synced_text_ = *context.document_text;
+    }
+    CE_TRACE("provider: incremental changes=%zu", context.text_changes.size());
+  } else if (context.document_text != nullptr && *context.document_text != synced_text_) {
+    RebuildDocument(*context.document_text);
+    CE_TRACE("provider: rebuilt document");
+  }
   const size_t total_lines = document_->getLineCount();
   analyzer_->analyzeLineRange(OverscanRange(viewport, total_lines));
   const sl::SharedPtr<sl::DocumentHighlightSlice> slice = analyzer_->getHighlightSlice(viewport);
@@ -329,6 +352,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
         std::vector<ce::CodeEditorDiagnostic> diagnostics;
         std::vector<ce::CodeEditorCodeLens> lenses;
         std::vector<ce::CodeEditorLink> links;
+        std::vector<ce::CodeEditorGutterIcon> icons;
         for (const sl::TokenSpan& token : line_highlight.spans) {
           if (!IsSingleLine(token)) {
             continue;
@@ -358,6 +382,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
             }
           } else if (token.style_id == static_cast<int32_t>(ce::CodeEditorStyle::Class) && length > 0) {
             lenses.push_back({column, 1, "Run"});
+            icons.push_back({1});
           }
         }
         if (!inlays.empty()) {
@@ -371,6 +396,9 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
         }
         if (!links.empty()) {
           result.links.emplace_back(static_cast<uint32_t>(line), std::move(links));
+        }
+        if (!icons.empty()) {
+          result.gutter_icons.emplace_back(static_cast<uint32_t>(line), std::move(icons));
         }
         ++line;
       }
@@ -390,6 +418,10 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
       result.phantom_texts.emplace_back(0U, std::vector<ce::CodeEditorPhantomText>{{0, text}});
     }
   }
+  CE_TRACE(
+      "provider: spans=%zu lines guides=%zu folds=%zu settled=%d", result.syntax_spans.size(),
+      result.indent_guides.size(), result.fold_regions.size(), context.viewport_settled ? 1 : 0
+  );
   return result;
 }
 
