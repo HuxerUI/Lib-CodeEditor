@@ -434,20 +434,10 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
       "provider: spans=%zu lines guides=%zu folds=%zu settled=%d", result.syntax_spans.size(),
       result.indent_guides.size(), result.fold_regions.size(), context.viewport_settled ? 1 : 0
   );
-  // On-screen telemetry: an inlay hint on line 0 shows the live pipeline state
-  // (span lines, applied changes, analysis path) so refresh problems are
-  // visible directly in the editor without logcat.
-  size_t span_total = 0;
-  for (const auto& [line, spans] : result.syntax_spans) {
-    static_cast<void>(line);
-    span_total += spans.size();
-  }
-  ce::CodeEditorInlayHint telemetry_hint;
-  telemetry_hint.column = 0;
-  telemetry_hint.text = "[" + std::string(analysis_path) + " lines=" + std::to_string(result.syntax_spans.size()) +
-                        " spans=" + std::to_string(span_total) + " ch=" + std::to_string(context.text_changes.size()) +
-                        " total=" + std::to_string(context.total_line_count) + "]";
-  result.inlay_hints.emplace_back(0, std::vector<ce::CodeEditorInlayHint>{std::move(telemetry_hint)});
+  CE_TRACE(
+      "provider: path=%s lines=%zu guides=%zu folds=%zu ch=%zu", analysis_path, result.syntax_spans.size(),
+      result.indent_guides.size(), result.fold_regions.size(), context.text_changes.size()
+  );
   return result;
 }
 

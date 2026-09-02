@@ -2000,20 +2000,6 @@ public:
       MergeDecorations(merged, provider->ProvideDecorations(context));
     }
     cached_phantom_entries_ = merged.phantom_texts;
-    // On-screen pipeline telemetry: refresh counter plus the live client edit
-    // counters, rendered as an inlay hint on line 0 so refresh problems are
-    // visible without logcat.
-    if (text_input_client_) {
-      CodeEditorInlayHint component_hint;
-      component_hint.column = 60;
-      component_hint.text = "<R" + std::to_string(++telemetry_refresh_count_) + " apply" +
-                            std::to_string(text_input_client_->telemetry_apply_calls) + " notify" +
-                            std::to_string(text_input_client_->telemetry_notify_calls) + ">";
-      if (merged.inlay_hints.empty()) {
-        merged.inlay_hints.emplace_back(0, std::vector<CodeEditorInlayHint>{});
-      }
-      merged.inlay_hints.front().second.push_back(std::move(component_hint));
-    }
     ApplyDecorations(*core_, merged);
     model_dirty_ = true;
     CODEEDITOR_TRACE(
@@ -2309,12 +2295,21 @@ public:
         }
         decorations_pending_ = true;
         model_dirty_ = true;
+        // The model above was built before these decorations landed; request a
+        // follow-up frame so the highlighted rebuild is guaranteed even when
+        // the bounded bootstrap has already exhausted its frame budget.
+        if (invalidate_) {
+          invalidate_();
+        }
       }
       last_visible_range_ = visible;
     } else if (decorations_pending_) {
       RefreshDecorations(true);
       decorations_pending_ = false;
       model_dirty_ = true;
+      if (invalidate_) {
+        invalidate_();
+      }
     }
 
     RenderModel(paint, size, model);
@@ -3013,7 +3008,6 @@ private:
 
   std::shared_ptr<se::EditorCore> core_;
   std::shared_ptr<se::Document> document_;
-  uint64_t telemetry_refresh_count_{0};
   CodeEditorTheme theme_;
   std::vector<std::shared_ptr<CodeEditorDecorationProvider>> providers_;
   std::vector<CodeEditorTextChange> pending_changes_;
