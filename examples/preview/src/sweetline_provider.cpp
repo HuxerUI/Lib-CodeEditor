@@ -173,6 +173,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
   // Keep the analyzer document in sync with the editor document: incremental
   // analysis for edits, full rebuild only when the text diverges with no
   // reported changes (first load, reload, or an external reset).
+  bool applied_incrementally = false;
   if (analyzer_ != nullptr && !context.text_changes.empty()) {
     for (const ce::CodeEditorTextChange& change : context.text_changes) {
       analyzer_->analyzeIncrementalInLineRange(
@@ -186,13 +187,19 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
     if (context.document_text != nullptr) {
       synced_text_ = *context.document_text;
     }
+    // The incremental call guarantees the visible range is present in the
+    // analyzer cache; re-running the full overscan analysis over freshly
+    // patched state produces misaligned spans, so serve the slice directly.
+    applied_incrementally = true;
     CE_TRACE("provider: incremental changes=%zu", context.text_changes.size());
   } else if (context.document_text != nullptr && *context.document_text != synced_text_) {
     RebuildDocument(*context.document_text);
     CE_TRACE("provider: rebuilt document");
   }
   const size_t total_lines = document_->getLineCount();
-  analyzer_->analyzeLineRange(OverscanRange(viewport, total_lines));
+  if (!applied_incrementally) {
+    analyzer_->analyzeLineRange(OverscanRange(viewport, total_lines));
+  }
   const sl::SharedPtr<sl::DocumentHighlightSlice> slice = analyzer_->getHighlightSlice(viewport);
 
   // Syntax spans (fast path, kept up to date while scrolling).

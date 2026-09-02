@@ -274,15 +274,20 @@ void ApplyDecorations(se::EditorCore& core, const CodeEditorDecorationResult& de
     );
   }
   core.setIndentGuides(std::move(guides));
-  std::vector<se::FoldRegion> folds;
-  folds.reserve(decorations.fold_regions.size());
-  for (const CodeEditorFoldRegion& fold : decorations.fold_regions) {
-    if (fold.end_line <= fold.start_line) {
-      continue;
+  // Fold regions are published once per document (providers set them on the
+  // settled pass after a load); later refreshes legitimately omit them, and
+  // overwriting with an empty set would collapse the fold UI on caret moves.
+  if (!decorations.fold_regions.empty()) {
+    std::vector<se::FoldRegion> folds;
+    folds.reserve(decorations.fold_regions.size());
+    for (const CodeEditorFoldRegion& fold : decorations.fold_regions) {
+      if (fold.end_line <= fold.start_line) {
+        continue;
+      }
+      folds.push_back({fold.start_line, fold.end_line, false});
     }
-    folds.push_back({fold.start_line, fold.end_line, false});
+    core.setFoldRegions(std::move(folds));
   }
-  core.setFoldRegions(std::move(folds));
   if (decorations.matched_bracket) {
     core.setMatchedBrackets(
         se::TextPosition{decorations.matched_bracket->line, decorations.matched_bracket->column},
