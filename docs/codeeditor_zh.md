@@ -20,7 +20,126 @@ View EditorPage() {
 }
 ```
 
-## 2. CodeEditorOptions（选项）
+---
+
+## 2. HuxerUI 组合模型
+
+CodeEditor 是声明式 HuxerUI 组件——完整参与 `UseState` → 重组 → 协调 循环。理解这个模型是用好编辑器的关键。
+
+### 工作原理
+
+```text
+UseState(value)          — 在 composable 中声明响应式状态
+       ↓ 写入            CodeEditor(options)     — 声明式 UI 描述
+       ↓                   (返回临时 View)
+  重组                    → Runtime 将新 options 与 retained 编辑器节点
+       ↓                    协调（挂载状态：撤销、光标、折叠、滚动）
+  Extension::Update()     → 只应用变化的部分（主题、字体、编辑选项、
+                            provider、钩子、diff、文档 key）
+```
+
+**你从不直接对编辑器调用 setter。** 你修改 `UseState`，HuxerUI 重组你的 composable，编辑器的 retained 扩展将新的 `CodeEditorOptions` 与旧值协调——只应用增量，不重置保留状态。
+
+### UseState 驱动的编辑器
+
+```cpp
+[[huxerui::composable]]
+View EditorPage() {
+  // 声明式状态 — 每次写入触发重组
+  auto dark_mode = UseState(false);
+  auto font_size = UseState(14.0F);
+  auto current_doc = UseState(std::size_t(0));
+  auto dirty_count = UseState(0);
+  auto cursor_label = UseState(std::string("行 1, 列 1"));
+
+  const auto controller = UseCodeEditorController();
+  const Document& doc = documents[current_doc.Get()];
+
+  // 从状态构建 options — 这是唯一数据源
+  CodeEditorOptions options;
+  options.document_key = doc.path;
+  options.initial_text = doc.content;
+  options.font_size = font_size.Get();
+
+  if (dark_mode.Get()) {
+    auto theme = CodeEditorTheme::Default();
+    theme.background = Color::Rgb(30, 30, 46);
+    theme.text_foreground = Color::Rgb(205, 214, 244);
+    options.theme = theme;
+  }
+
+  return Column {
+    // UI 控件修改状态 → 重组 → 编辑器协调
+    Row {
+      Switch("暗色", dark_mode).OnChanged([dark_mode](bool on) { dark_mode = on; }),
+      Button("A-").OnClick([font_size] { font_size = font_size.Get() - 1.0F; }),
+      Button("A+").OnClick([font_size] { font_size = font_size.Get() + 1.0F; }),
+      Text(cursor_label),
+    },
+
+    // 编辑器 — 声明式，每次重组都协调
+    CodeEditor(std::move(options), controller)
+        .On<CodeEditorEvents::CursorChanged>(
+            [cursor_label](uint32_t line, uint32_t col) {
+              // 事件处理器按值捕获 UseState — 写入使
+              // 此作用域失效，更新状态栏
+              cursor_label = "行 " + std::to_string(line + 1) + ", 列 " + std::to_string(col + 1);
+            })
+        .On<CodeEditorEvents::TextChanged>([dirty_count] {
+          dirty_count = dirty_count.Get() + 1;
+        })
+        .With(Grow{}),
+  };
+}
+```
+
+### 哪些实时协调、哪些重建
+
+| 状态变化 | 对 retained 编辑器的效果 |
+|---|---|
+| `font_size` / `font_family` | 字体实时切换 — 撤销、光标、滚动、折叠保留 |
+| `theme` | 主题实时重刷 — 无编辑状态丢失 |
+| `read_only`、`tab_size`、`insert_spaces` 等 | 通过 core setter 实时应用 |
+| `decoration_providers` 列表 | Provider 列表实时交换 |
+| `completion_provider`、`newline_action` | 钩子实时交换 |
+| `original_text` | Diff 基准实时更新 |
+| `wrap_mode`、`sticky_gutter`、滚动条 | 显示设置实时应用 |
+| `document_key` | **编辑器重建** — 新文档，撤销/折叠重置 |
+| `initial_text`（同 key） | 忽略 — 用 `LoadDocument()` 程序化替换 |
+
+### Controller 也是 UseState
+
+`UseCodeEditorController()` 创建 `State<CodeEditorController>` — controller 是作用域状态，不是单例。在同一作用域的重组间持久，编辑器挂载/卸载时自动重连：
+
+```cpp
+const auto controller = UseCodeEditorController();  // State<Controller>
+
+Button("格式化").OnClick([controller] {
+  // 编辑器未挂载时方法返回 false
+  if (controller.IsConnected()) {
+    auto text = controller.Text();
+    controller.LoadDocument("formatted", FormatCode(text));
+  }
+});
+```
+
+### 事件用 UseState 做观察
+
+事件处理器是按值捕获 `UseState` 的 lambda。处理器内的写入使捕获作用域失效，触发重组：
+
+```cpp
+auto text_length = UseState(std::size_t(0));
+
+CodeEditor(options)
+    .On<CodeEditorEvents::TextChanged>([controller, text_length] {
+      // 读取权威文本并发布为状态
+      text_length = controller.Text().size();
+    });
+```
+
+---
+
+## 3. CodeEditorOptions（选项）
 
 ### 文档
 
@@ -82,7 +201,7 @@ View EditorPage() {
 | `scrollbar_mode` | `int` | `0` | `0` 常显 / `1` 滚动时 / `2` 不显示。 |
 | `content_start_padding` | `float` | `0.0` | 行号区与文本间距。 |
 
-## 3. CodeEditorTheme（主题）
+## 4. CodeEditorTheme（主题）
 
 所有颜色为 `huxerui::Color`。工厂：`Default()`（亮色参考）、`FromThemeSpec(const ThemeSpec&)`（环境派生）。含 `operator==`。
 
@@ -112,7 +231,7 @@ theme.syntax_keyword = Color::Rgb(203, 166, 247);
 options.theme = theme;
 ```
 
-## 4. CodeEditorEvents（事件）
+## 5. CodeEditorEvents（事件）
 
 所有事件通过 `.On<事件>(处理器)` 绑定在 `CodeEditor()` 返回的 `View` 上。行/列参数均为 **0 基**；显示给用户时 `line + 1`。
 
@@ -140,7 +259,7 @@ CodeEditor(options, controller)
     });
 ```
 
-## 5. CodeEditorDecorationProvider（装饰提供者）
+## 6. CodeEditorDecorationProvider（装饰提供者）
 
 ```cpp
 class CodeEditorDecorationProvider {
@@ -210,7 +329,7 @@ class CodeEditorDecorationProvider {
 
 参考实现：`examples/preview/src/sweetline_provider.cpp`
 
-## 6. CodeEditorController（控制器）
+## 7. CodeEditorController（控制器）
 
 ```cpp
 inline CodeEditorController UseCodeEditorController();
@@ -230,7 +349,7 @@ inline CodeEditorController UseCodeEditorController();
 | `ClearSearch()` | `bool` | 清除搜索高亮。 |
 | `ToggleSearch()` | `bool` | 显示/隐藏搜索栏（也可 Ctrl+F）。 |
 
-## 7. 补全类型
+## 8. 补全类型
 
 ### CompletionContext
 
@@ -251,25 +370,25 @@ inline CodeEditorController UseCodeEditorController();
 
 Kind：`Keyword`(0) `Function`(1) `Variable`(2) `Class`(3) `Interface`(4) `Module`(5) `Property`(6) `Snippet`(7) `Text`(8)。
 
-## 8. 架构
+## 9. 架构
 
 ```text
 CodeEditor() -> Canvas -> CodeEditorBehavior -> Extension(NodeExtension) -> EditorHolder -> SweetEditor EditorCore
 ```
 
-## 9. 限制
+## 10. 限制
 
 - `initial_text` 是初始化器，不是完全受控值。
 - 色块 inlay 和分隔线尚未暴露。
 - 折叠区域归 provider 所有；编辑器保留交互式折叠状态。
 
-## 10. 验证清单
+## 11. 验证清单
 
 挂载、重组、文档切换、卸载、编辑、剪贴板、撤销重做、中文 IME、Emoji、光标闪烁、选区、滚动、折叠、括号、高亮、补全、Snippet、搜索替换、Diff、诊断、Inlay、CodeLens、行号区点击、双指缩放、自定义字体、主题切换、Android arm64-v8a 构建。
 
 ---
 
-## 11. 使用场景
+## 12. 使用场景
 
 ### 最小编辑器
 

@@ -22,7 +22,127 @@ View EditorPage() {
 
 ---
 
-## 2. CodeEditorOptions
+## 2. The HuxerUI composition model
+
+CodeEditor is a declarative HuxerUI component — it participates fully in the `UseState` → recomposition → reconcile cycle. Understanding this model is key to using the editor effectively.
+
+### How it works
+
+```text
+UseState(value)          — declare reactive state in a composable
+       ↓ write            CodeEditor(options)     — declarative UI description
+       ↓                   (returns a transient View)
+  recomposition           → Runtime reconciles the new options against the retained
+       ↓                    editor node (mounted state: undo, cursor, folds, scroll)
+  Extension::Update()     → applies only what changed (theme, font, editing options,
+                            providers, hooks, diff, document key)
+```
+
+**You never imperatively call setters on the editor.** You mutate `UseState`, HuxerUI recomposes your composable, and the editor's retained extension reconciles the new `CodeEditorOptions` against its previous value — applying only the delta without resetting retained state.
+
+### UseState-driven editor
+
+```cpp
+[[huxerui::composable]]
+View EditorPage() {
+  // Declarative state — every write triggers recomposition
+  auto dark_mode = UseState(false);
+  auto font_size = UseState(14.0F);
+  auto current_doc = UseState(std::size_t(0));
+  auto dirty_count = UseState(0);
+  auto cursor_label = UseState(std::string("Ln 1, Col 1"));
+
+  const auto controller = UseCodeEditorController();
+  const Document& doc = documents[current_doc.Get()];
+
+  // Build options from state — this is the single source of truth
+  CodeEditorOptions options;
+  options.document_key = doc.path;
+  options.initial_text = doc.content;
+  options.font_size = font_size.Get();
+
+  if (dark_mode.Get()) {
+    auto theme = CodeEditorTheme::Default();
+    theme.background = Color::Rgb(30, 30, 46);
+    theme.text_foreground = Color::Rgb(205, 214, 244);
+    options.theme = theme;
+  }
+
+  return Column {
+    // UI controls that mutate state → recomposition → editor reconciles
+    Row {
+      Switch("Dark", dark_mode).OnChanged([dark_mode](bool on) { dark_mode = on; }),
+      Button("A-").OnClick([font_size] { font_size = font_size.Get() - 1.0F; }),
+      Button("A+").OnClick([font_size] { font_size = font_size.Get() + 1.0F; }),
+      Text(cursor_label),
+    },
+    ForEach(documents, [current_doc](std::size_t i) {
+      return Button(documents[i].name).OnClick([current_doc, i] { current_doc = i; });
+    }),
+
+    // The editor — declarative, reconciles on every recomposition
+    CodeEditor(std::move(options), controller)
+        .On<CodeEditorEvents::CursorChanged>(
+            [cursor_label](uint32_t line, uint32_t col) {
+              // Event handlers capture UseState by value — writes invalidate
+              // this scope, updating the status bar
+              cursor_label = "Ln " + std::to_string(line + 1) + ", Col " + std::to_string(col + 1);
+            })
+        .On<CodeEditorEvents::TextChanged>([dirty_count] {
+          dirty_count = dirty_count.Get() + 1;
+        })
+        .With(Grow{}),
+  };
+}
+```
+
+### What reconciles live vs. what rebuilds
+
+| State change | Effect on retained editor |
+|---|---|
+| `font_size` / `font_family` | Live font switch — undo, cursor, scroll, folds preserved |
+| `theme` | Live restyle — no editor state loss |
+| `read_only`, `tab_size`, `insert_spaces`, etc. | Live apply through core setters |
+| `decoration_providers` list | Provider list swaps live |
+| `completion_provider`, `newline_action` | Hook swap live |
+| `original_text` | Diff baseline update live |
+| `wrap_mode`, `sticky_gutter`, scrollbars | Display settings apply live |
+| `document_key` | **Editor rebuild** — new document, undo/folds reset |
+| `initial_text` (same key) | Ignored — use `LoadDocument()` for programmatic replace |
+
+### The controller is also UseState
+
+`UseCodeEditorController()` creates a `State<CodeEditorController>` — the controller is scope state, not a singleton. It persists across recompositions of the same scope and reconnects when the editor mounts/unmounts:
+
+```cpp
+const auto controller = UseCodeEditorController();  // State<Controller>
+
+Button("Format").OnClick([controller] {
+  // Controller methods return false while the editor is not mounted
+  if (controller.IsConnected()) {
+    auto text = controller.Text();
+    controller.LoadDocument("formatted", FormatCode(text));
+  }
+});
+```
+
+### Events use UseState for observation
+
+Event handlers are lambdas that capture `UseState` by value. A write inside a handler invalidates the capturing scope, triggering recomposition:
+
+```cpp
+auto text_length = UseState(std::size_t(0));
+
+CodeEditor(options)
+    .On<CodeEditorEvents::TextChanged>([controller, text_length] {
+      // Reads the authoritative text and publishes it as state
+      text_length = controller.Text().size();
+    });
+```
+
+---
+
+## 3. CodeEditorOptions
 
 ### Document
 
@@ -86,7 +206,7 @@ View EditorPage() {
 
 ---
 
-## 3. CodeEditorTheme
+## 4. CodeEditorTheme
 
 All colors are `huxerui::Color`. Factories: `Default()` (light reference), `FromThemeSpec(const ThemeSpec&)` (ambient derivation). Has `operator==`.
 
@@ -129,7 +249,7 @@ options.theme = theme;
 
 ---
 
-## 4. CodeEditorEvents
+## 5. CodeEditorEvents
 
 All events bind with `.On<Event>(handler)` on the `View` returned by `CodeEditor()`. Line and column parameters are **0-based**; display `line + 1` to users.
 
@@ -159,7 +279,7 @@ CodeEditor(options, controller)
 
 ---
 
-## 5. CodeEditorDecorationProvider
+## 6. CodeEditorDecorationProvider
 
 ```cpp
 class CodeEditorDecorationProvider {
@@ -246,7 +366,7 @@ class CodeEditorDecorationProvider {
 
 ---
 
-## 6. CodeEditorController
+## 7. CodeEditorController
 
 ```cpp
 inline CodeEditorController UseCodeEditorController();
@@ -270,7 +390,7 @@ Methods operate on the mounted editor and return `false` when disconnected.
 
 ---
 
-## 7. Completion types
+## 8. Completion types
 
 ### CompletionContext
 
@@ -303,25 +423,25 @@ Methods operate on the mounted editor and return `false` when disconnected.
 
 ---
 
-## 8. Architecture
+## 9. Architecture
 
 ```text
 CodeEditor() -> Canvas -> CodeEditorBehavior -> Extension(NodeExtension) -> EditorHolder -> SweetEditor EditorCore
 ```
 
-## 9. Limitations
+## 10. Limitations
 
 - `initial_text` is an initializer, not a fully controlled value.
 - Color-swatch inlays and separator guides not yet exposed.
 - Fold regions are provider-owned; the editor preserves interactive fold state.
 
-## 10. Validation checklist
+## 11. Validation checklist
 
 Mount, recomposition, document switching, unmount, editing, clipboard, undo/redo, CJK IME, emoji, caret blink, selection, scrolling, folding, brackets, highlighting, completion, snippets, search/replace, diff, diagnostics, inlay hints, code lens, gutter clicks, pinch zoom, custom fonts, theme switching, Android arm64-v8a build.
 
 ---
 
-## 11. Usage scenarios
+## 12. Usage scenarios
 
 ### Minimal editor
 
