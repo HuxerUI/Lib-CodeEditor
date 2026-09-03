@@ -266,3 +266,214 @@ CodeEditor() -> Canvas -> CodeEditorBehavior -> Extension(NodeExtension) -> Edit
 ## 10. 验证清单
 
 挂载、重组、文档切换、卸载、编辑、剪贴板、撤销重做、中文 IME、Emoji、光标闪烁、选区、滚动、折叠、括号、高亮、补全、Snippet、搜索替换、Diff、诊断、Inlay、CodeLens、行号区点击、双指缩放、自定义字体、主题切换、Android arm64-v8a 构建。
+
+---
+
+## 11. 使用场景
+
+### 最小编辑器
+
+```cpp
+huxerui::codeeditor::CodeEditorOptions options;
+options.initial_text = "// 在此输入\n";
+return huxerui::codeeditor::CodeEditor(std::move(options)).With(Grow{});
+```
+
+就这么简单——不需要 key、不需要 provider、不需要 controller。开箱即用。
+
+### 语法高亮
+
+实现 `CodeEditorDecorationProvider`，返回可见范围内的 `syntax_spans`：
+
+```cpp
+class MyHighlighter final : public huxerui::codeeditor::CodeEditorDecorationProvider {
+ public:
+  CodeEditorDecorationResult ProvideDecorations(
+      const CodeEditorDecorationContext& context) override {
+    CodeEditorDecorationResult result;
+    for (uint32_t line = context.visible_start_line; line <= context.visible_end_line; ++line) {
+      const std::string text = GetLineText(line);  // 你的文档模型
+      // 对 text 分词并产出 span...
+      result.syntax_spans.emplace_back(line, std::vector{
+          {0, 3, CodeEditorStyle::Keyword},   // "int" 第 0..3 列
+          {8, 4, CodeEditorStyle::Function},  // "main" 第 8..12 列
+      });
+    }
+    return result;
+  }
+};
+
+options.decoration_providers.push_back(std::make_shared<MyHighlighter>());
+```
+
+编辑器在视口变化、文本变化、光标移动时调用 provider。`context.viewport_settled` 在快速滚动中为 `false`——此时跳过重计算，在停稳后的回调中做。
+
+### 多文档切换
+
+用不同的 `document_key`。重组间改变 key 会重新加载 `initial_text` 并重建编辑器状态：
+
+```cpp
+[[huxerui::composable]]
+View FileTabs() {
+  auto current_file = UseState(0);
+  const Document& doc = documents[current_file.Get()];
+
+  CodeEditorOptions options;
+  options.document_key = doc.path;       // 改变这个就切换文档
+  options.initial_text = doc.content;
+
+  return Column {
+    TabBar(documents, current_file),
+    CodeEditor(std::move(options)).With(Grow{}),
+  };
+}
+```
+
+### 只读查看器 + 诊断
+
+```cpp
+options.read_only = true;
+options.decoration_providers.push_back(std::make_shared<LinterProvider>(diagnostics));
+
+class LinterProvider final : public CodeEditorDecorationProvider {
+ public:
+  explicit LinterProvider(std::vector<Lint> diags) : diagnostics_(std::move(diags)) {}
+
+  CodeEditorDecorationResult ProvideDecorations(const CodeEditorDecorationContext& ctx) override {
+    CodeEditorDecorationResult result;
+    for (const Lint& lint : diagnostics_) {
+      if (lint.line < ctx.visible_start_line || lint.line > ctx.visible_end_line) continue;
+      result.diagnostics.emplace_back(lint.line, std::vector<CodeEditorDiagnostic>{
+          {lint.column, lint.length, lint.severity, lint.message},
+      });
+    }
+    return result;
+  }
+ private:
+  std::vector<Lint> diagnostics_;
+};
+```
+
+### 代码补全 + Snippet
+
+```cpp
+options.completion_trigger_characters = [](const std::string& ch) { return ch == "."; };
+
+options.completion_provider = [](const CompletionContext& ctx) {
+  if (ctx.trigger_kind != CompletionContext::TriggerKind::Character) return std::vector<CompletionItem>{};
+  return std::vector<CompletionItem>{
+      {.label = "length", .detail = "size_t", .insert_text = "length()", .kind = CompletionItemKind::Property},
+      {.label = "for", .insert_text = "for (int ${1:i} = 0; ${1:i} < ${2:n}; ++${1:i}) {\n\t$0\n}",
+       .kind = CompletionItemKind::Snippet, .insert_text_is_snippet = true},
+  };
+};
+```
+
+Snippet 语法：`${N:text}` = Tab 停靠点带占位符，`$0` = 最终光标位置。Tab 循环停靠点，Esc 关闭。
+
+### 程序化搜索控制
+
+```cpp
+const auto controller = UseCodeEditorController();
+// ...
+Button("查找").OnClick([controller] { controller.ToggleSearch(); }),
+Button("下一个").OnClick([controller] { controller.FindNext(); }),
+Button("全部替换").OnClick([controller] { controller.ReplaceAll("替换文本"); }),
+```
+
+Ctrl+F 切换内置搜索栏（含查找/上一个/下一个/替换/全部/关闭）。
+
+### 暗色主题
+
+```cpp
+auto theme = CodeEditorTheme::Default();
+theme.background = Color::Rgb(30, 30, 46);
+theme.gutter_background = Color::Rgb(24, 24, 37);
+theme.text_foreground = Color::Rgb(205, 214, 244);
+theme.syntax_keyword = Color::Rgb(203, 166, 247);
+options.theme = theme;
+```
+
+或者不设 `options.theme`——编辑器自动跟随环境 `MaterialTheme` 亮/暗。
+
+### 自定义字体（Android）
+
+把 TTF 放到 `assets/fonts/<族名>.ttf`，然后：
+
+```cpp
+options.font_family = "MyFont";   // 加载 assets/fonts/MyFont.ttf
+options.font_size = 15.0F;
+```
+
+字体切换实时生效——撤销历史、光标、滚动位置、折叠状态全部保留。
+
+### 事件驱动的状态栏
+
+```cpp
+auto cursor_status = UseState(std::string("行 1, 列 1"));
+auto dirty = UseState(false);
+
+CodeEditor(options)
+    .On<CodeEditorEvents::CursorChanged>([cursor_status](uint32_t line, uint32_t col) {
+      cursor_status = "行 " + std::to_string(line + 1) + ", 列 " + std::to_string(col + 1);
+    })
+    .On<CodeEditorEvents::TextChanged>([dirty] { dirty = true; })
+    .On<CodeEditorEvents::SelectionChanged>(
+        [](uint32_t sl, uint32_t sc, uint32_t el, uint32_t ec) {
+          // sl..ec 是选区范围（0 基，已归一化）
+        }
+    );
+```
+
+### 行号区图标（断点）
+
+```cpp
+class BreakpointProvider final : public CodeEditorDecorationProvider {
+ public:
+  CodeEditorDecorationResult ProvideDecorations(const CodeEditorDecorationContext& ctx) override {
+    CodeEditorDecorationResult result;
+    for (uint32_t line : breakpoints_) {
+      if (line >= ctx.visible_start_line && line <= ctx.visible_end_line) {
+        result.gutter_icons.emplace_back(line, std::vector<CodeEditorGutterIcon>{{2}});  // 2 = 圆形
+      }
+    }
+    return result;
+  }
+  void Toggle(uint32_t line) { /* 从 breakpoints_ 中添加/移除 */ }
+ private:
+  std::set<uint32_t> breakpoints_;
+};
+
+// 处理点击：
+editor.On<CodeEditorEvents::GutterIconClicked>([provider](uint32_t line, int32_t id) {
+  if (id == 2) provider->Toggle(line);
+});
+```
+
+### Diff 视图
+
+```cpp
+options.original_text = 原始文件内容;    // 基准
+options.initial_text = 当前文件内容;     // 用户正在编辑的
+```
+
+增删行会加上 `theme.diff_added/removed_background` 背景色。文档保持完全可编辑；diff 每次编辑后自动重算。
+
+### AI 内联建议（幽灵文本）
+
+```cpp
+class CopilotProvider final : public CodeEditorDecorationProvider {
+ public:
+  CodeEditorDecorationResult ProvideDecorations(const CodeEditorDecorationContext& ctx) override {
+    CodeEditorDecorationResult result;
+    if (ctx.cursor_line < 100) {
+      result.phantom_texts.emplace_back(
+          ctx.cursor_line,
+          std::vector<CodeEditorPhantomText>{{GetLineColumns(ctx.cursor_line), " // AI 建议补全"}}
+      );
+    }
+    return result;
+  }
+};
+// options.accept_phantom_on_tab = true（默认）— Tab 提交建议
+```

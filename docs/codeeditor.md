@@ -318,3 +318,227 @@ CodeEditor() -> Canvas -> CodeEditorBehavior -> Extension(NodeExtension) -> Edit
 ## 10. Validation checklist
 
 Mount, recomposition, document switching, unmount, editing, clipboard, undo/redo, CJK IME, emoji, caret blink, selection, scrolling, folding, brackets, highlighting, completion, snippets, search/replace, diff, diagnostics, inlay hints, code lens, gutter clicks, pinch zoom, custom fonts, theme switching, Android arm64-v8a build.
+
+---
+
+## 11. Usage scenarios
+
+### Minimal editor
+
+```cpp
+huxerui::codeeditor::CodeEditorOptions options;
+options.initial_text = "// type here\n";
+return huxerui::codeeditor::CodeEditor(std::move(options)).With(Grow{});
+```
+
+That's it — no key, no provider, no controller. The editor works out of the box with platform defaults.
+
+### Syntax highlighting
+
+Implement `CodeEditorDecorationProvider` and return `syntax_spans` for the visible range:
+
+```cpp
+class MyHighlighter final : public huxerui::codeeditor::CodeEditorDecorationProvider {
+ public:
+  huxerui::codeeditor::CodeEditorDecorationResult ProvideDecorations(
+      const huxerui::codeeditor::CodeEditorDecorationContext& context) override {
+    huxerui::codeeditor::CodeEditorDecorationResult result;
+    for (uint32_t line = context.visible_start_line; line <= context.visible_end_line; ++line) {
+      const std::string text = GetLineText(line);  // your document model
+      // tokenize `text` and emit spans...
+      result.syntax_spans.emplace_back(line, std::vector{
+          {0, 3, huxerui::codeeditor::CodeEditorStyle::Keyword},   // "int" cols 0..3
+          {8, 4, huxerui::codeeditor::CodeEditorStyle::Function},  // "main" cols 8..12
+      });
+    }
+    return result;
+  }
+};
+
+options.decoration_providers.push_back(std::make_shared<MyHighlighter>());
+```
+
+The editor calls the provider when the viewport changes, the text changes, or the caret moves. `context.viewport_settled` is `false` during fast scrolling — skip expensive analysis there and do it on the settled pass.
+
+### Multi-document switching
+
+Use distinct `document_key` values. Changing the key between recompositions reloads `initial_text` and recreates editor state:
+
+```cpp
+[[huxerui::composable]]
+View FileTabs() {
+  auto current_file = UseState(0);
+  const Document& doc = documents[current_file.Get()];
+
+  huxerui::codeeditor::CodeEditorOptions options;
+  options.document_key = doc.path;       // changing this switches the document
+  options.initial_text = doc.content;
+
+  return Column {
+    TabBar(documents, current_file),
+    huxerui::codeeditor::CodeEditor(std::move(options)).With(Grow{}),
+  };
+}
+```
+
+### Read-only viewer with diagnostics
+
+```cpp
+options.read_only = true;
+options.decoration_providers.push_back(std::make_shared<LinterProvider>(diagnostics));
+
+class LinterProvider final : public huxerui::codeeditor::CodeEditorDecorationProvider {
+ public:
+  // diagnostics_ is a snapshot from your language server
+  explicit LinterProvider(std::vector<Lint> diagnostics) : diagnostics_(std::move(diagnostics)) {}
+
+  CodeEditorDecorationResult ProvideDecorations(const CodeEditorDecorationContext& context) override {
+    CodeEditorDecorationResult result;
+    for (const Lint& lint : diagnostics_) {
+      if (lint.line < context.visible_start_line || lint.line > context.visible_end_line) continue;
+      result.diagnostics.emplace_back(lint.line, std::vector<CodeEditorDiagnostic>{
+          {lint.column, lint.length, lint.severity, lint.message},
+      });
+    }
+    return result;
+  }
+ private:
+  std::vector<Lint> diagnostics_;
+};
+```
+
+### Code completion with snippets
+
+```cpp
+options.completion_trigger_characters = [](const std::string& ch) { return ch == "."; };
+
+options.completion_provider = [](const CompletionContext& ctx) {
+  if (ctx.trigger_kind != CompletionContext::TriggerKind::Character) return std::vector<CompletionItem>{};
+  return std::vector<CompletionItem>{
+      {.label = "length", .detail = "size_t", .insert_text = "length()", .kind = CompletionItemKind::Property},
+      {.label = "push_back", .detail = "void(T)", .insert_text = "push_back($0)", .kind = CompletionItemKind::Function, .insert_text_is_snippet = true},
+      {.label = "for", .detail = "snippet", .insert_text = "for (int ${1:i} = 0; ${1:i} < ${2:n}; ++${1:i}) {\n\t$0\n}", .kind = CompletionItemKind::Snippet, .insert_text_is_snippet = true},
+  };
+};
+```
+
+Snippet syntax: `${N:text}` = tab stop with placeholder, `$0` = final cursor position. Tab cycles stops; Esc closes.
+
+### Search bar with programmatic control
+
+```cpp
+[[huxerui::composable]]
+View SearchDemo() {
+  const auto controller = UseCodeEditorController();
+  auto query = UseState(std::string());
+
+  return Column {
+    Row {
+      Button("Find").OnClick([controller] { controller.ToggleSearch(); }),
+      Button("Next").OnClick([controller] { controller.FindNext(); }),
+      Button("Replace All").OnClick([controller] { controller.ReplaceAll("replacement"); }),
+    },
+    huxerui::codeeditor::CodeEditor(options, controller).With(Grow{}),
+  };
+}
+```
+
+Ctrl+F toggles the built-in bar (contains Find / Prev / Next / Replace / All / Close).
+
+### Dark mode
+
+```cpp
+auto theme = CodeEditorTheme::Default();
+theme.background = Color::Rgb(30, 30, 46);
+theme.gutter_background = Color::Rgb(24, 24, 37);
+theme.current_line_background = Color::Rgb(255, 255, 255, 0.06F);
+theme.text_foreground = Color::Rgb(205, 214, 244);
+theme.syntax_keyword = Color::Rgb(203, 166, 247);
+theme.syntax_string = Color::Rgb(166, 218, 179);
+theme.syntax_comment = Color::Rgb(108, 112, 152);
+options.theme = theme;
+```
+
+Or don't set `options.theme` at all — the editor follows the ambient `MaterialTheme` automatically.
+
+### Custom font (Android)
+
+Ship a TTF at `assets/fonts/<FamilyName>.ttf` and set:
+
+```cpp
+options.font_family = "MyFont";   // loads assets/fonts/MyFont.ttf
+options.font_size = 15.0F;
+```
+
+Font changes apply live — undo history, cursor, scroll position, and fold state are preserved.
+
+### Event-driven status bar
+
+```cpp
+auto cursor_status = UseState(std::string("Ln 1, Col 1"));
+auto dirty = UseState(false);
+
+CodeEditor(options)
+    .On<CodeEditorEvents::CursorChanged>([cursor_status](uint32_t line, uint32_t col) {
+      cursor_status = "Ln " + std::to_string(line + 1) + ", Col " + std::to_string(col + 1);
+    })
+    .On<CodeEditorEvents::TextChanged>([dirty] { dirty = true; })
+    .On<CodeEditorEvents::SelectionChanged>(
+        [](uint32_t sl, uint32_t sc, uint32_t el, uint32_t ec) {
+          // sl..ec is the selection range (0-based, normalized)
+        }
+    );
+```
+
+### Gutter icons (breakpoints)
+
+```cpp
+class BreakpointProvider final : public CodeEditorDecorationProvider {
+ public:
+  CodeEditorDecorationResult ProvideDecorations(const CodeEditorDecorationContext& context) override {
+    CodeEditorDecorationResult result;
+    for (uint32_t line : breakpoints_) {
+      if (line >= context.visible_start_line && line <= context.visible_end_line) {
+        result.gutter_icons.emplace_back(line, std::vector<CodeEditorGutterIcon>{{2}});  // 2 = circle
+      }
+    }
+    return result;
+  }
+  void Toggle(uint32_t line) { /* add/remove from breakpoints_ */ }
+ private:
+  std::set<uint32_t> breakpoints_;
+};
+
+// handle clicks:
+editor.On<CodeEditorEvents::GutterIconClicked>([provider](uint32_t line, int32_t id) {
+  if (id == 2) provider->Toggle(line);
+});
+```
+
+### Diff view
+
+```cpp
+options.original_text = pristine_file_content;  // the baseline
+options.initial_text = current_file_content;     // what the user is editing
+```
+
+Added/removed lines get background colors from `theme.diff_added/removed_background`. The document remains fully editable; the diff recomputes on every edit.
+
+### Inline AI suggestion (phantom text)
+
+```cpp
+class CopilotProvider final : public CodeEditorDecorationProvider {
+ public:
+  CodeEditorDecorationResult ProvideDecorations(const CodeEditorDecorationContext& context) override {
+    CodeEditorDecorationResult result;
+    if (context.cursor_line < 100) {
+      result.phantom_texts.emplace_back(
+          context.cursor_line,
+          std::vector<CodeEditorPhantomText>{{GetLineColumns(context.cursor_line), " // suggested completion"}}
+      );
+    }
+    return result;
+  }
+};
+// options.accept_phantom_on_tab = true (default) — Tab commits the suggestion
+```
