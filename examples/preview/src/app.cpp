@@ -436,7 +436,10 @@ huxerui::codeeditor::CodeEditorOptions MakeEditorOptions(
   // Maple Mono ships as an Android asset font; "@noliga" is the bridge's
   // convention for disabling ligatures at the shaping level.
   if (maple_font) {
-    options.font_family = ligature ? "MapleMono" : "MapleMono@noliga";
+    // Two physical font files: the standard build carries the ligature
+    // features in calt; the NL build has calt stripped at the GSUB level,
+    // which is more reliable than runtime font-feature settings.
+    options.font_family = ligature ? "MapleMono" : "MapleMonoNL";
   }
   options.original_text = diff_enabled ? diff_original : std::string();
   options.wrap_mode = wrap_enabled ? 2 : 0;
