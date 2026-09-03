@@ -322,14 +322,16 @@ std::array<DemoDocument, kDemoFileCount> LoadDemoDocuments(
 [[huxerui::composable]]
 View DemoFileSelector(const std::array<DemoDocument, kDemoFileCount>& documents, std::size_t selected) {
   const EventEmitter events = UseEvents();
-  const std::array<std::size_t, kDemoFileCount> indices = {0, 1, 2, 3, 4};
-  return Row {
-    ForEach(indices, [documents, selected, events](std::size_t index) {
-      return Button(documents[index].label)
-          .OnClick([events, index] { events.Emit<DemoFileSelected>(index); })
-          .Key(documents[index].key);
-    }),
-  }.With(Spacing(8.0F), Padding(8.0F));
+  const std::array<std::string_view, kDemoFileCount> labels = {
+      documents[0].label, documents[1].label, documents[2].label, documents[3].label, documents[4].label,
+  };
+  // A compact dropdown keeps the header one row tall as the demo grows.
+  return Select(labels, selected, [](std::string_view label) {
+           return Text(std::string(label)).Key(label);
+         })
+      .Label("Demo file")
+      .OnChanged([events](std::size_t index) { events.Emit<DemoFileSelected>(index); })
+      .With(Padding(8.0F));
 }
 
 [[huxerui::composable]]
