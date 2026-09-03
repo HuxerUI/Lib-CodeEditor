@@ -200,127 +200,12 @@ std::string Utf16ToUtf8(const se::U16String& input) {
   return Utf16ToUtf8(std::u16string_view(reinterpret_cast<const char16_t*>(input.data()), input.size()));
 }
 
-// ---- Decoration result -> SweetEditor core conversions --------------------
 
-std::vector<std::pair<size_t, std::vector<se::StyleSpan>>> ToCoreSpanEntries(
-    const EditorLineEntries<EditorStyleSpan>& spans
-) {
-  std::vector<std::pair<size_t, std::vector<se::StyleSpan>>> entries;
-  for (const auto& [line, items] : spans) {
-    std::vector<se::StyleSpan> converted;
-    for (const EditorStyleSpan& span : items) {
-      if (span.length == 0) {
-        continue;
-      }
-      converted.push_back({span.column, span.length, static_cast<uint32_t>(span.style)});
-    }
-    if (!converted.empty()) {
-      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
-    }
-  }
-  return entries;
-}
 
-std::vector<std::pair<size_t, std::vector<se::InlayHint>>> ToCoreInlayEntries(
-    const EditorLineEntries<EditorInlayHint>& hints
-) {
-  std::vector<std::pair<size_t, std::vector<se::InlayHint>>> entries;
-  for (const auto& [line, items] : hints) {
-    std::vector<se::InlayHint> converted;
-    for (const EditorInlayHint& hint : items) {
-      converted.push_back({se::InlayType::TEXT, hint.column, 0, se::U8String(hint.text)});
-    }
-    if (!converted.empty()) {
-      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
-    }
-  }
-  return entries;
-}
 
-std::vector<std::pair<size_t, std::vector<se::Diagnostic>>> ToCoreDiagnosticEntries(
-    const EditorLineEntries<EditorDiagnostic>& diagnostics
-) {
-  std::vector<std::pair<size_t, std::vector<se::Diagnostic>>> entries;
-  for (const auto& [line, items] : diagnostics) {
-    std::vector<se::Diagnostic> converted;
-    for (const EditorDiagnostic& diagnostic : items) {
-      converted.push_back(
-          {diagnostic.column, diagnostic.length, static_cast<se::DiagnosticSeverity>(diagnostic.severity)}
-      );
-    }
-    if (!converted.empty()) {
-      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
-    }
-  }
-  return entries;
-}
 
-std::vector<std::pair<size_t, std::vector<se::CodeLensItem>>> ToCoreCodeLensEntries(
-    const EditorLineEntries<EditorCodeLens>& lenses
-) {
-  std::vector<std::pair<size_t, std::vector<se::CodeLensItem>>> entries;
-  for (const auto& [line, items] : lenses) {
-    std::vector<se::CodeLensItem> converted;
-    for (const EditorCodeLens& lens : items) {
-      converted.push_back({static_cast<int32_t>(lens.column), lens.command_id, se::U8String(lens.title)});
-    }
-    if (!converted.empty()) {
-      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
-    }
-  }
-  return entries;
-}
 
-std::vector<std::pair<size_t, std::vector<se::LinkSpan>>> ToCoreLinkEntries(
-    const EditorLineEntries<EditorLink>& links
-) {
-  std::vector<std::pair<size_t, std::vector<se::LinkSpan>>> entries;
-  for (const auto& [line, items] : links) {
-    std::vector<se::LinkSpan> converted;
-    for (const EditorLink& link : items) {
-      converted.push_back({link.column, link.length, se::U8String(link.url)});
-    }
-    if (!converted.empty()) {
-      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
-    }
-  }
-  return entries;
-}
 
-std::vector<std::pair<size_t, std::vector<se::GutterIcon>>> ToCoreGutterIconEntries(
-    const EditorLineEntries<EditorGutterIcon>& icons
-) {
-  std::vector<std::pair<size_t, std::vector<se::GutterIcon>>> entries;
-  for (const auto& [line, items] : icons) {
-    std::vector<se::GutterIcon> converted;
-    for (const EditorGutterIcon& icon : items) {
-      converted.push_back({icon.icon_id});
-    }
-    if (!converted.empty()) {
-      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
-    }
-  }
-  return entries;
-}
-
-std::vector<std::pair<size_t, std::vector<se::DocumentHighlight>>> ToCoreDocumentHighlightEntries(
-    const EditorLineEntries<EditorStyleSpan>& highlights
-) {
-  std::vector<std::pair<size_t, std::vector<se::DocumentHighlight>>> entries;
-  for (const auto& [line, items] : highlights) {
-    std::vector<se::DocumentHighlight> converted;
-    for (const EditorStyleSpan& span : items) {
-      if (span.length == 0) {
-        continue;
-      }
-      converted.push_back({span.column, span.length, se::DocumentHighlightKind::TEXT});
-    }
-    if (!converted.empty()) {
-      entries.emplace_back(static_cast<size_t>(line), std::move(converted));
-    }
-  }
-  return entries;
-}
 
 // SweetEditor style objects carry 0xAARRGGBB integers.
 int32_t ToArgb(const Color& color) {
@@ -358,99 +243,34 @@ void RegisterSyntaxStyles(se::EditorCore& core, const EditorTheme& theme) {
   }
 }
 
-void MergeDecorations(EditorDecorationResult& target, EditorDecorationResult part) {
-  const auto append_entries = []<typename T>(EditorLineEntries<T>& dst, EditorLineEntries<T>&& src) {
-    dst.insert(dst.end(), std::make_move_iterator(src.begin()), std::make_move_iterator(src.end()));
-  };
-  append_entries(target.syntax_spans, std::move(part.syntax_spans));
-  append_entries(target.overlay_spans, std::move(part.overlay_spans));
-  append_entries(target.document_highlights, std::move(part.document_highlights));
-  append_entries(target.inlay_hints, std::move(part.inlay_hints));
-  append_entries(target.diagnostics, std::move(part.diagnostics));
-  append_entries(target.code_lens, std::move(part.code_lens));
-  append_entries(target.links, std::move(part.links));
-  append_entries(target.gutter_icons, std::move(part.gutter_icons));
-  append_entries(target.phantom_texts, std::move(part.phantom_texts));
-  target.indent_guides.insert(
-      target.indent_guides.end(), std::make_move_iterator(part.indent_guides.begin()),
-      std::make_move_iterator(part.indent_guides.end())
-  );
-  target.fold_regions.insert(
-      target.fold_regions.end(), std::make_move_iterator(part.fold_regions.begin()),
-      std::make_move_iterator(part.fold_regions.end())
-  );
-  if (part.matched_bracket) {
-    target.matched_bracket = part.matched_bracket;
-  }
-}
 
-void ApplyDecorations(
-    se::EditorCore& core, const EditorDecorationResult& decorations, bool settled
-) {
-  // Unsettled refreshes (fast scroll, viewport resize) publish only the light
-  // slice — syntax spans and indent guides — and deliberately leave every
-  // heavier category untouched: providers omit them there, and overwriting
-  // with empty sets would blink rainbows, diagnostics, inlay hints, code lens,
-  // and links in and out of existence on every scroll frame. The settled pass
-  // applies the complete result, including legitimate clears.
+void ApplyDecorations(se::EditorCore& core, EditorDecorationResult decorations, bool settled) {
+  // Takes by value: core setters consume non-const vectors, and callers have
+  // already released ownership of the merged result.
   core.clearHighlights(se::SpanLayer::SYNTAX);
-  core.setBatchLineSpans(se::SpanLayer::SYNTAX, ToCoreSpanEntries(decorations.syntax_spans));
+  core.setBatchLineSpans(se::SpanLayer::SYNTAX, std::move(decorations.syntax_spans));
   if (!settled) {
-    std::vector<se::IndentGuide> guides;
-    guides.reserve(decorations.indent_guides.size());
-    for (const EditorIndentGuide& guide : decorations.indent_guides) {
-      if (guide.end_line < guide.start_line) {
-        continue;
-      }
-      guides.push_back(
-          {se::TextPosition{guide.start_line, guide.column}, se::TextPosition{guide.end_line, guide.column}}
-      );
-    }
-    core.setIndentGuides(std::move(guides));
+    core.setIndentGuides(std::move(decorations.indent_guides));
     return;
   }
   core.clearHighlights(se::SpanLayer::OVERLAY);
-  core.setBatchLineSpans(se::SpanLayer::OVERLAY, ToCoreSpanEntries(decorations.overlay_spans));
+  core.setBatchLineSpans(se::SpanLayer::OVERLAY, std::move(decorations.overlay_spans));
   if (decorations.document_highlights.empty()) {
     core.clearDocumentHighlights();
   } else {
-    core.setBatchLineDocumentHighlights(ToCoreDocumentHighlightEntries(decorations.document_highlights));
+    core.setBatchLineDocumentHighlights(std::move(decorations.document_highlights));
   }
-  core.setBatchLineInlayHints(ToCoreInlayEntries(decorations.inlay_hints));
-  core.setBatchLineDiagnostics(ToCoreDiagnosticEntries(decorations.diagnostics));
-  core.setBatchLineCodeLens(ToCoreCodeLensEntries(decorations.code_lens));
-  core.setBatchLineLinks(ToCoreLinkEntries(decorations.links));
-  core.setBatchLineGutterIcons(ToCoreGutterIconEntries(decorations.gutter_icons));
-  std::vector<se::IndentGuide> guides;
-  guides.reserve(decorations.indent_guides.size());
-  for (const EditorIndentGuide& guide : decorations.indent_guides) {
-    if (guide.end_line < guide.start_line) {
-      continue;
-    }
-    guides.push_back(
-        {se::TextPosition{guide.start_line, guide.column}, se::TextPosition{guide.end_line, guide.column}}
-    );
-  }
-  core.setIndentGuides(std::move(guides));
-  // Fold regions are published once per document (providers set them on the
-  // settled pass after a load); later refreshes legitimately omit them, and
-  // overwriting with an empty set would collapse the fold UI on caret moves.
+  core.setBatchLineInlayHints(std::move(decorations.inlay_hints));
+  core.setBatchLineDiagnostics(std::move(decorations.diagnostics));
+  core.setBatchLineCodeLens(std::move(decorations.code_lens));
+  core.setBatchLineLinks(std::move(decorations.links));
+  core.setBatchLineGutterIcons(std::move(decorations.gutter_icons));
+  core.setIndentGuides(std::move(decorations.indent_guides));
   if (!decorations.fold_regions.empty()) {
-    std::vector<se::FoldRegion> folds;
-    folds.reserve(decorations.fold_regions.size());
-    for (const EditorFoldRegion& fold : decorations.fold_regions) {
-      if (fold.end_line <= fold.start_line) {
-        continue;
-      }
-      folds.push_back({fold.start_line, fold.end_line, false});
-    }
-    core.setFoldRegions(std::move(folds));
+    core.setFoldRegions(std::move(decorations.fold_regions));
   }
-  if (decorations.matched_bracket) {
-    core.setMatchedBrackets(
-        se::TextPosition{decorations.matched_bracket->line, decorations.matched_bracket->column},
-        se::TextPosition{decorations.matched_bracket->partner_line, decorations.matched_bracket->partner_column}
-    );
+  if (decorations.matched_bracket_open && decorations.matched_bracket_close) {
+    core.setMatchedBrackets(*decorations.matched_bracket_open, *decorations.matched_bracket_close);
   } else {
     core.clearMatchedBrackets();
   }
@@ -2069,55 +1889,74 @@ public:
   // Buffers incremental edits so providers receive them on the next refresh.
   void RecordPendingChanges(const std::vector<se::TextChange>& changes) {
     for (const se::TextChange& change : changes) {
-      EditorTextChange pending;
-      pending.start_line = static_cast<uint32_t>(change.range.start.line);
-      pending.start_column = static_cast<uint32_t>(change.range.start.column);
-      pending.end_line = static_cast<uint32_t>(change.range.end.line);
-      pending.end_column = static_cast<uint32_t>(change.range.end.column);
-      pending.new_text = change.new_text;
-      pending_changes_.push_back(std::move(pending));
+      pending_changes_.push_back(sweeteditor::TextChange{change.range, {}, change.new_text});
     }
   }
 
   // Collects results from every registered provider and applies the merged
   // decoration set to the core.
   void RefreshDecorations(bool settled) {
-    if (!core_ || !document_) {
-      return;
-    }
-    // Providers only need the full text when incremental changes must be
-    // validated; copying megabyte documents on every scroll frame is waste.
-    const bool needs_document_text = !pending_changes_.empty();
-    if (needs_document_text) {
-      synced_document_text_ = document_->getU8Text();
-    }
+    if (!core_ || !document_) return;
+    const bool needs_text = !pending_changes_.empty();
+    if (needs_text) synced_document_text_ = document_->getU8Text();
+
     EditorDecorationContext context;
     const se::IntRange visible = core_->getVisibleLineRange();
-    context.visible_start_line =
-        visible.isEmpty() ? 0U : static_cast<uint32_t>(std::max(0, visible.start));
-    context.visible_end_line = visible.isEmpty() ? 0U : static_cast<uint32_t>(std::max(0, visible.end));
-    context.total_line_count = static_cast<uint32_t>(document_->getLineCount());
+    context.visible_start_line = visible.isEmpty() ? 0 : static_cast<size_t>(std::max(0, visible.start));
+    context.visible_end_line = visible.isEmpty() ? 0 : static_cast<size_t>(std::max(0, visible.end));
+    context.total_line_count = document_->getLineCount();
     const se::TextPosition cursor = core_->getCursorPosition();
-    context.cursor_line = static_cast<uint32_t>(cursor.line);
-    context.cursor_column = static_cast<uint32_t>(cursor.column);
+    context.cursor_line = cursor.line;
+    context.cursor_column = cursor.column;
     context.viewport_settled = settled;
-    context.document_text = needs_document_text ? &synced_document_text_ : nullptr;
+    context.document_text = needs_text ? &synced_document_text_ : nullptr;
     context.text_changes = std::move(pending_changes_);
     pending_changes_.clear();
 
-    EditorDecorationResult merged;
-    for (const std::shared_ptr<EditorDecorationProvider>& provider : providers_) {
-      if (!provider) {
-        continue;
+    // Receiver collects the merged result; the provider may deliver
+    // synchronously (Accept before returning) or asynchronously.
+    class CollectingReceiver final : public EditorDecorationReceiver {
+    public:
+      EditorDecorationResult merged;
+      bool Accept(EditorDecorationResult result) override {
+        // Single-provider fast path: take ownership directly.
+        if (merged.syntax_spans.empty() && merged.diagnostics.empty() && merged.fold_regions.empty()) {
+          merged = std::move(result);
+        } else {
+          MergeInto(merged, std::move(result));
+        }
+        return !cancelled_;
       }
-      MergeDecorations(merged, provider->ProvideDecorations(context));
+      bool IsCancelled() const override { return cancelled_; }
+      bool cancelled_ = false;
+    private:
+      static void MergeInto(EditorDecorationResult& dst, EditorDecorationResult src) {
+        dst.syntax_spans.insert(dst.syntax_spans.end(), std::make_move_iterator(src.syntax_spans.begin()), std::make_move_iterator(src.syntax_spans.end()));
+        dst.overlay_spans.insert(dst.overlay_spans.end(), std::make_move_iterator(src.overlay_spans.begin()), std::make_move_iterator(src.overlay_spans.end()));
+        dst.document_highlights.insert(dst.document_highlights.end(), std::make_move_iterator(src.document_highlights.begin()), std::make_move_iterator(src.document_highlights.end()));
+        dst.inlay_hints.insert(dst.inlay_hints.end(), std::make_move_iterator(src.inlay_hints.begin()), std::make_move_iterator(src.inlay_hints.end()));
+        dst.diagnostics.insert(dst.diagnostics.end(), std::make_move_iterator(src.diagnostics.begin()), std::make_move_iterator(src.diagnostics.end()));
+        dst.code_lens.insert(dst.code_lens.end(), std::make_move_iterator(src.code_lens.begin()), std::make_move_iterator(src.code_lens.end()));
+        dst.links.insert(dst.links.end(), std::make_move_iterator(src.links.begin()), std::make_move_iterator(src.links.end()));
+        dst.gutter_icons.insert(dst.gutter_icons.end(), std::make_move_iterator(src.gutter_icons.begin()), std::make_move_iterator(src.gutter_icons.end()));
+        dst.phantom_texts.insert(dst.phantom_texts.end(), std::make_move_iterator(src.phantom_texts.begin()), std::make_move_iterator(src.phantom_texts.end()));
+        dst.indent_guides.insert(dst.indent_guides.end(), std::make_move_iterator(src.indent_guides.begin()), std::make_move_iterator(src.indent_guides.end()));
+        dst.fold_regions.insert(dst.fold_regions.end(), std::make_move_iterator(src.fold_regions.begin()), std::make_move_iterator(src.fold_regions.end()));
+        if (src.matched_bracket_open) dst.matched_bracket_open = src.matched_bracket_open;
+        if (src.matched_bracket_close) dst.matched_bracket_close = src.matched_bracket_close;
+      }
+    };
+
+    CollectingReceiver receiver;
+    for (const auto& provider : providers_) {
+      if (!provider) continue;
+      provider->ProvideDecorations(context, receiver);
+      if (receiver.IsCancelled()) break;
     }
-    cached_phantom_entries_ = merged.phantom_texts;
-    ApplyDecorations(*core_, merged, settled);
+
+    cached_phantom_entries_ = receiver.merged.phantom_texts;
+    ApplyDecorations(*core_, std::move(receiver.merged), settled);
     model_dirty_ = true;
-    CODEEDITOR_TRACE(
-        "refresh: providers=%zu spans=%zu settled=%d", providers_.size(), merged.syntax_spans.size(), settled ? 1 : 0
-    );
   }
 
   // Whether the latest tap hit a command area (gutter icon, code lens, link,
@@ -2207,7 +2046,7 @@ public:
       if (static_cast<int32_t>(line) < start_line || static_cast<int32_t>(line) > end_line) {
         continue;
       }
-      for (const EditorPhantomText& phantom : items) {
+      for (const sweeteditor::PhantomText& phantom : items) {
         if (!phantom.text.empty()) {
           next[line] = phantom.text;
         }
@@ -2285,7 +2124,7 @@ public:
       if (line != static_cast<uint32_t>(cursor.line)) {
         continue;
       }
-      for (const EditorPhantomText& phantom : items) {
+      for (const sweeteditor::PhantomText& phantom : items) {
         if (!phantom.text.empty()) {
           text = phantom.text;
         }
@@ -3152,9 +2991,9 @@ private:
   EditorTheme theme_;
   std::string font_family_;
   std::vector<std::shared_ptr<EditorDecorationProvider>> providers_;
-  std::vector<EditorTextChange> pending_changes_;
+  std::vector<sweeteditor::TextChange> pending_changes_;
   std::string synced_document_text_;
-  EditorLineEntries<EditorPhantomText> cached_phantom_entries_;
+  std::vector<std::pair<size_t, std::vector<sweeteditor::PhantomText>>> cached_phantom_entries_;
   std::shared_ptr<EditorTextInputClient> text_input_client_;
   std::function<void()> invalidate_;
   se::Size viewport_;

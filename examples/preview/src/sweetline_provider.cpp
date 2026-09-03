@@ -154,15 +154,15 @@ void SweetLineDecorationProvider::RebuildDocument(const std::string& text) {
   fold_regions_published_ = false;
 }
 
-ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
-    const ce::EditorDecorationContext& context
+void SweetLineDecorationProvider::ProvideDecorations(
+    const ce::EditorDecorationContext& context, ce::EditorDecorationReceiver& receiver
 ) {
   ce::EditorDecorationResult result;
   if (analyzer_ == nullptr || document_ == nullptr) {
-    return result;
+    return;
   }
   if (context.visible_end_line < context.visible_start_line) {
-    return result;
+    return;
   }
 
   const sl::LineRange viewport{
@@ -179,11 +179,11 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
   const char* analysis_path = "full";
   sl::SharedPtr<sl::DocumentHighlightSlice> incremental_slice;
   if (analyzer_ != nullptr && !context.text_changes.empty()) {
-    for (const ce::EditorTextChange& change : context.text_changes) {
+    for (const ce::TextChange& change : context.text_changes) {
       incremental_slice = analyzer_->analyzeIncrementalInLineRange(
           sl::TextRange{
-              sl::TextPosition{change.start_line, change.start_column},
-              sl::TextPosition{change.end_line, change.end_column},
+              sl::TextPosition{change.range.start.line, change.range.start.column},
+              sl::TextPosition{change.range.end.line, change.range.end.column},
           },
           sl::U8String(change.new_text), viewport
       );
@@ -211,7 +211,7 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
   if (slice) {
     size_t line = slice->start_line;
     for (const sl::LineHighlight& line_highlight : slice->lines) {
-      std::vector<ce::EditorStyleSpan> spans;
+      std::vector<sweeteditor::StyleSpan> spans;
       for (const sl::TokenSpan& token : line_highlight.spans) {
         if (token.style_id <= 0 || !IsSingleLine(token)) {
           continue;
@@ -221,7 +221,7 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
         if (length == 0) {
           continue;
         }
-        spans.push_back({column, length, static_cast<ce::EditorStyle>(token.style_id)});
+        spans.push_back({column, length, static_cast<uint32_t>(token.style_id)});
       }
       if (!spans.empty()) {
         result.syntax_spans.emplace_back(static_cast<uint32_t>(line), std::move(spans));
@@ -273,14 +273,14 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
         if (!at_start && !at_end) {
           continue;
         }
-        result.matched_bracket = {
-            static_cast<uint32_t>(token.range.start.line),
-            static_cast<uint32_t>(token.range.start.column),
-            static_cast<uint32_t>(token.partner_range.start.line),
-            static_cast<uint32_t>(token.partner_range.start.column),
+        result.matched_bracket_open = sweeteditor::TextPosition{
+            token.range.start.line, token.range.start.column,
+        };
+        result.matched_bracket_close = sweeteditor::TextPosition{
+            token.partner_range.start.line, token.partner_range.start.column,
         };
       }
-      if (result.matched_bracket) {
+      if (result.matched_bracket_open) {
         break;
       }
     }
@@ -292,7 +292,7 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
     if (const sl::SharedPtr<sl::BracketPairResult> brackets = analyzer_->analyzeBracketPairsInLineRange(viewport)) {
       size_t line = brackets->start_line;
       for (const sl::LineBracketPairs& line_pairs : brackets->lines) {
-        std::vector<ce::EditorStyleSpan> rainbow;
+        std::vector<sweeteditor::StyleSpan> rainbow;
         for (const sl::BracketToken& token : line_pairs.tokens) {
           if (!IsSingleLine(token)) {
             continue;
@@ -303,9 +303,7 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
             continue;
           }
           const uint32_t depth = static_cast<uint32_t>(std::max(0, token.depth)) % 8;
-          rainbow.push_back(
-              {column, length, static_cast<ce::EditorStyle>(static_cast<int32_t>(ce::EditorStyle::RainbowFirst) + depth)}
-          );
+          rainbow.push_back({column, length, static_cast<uint32_t>(ce::EditorStyle::RainbowFirst) + depth});
         }
         if (!rainbow.empty()) {
           result.overlay_spans.emplace_back(static_cast<uint32_t>(line), std::move(rainbow));
@@ -341,7 +339,7 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
     if (!word.empty() && slice) {
       size_t line = slice->start_line;
       for (const sl::LineHighlight& line_highlight : slice->lines) {
-        std::vector<ce::EditorStyleSpan> highlights;
+        std::vector<sweeteditor::DocumentHighlight> highlights;
         for (const sl::TokenSpan& token : line_highlight.spans) {
           if (!IsSingleLine(token) || TokenLiteral(*document_, token) != word) {
             continue;
@@ -349,7 +347,7 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
           const uint32_t column = static_cast<uint32_t>(token.range.start.column);
           const uint32_t length = static_cast<uint32_t>(token.range.end.column - token.range.start.column);
           if (length > 0) {
-            highlights.push_back({column, length, ce::EditorStyle::Variable});
+            highlights.push_back({column, length, sweeteditor::DocumentHighlightKind::TEXT});
           }
         }
         if (!highlights.empty()) {
@@ -364,11 +362,11 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
     if (slice) {
       size_t line = slice->start_line;
       for (const sl::LineHighlight& line_highlight : slice->lines) {
-        std::vector<ce::EditorInlayHint> inlays;
-        std::vector<ce::EditorDiagnostic> diagnostics;
-        std::vector<ce::EditorCodeLens> lenses;
-        std::vector<ce::EditorLink> links;
-        std::vector<ce::EditorGutterIcon> icons;
+        std::vector<sweeteditor::InlayHint> inlays;
+        std::vector<sweeteditor::Diagnostic> diagnostics;
+        std::vector<sweeteditor::CodeLensItem> lenses;
+        std::vector<sweeteditor::LinkSpan> links;
+        std::vector<sweeteditor::GutterIcon> icons;
         for (const sl::TokenSpan& token : line_highlight.spans) {
           if (!IsSingleLine(token)) {
             continue;
@@ -381,9 +379,13 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
             const size_t fixme = FindIgnoreCase(literal, "FIXME");
             const size_t todo = FindIgnoreCase(literal, "TODO");
             if (fixme != std::string::npos) {
-              diagnostics.push_back({column + static_cast<uint32_t>(fixme), 5, 0, "FIXME"});
+              diagnostics.push_back(
+                  {column + static_cast<uint32_t>(fixme), 5, sweeteditor::DiagnosticSeverity::DIAG_ERROR}
+              );
             } else if (todo != std::string::npos) {
-              diagnostics.push_back({column + static_cast<uint32_t>(todo), 4, 1, "TODO"});
+              diagnostics.push_back(
+                  {column + static_cast<uint32_t>(todo), 4, sweeteditor::DiagnosticSeverity::DIAG_WARNING}
+              );
             }
           } else if (token.style_id == static_cast<int32_t>(ce::EditorStyle::String)) {
             int32_t color = 0;
@@ -397,7 +399,7 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
               links.push_back({column, length, std::string(literal)});
             }
           } else if (token.style_id == static_cast<int32_t>(ce::EditorStyle::Class) && length > 0) {
-            lenses.push_back({column, 1, "Run"});
+            lenses.push_back({static_cast<int32_t>(column), 1, "Run"});
             icons.push_back({1});
           }
         }
@@ -425,13 +427,13 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
   if (gutter_icons_) {
     const auto icons = gutter_icons_(context.visible_start_line, context.visible_end_line);
     for (const auto& [line, icon_id] : icons) {
-      result.gutter_icons.emplace_back(line, std::vector<ce::EditorGutterIcon>{{icon_id}});
+      result.gutter_icons.emplace_back(line, std::vector<sweeteditor::GutterIcon>{{icon_id}});
     }
   }
   if (phantom_) {
     const std::string text = phantom_(0);
     if (!text.empty()) {
-      result.phantom_texts.emplace_back(0U, std::vector<ce::EditorPhantomText>{{0, text}});
+      result.phantom_texts.emplace_back(0U, std::vector<sweeteditor::PhantomText>{{0, text}});
     }
   }
   CE_TRACE(
@@ -442,7 +444,7 @@ ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
       "provider: path=%s lines=%zu guides=%zu folds=%zu ch=%zu", analysis_path, result.syntax_spans.size(),
       result.indent_guides.size(), result.fold_regions.size(), context.text_changes.size()
   );
-  return result;
+  receiver.Accept(std::move(result));
 }
 
 }  // namespace demo

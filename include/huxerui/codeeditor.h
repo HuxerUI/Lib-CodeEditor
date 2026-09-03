@@ -12,6 +12,9 @@
 
 #include <array>
 
+#include <sweeteditor/decoration.h>
+#include <sweeteditor/editor_core.h>
+
 #include <huxerui/color.h>
 #include <huxerui/event.h>
 #include <huxerui/state.h>
@@ -64,113 +67,48 @@ enum class EditorStyle : std::int32_t {
 // ---- Decoration interface (mirrors the SweetEditor platform wrappers) ----
 
 // One style span inside a line: [column, column + length).
-struct EditorStyleSpan {
-  std::uint32_t column = 0;
-  std::uint32_t length = 0;
-  EditorStyle style = EditorStyle::Keyword;
-};
-
-// Per-line item lists keyed by 0-based line number.
-template <typename T>
-using EditorLineEntries = std::vector<std::pair<std::uint32_t, std::vector<T>>>;
-
-struct EditorInlayHint {
-  std::uint32_t column = 0;
-  std::string text;
-};
-
-struct EditorDiagnostic {
-  std::uint32_t column = 0;
-  std::uint32_t length = 0;
-  // 0 = error, 1 = warning, 2 = info, 3 = hint.
-  std::int32_t severity = 1;
-  std::string message;
-};
-
-struct EditorCodeLens {
-  std::uint32_t column = 0;
-  std::int32_t command_id = 0;
-  std::string title;
-};
-
-struct EditorLink {
-  std::uint32_t column = 0;
-  std::uint32_t length = 0;
-  std::string url;
-};
-
-struct EditorGutterIcon {
-  std::int32_t icon_id = 0;
-};
-
-struct EditorIndentGuide {
-  std::uint32_t start_line = 0;
-  std::uint32_t end_line = 0;
-  std::uint32_t column = 0;
-};
-
-struct EditorFoldRegion {
-  std::uint32_t start_line = 0;
-  std::uint32_t end_line = 0;
-};
-
-struct EditorBracketMatch {
-  std::uint32_t line = 0;
-  std::uint32_t column = 0;
-  std::uint32_t partner_line = 0;
-  std::uint32_t partner_column = 0;
-};
-
-// Ghost suggestion rendered at the end of a line; committed by Tab when
-// `accept_phantom_on_tab` is enabled.
-struct EditorPhantomText {
-  std::uint32_t column = 0;
-  std::string text;
-};
-
-// One incremental document edit since the previous refresh.
-struct EditorTextChange {
-  std::uint32_t start_line = 0;
-  std::uint32_t start_column = 0;
-  std::uint32_t end_line = 0;
-  std::uint32_t end_column = 0;
-  std::string new_text;
-};
+// SweetEditor core decoration types, re-exported for convenience.
+// The editor consumes these directly — no re-wrapping layer.
+using StyleSpan = sweeteditor::StyleSpan;
+using InlayHint = sweeteditor::InlayHint;
+using Diagnostic = sweeteditor::Diagnostic;
+using CodeLensItem = sweeteditor::CodeLensItem;
+using LinkSpan = sweeteditor::LinkSpan;
+using GutterIcon = sweeteditor::GutterIcon;
+using IndentGuide = sweeteditor::IndentGuide;
+using FoldRegion = sweeteditor::FoldRegion;
+using PhantomText = sweeteditor::PhantomText;
+using TextChange = sweeteditor::TextChange;
+using DocumentHighlight = sweeteditor::DocumentHighlight;
 
 // Everything a provider may contribute for the requested viewport. Empty
 // fields are skipped, so providers fill only what they compute.
 struct EditorDecorationResult {
-  EditorLineEntries<EditorStyleSpan> syntax_spans;
-  EditorLineEntries<EditorStyleSpan> overlay_spans;
-  EditorLineEntries<EditorStyleSpan> document_highlights;
-  EditorLineEntries<EditorInlayHint> inlay_hints;
-  EditorLineEntries<EditorDiagnostic> diagnostics;
-  EditorLineEntries<EditorCodeLens> code_lens;
-  EditorLineEntries<EditorLink> links;
-  EditorLineEntries<EditorGutterIcon> gutter_icons;
-  EditorLineEntries<EditorPhantomText> phantom_texts;
-  std::vector<EditorIndentGuide> indent_guides;
-  std::vector<EditorFoldRegion> fold_regions;
-  std::optional<EditorBracketMatch> matched_bracket;
+  std::vector<std::pair<size_t, std::vector<sweeteditor::StyleSpan>>> syntax_spans;
+  std::vector<std::pair<size_t, std::vector<sweeteditor::StyleSpan>>> overlay_spans;
+  std::vector<std::pair<size_t, std::vector<sweeteditor::DocumentHighlight>>> document_highlights;
+  std::vector<std::pair<size_t, std::vector<sweeteditor::InlayHint>>> inlay_hints;
+  std::vector<std::pair<size_t, std::vector<sweeteditor::Diagnostic>>> diagnostics;
+  std::vector<std::pair<size_t, std::vector<sweeteditor::CodeLensItem>>> code_lens;
+  std::vector<std::pair<size_t, std::vector<sweeteditor::LinkSpan>>> links;
+  std::vector<std::pair<size_t, std::vector<sweeteditor::GutterIcon>>> gutter_icons;
+  std::vector<std::pair<size_t, std::vector<sweeteditor::PhantomText>>> phantom_texts;
+  std::vector<sweeteditor::IndentGuide> indent_guides;
+  std::vector<sweeteditor::FoldRegion> fold_regions;
+  std::optional<sweeteditor::TextPosition> matched_bracket_open;
+  std::optional<sweeteditor::TextPosition> matched_bracket_close;
 };
 
 // Context handed to providers on every refresh.
 struct EditorDecorationContext {
-  // Visible 0-based line range, inclusive.
-  std::uint32_t visible_start_line = 0;
-  std::uint32_t visible_end_line = 0;
-  std::uint32_t total_line_count = 0;
-  std::uint32_t cursor_line = 0;
-  std::uint32_t cursor_column = 0;
-  // False during fast scrolling; heavy recomputation can wait for settled
-  // refreshes.
+  size_t visible_start_line = 0;
+  size_t visible_end_line = 0;
+  size_t total_line_count = 0;
+  size_t cursor_line = 0;
+  size_t cursor_column = 0;
   bool viewport_settled = true;
-  // Full UTF-8 document text, valid for the duration of the call. Providers
-  // that keep their own document model can lazily resynchronize from it.
   const std::string* document_text = nullptr;
-  // Incremental edits applied since the previous refresh (empty on the first
-  // refresh and after a document reload).
-  std::vector<EditorTextChange> text_changes;
+  std::vector<sweeteditor::TextChange> text_changes;
 };
 
 // Unified decoration source: syntax highlighting, diagnostics, inlay hints,
@@ -178,11 +116,22 @@ struct EditorDecorationContext {
 // highlights, and bracket matching all flow through this interface, so the
 // editor never depends on a concrete highlighting engine. Wire SweetLine, a
 // language server, or any custom backend by implementing this class.
+class EditorDecorationReceiver {
+ public:
+  virtual ~EditorDecorationReceiver() = default;
+  // Returns false when the request is stale or cancelled.
+  virtual bool Accept(EditorDecorationResult result) = 0;
+  [[nodiscard]] virtual bool IsCancelled() const = 0;
+};
+
 class EditorDecorationProvider {
  public:
   virtual ~EditorDecorationProvider() = default;
-
-  virtual EditorDecorationResult ProvideDecorations(const EditorDecorationContext& context) = 0;
+  // Synchronous providers call receiver.Accept() before returning.
+  // Asynchronous providers hold the receiver and deliver later.
+  virtual void ProvideDecorations(
+      const EditorDecorationContext& context, EditorDecorationReceiver& receiver
+  ) = 0;
 };
 
 // ---- Code completion ----

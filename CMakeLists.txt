@@ -131,6 +131,7 @@ endif ()
 
 target_include_directories(codeeditor PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/3dparty/SweetEditor/include>"
         "$<INSTALL_INTERFACE:include>"
 )
 

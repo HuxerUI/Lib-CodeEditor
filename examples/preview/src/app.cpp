@@ -414,8 +414,8 @@ huxerui::codeeditor::EditorOptions MakeEditorOptions(
         document.syntax,
         document.text,
         document.key,
-        [breakpoints](uint32_t start_line, uint32_t end_line) {
-          std::vector<std::pair<uint32_t, int32_t>> icons;
+        [breakpoints](size_t start_line, size_t end_line) {
+          std::vector<std::pair<size_t, int32_t>> icons;
           for (uint32_t line : breakpoints.Get()) {
             if (line >= start_line && line <= end_line) {
               icons.emplace_back(line, 2);
