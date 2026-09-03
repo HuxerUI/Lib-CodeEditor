@@ -2368,13 +2368,16 @@ public:
       // repainting a frame later.
       model_dirty_ = true;
       RebuildModelIfDirty();
-      RefreshDecorations(false);
+      // Viewport establishment is not fast scrolling: run the full settled
+      // refresh so gutter icons, code lens, diagnostics, and rainbow brackets
+      // paint in this same frame instead of a follow-up pass.
+      RefreshDecorations(true);
       const se::IntRange resized = core_->getVisibleLineRange();
       if (!resized.isEmpty()) {
         highlight_published_ = true;
       }
       last_visible_range_ = resized;
-      decorations_pending_ = true;
+      decorations_pending_ = false;
       model_dirty_ = true;
       if (invalidate_) {
         invalidate_();
