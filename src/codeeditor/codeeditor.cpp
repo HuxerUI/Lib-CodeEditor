@@ -1647,7 +1647,16 @@ public:
       switch (event.type) {
       case PointerEventType::Down:
         if (in_rect) {
+          if (CompletionThumbHeight() > 0.0F && CompletionThumbHit(event.position)) {
+            completion_.thumb_dragging = true;
+            completion_.panel_tap_armed = false;
+            completion_.panel_scrolling = false;
+            completion_.panel_down = event.position;
+            completion_.panel_last_y = event.position.y;
+            return true;
+          }
           // Arm a tap candidate; a drag beyond slop becomes list scrolling.
+          completion_.thumb_dragging = false;
           completion_.panel_tap_armed = true;
           completion_.panel_scrolling = false;
           completion_.panel_down = event.position;
@@ -1658,28 +1667,36 @@ public:
         DismissCompletion();
         break;
       case PointerEventType::Move:
-        if (completion_.panel_tap_armed || completion_.panel_scrolling) {
+        if (completion_.panel_tap_armed || completion_.panel_scrolling || completion_.thumb_dragging) {
           const float dy = event.position.y - completion_.panel_last_y;
           completion_.panel_last_y = event.position.y;
           const float distance = std::hypot(
               event.position.x - completion_.panel_down.x, event.position.y - completion_.panel_down.y
           );
+          if (completion_.thumb_dragging) {
+            // Direct thumb manipulation: map track pixels to list pixels.
+            const float track_height = completion_.panel_rect.height - kCompletionPanelPaddingV * 2.0F;
+            const float thumb_height = CompletionThumbHeight();
+            const float ratio = (track_height - thumb_height) > 1.0F
+                ? CompletionMaxScroll() / (track_height - thumb_height)
+                : 0.0F;
+            ScrollCompletionBy(dy * ratio);
+            return true;
+          }
           if (!completion_.panel_scrolling && distance > kCompletionTapSlop) {
             completion_.panel_scrolling = true;
             completion_.panel_tap_armed = false;
           }
           if (completion_.panel_scrolling) {
-            // Dragging upward reveals later items.
-            const int delta = static_cast<int>(dy / kCompletionRowHeight);
-            if (delta != 0) {
-              ScrollCompletionBy(-delta);
-            }
+            // Dragging upward reveals later items; pixel-smooth.
+            ScrollCompletionBy(-dy);
           }
           return true;
         }
         break;
       case PointerEventType::Up:
       case PointerEventType::Cancel:
+        completion_.thumb_dragging = false;
         if (completion_.panel_scrolling) {
           completion_.panel_scrolling = false;
           completion_.panel_tap_armed = false;
@@ -1688,10 +1705,11 @@ public:
         if (completion_.panel_tap_armed) {
           completion_.panel_tap_armed = false;
           // Only a clean tap inside a row confirms; a finger that drifted off
-          // the list (long-press then slide) selects nothing.
+          // the list (long-press then slide) selects nothing. HitCompletionPanel
+          // already returns the absolute item index for the scroll position.
           size_t row = 0;
           if (HitCompletionPanel(event.position, row)) {
-            completion_.selected = completion_.scroll_offset + row;
+            completion_.selected = row;
             ConfirmCompletion();
           }
           return true;
@@ -2971,9 +2989,10 @@ private:
     completion_.visible = false;
     completion_.request_active = false;
     completion_.items.clear();
-    completion_.scroll_offset = 0;
+    completion_.scroll_pixels = 0.0F;
     completion_.panel_tap_armed = false;
     completion_.panel_scrolling = false;
+    completion_.thumb_dragging = false;
     if (invalidate_) {
       invalidate_();
     }
@@ -2997,7 +3016,7 @@ private:
     }
     completion_.items = std::move(items);
     completion_.selected = 0;
-    completion_.scroll_offset = 0;
+    completion_.scroll_pixels = 0.0F;
     completion_.visible = true;
     if (invalidate_) {
       invalidate_();
@@ -3074,26 +3093,39 @@ private:
     const int next = std::max(0, std::min(count - 1, static_cast<int>(completion_.selected) + delta));
     if (static_cast<size_t>(next) != completion_.selected) {
       completion_.selected = static_cast<size_t>(next);
-      // Follow the selection with the scroll window when it leaves it.
-      if (completion_.selected < completion_.scroll_offset) {
-        completion_.scroll_offset = completion_.selected;
-      }
-      const size_t window_end = completion_.scroll_offset + kCompletionMaxVisible;
-      if (completion_.selected >= window_end && window_end > 0) {
-        completion_.scroll_offset = completion_.selected - (kCompletionMaxVisible - 1);
-      }
-      if (invalidate_) {
-        invalidate_();
-      }
+      RevealCompletionSelection();
     }
   }
 
-  // Visible row count for the current scroll offset.
-  size_t CompletionVisibleCount() const {
-    if (completion_.items.empty()) {
+  // Maximum pixel offset (0 when everything fits).
+  float CompletionMaxScroll() const {
+    const size_t count = completion_.items.size();
+    if (count <= kCompletionMaxVisible) {
+      return 0.0F;
+    }
+    return static_cast<float>(count - kCompletionMaxVisible) * kCompletionRowHeight;
+  }
+
+  // First fully-or-partially visible row for the pixel offset.
+  size_t CompletionFirstVisible() const {
+    const size_t count = completion_.items.size();
+    if (count <= kCompletionMaxVisible) {
       return 0;
     }
-    return std::min(kCompletionMaxVisible, completion_.items.size() - completion_.scroll_offset);
+    const size_t max_first = count - kCompletionMaxVisible;
+    const size_t first = static_cast<size_t>(completion_.scroll_pixels / kCompletionRowHeight);
+    return std::min(first, max_first);
+  }
+
+  // Sub-pixel shift of the first visible row (0..rowHeight).
+  float CompletionRowFraction() const {
+    const size_t count = completion_.items.size();
+    if (count <= kCompletionMaxVisible) {
+      return 0.0F;
+    }
+    return completion_.scroll_pixels -
+           static_cast<float>(static_cast<size_t>(completion_.scroll_pixels / kCompletionRowHeight)) *
+               kCompletionRowHeight;
   }
 
   bool CompletionPanelHitRect(const Point& position) const {
@@ -3114,52 +3146,56 @@ private:
         position.y >= rect.origin.y + rect.height) {
       return false;
     }
-    const float row = (position.y - rect.origin.y - kCompletionPanelPaddingV) / kCompletionRowHeight;
+    // Convert to list coordinates using the pixel scroll offset so the tapped
+    // row matches what is drawn.
+    const float list_y = (position.y - rect.origin.y - kCompletionPanelPaddingV) + CompletionRowFraction();
+    const float row = list_y / kCompletionRowHeight;
     if (row < 0.0F) {
       return false;
     }
-    const size_t index = static_cast<size_t>(row);
-    if (index >= CompletionVisibleCount()) {
+    const size_t absolute = static_cast<size_t>(row) + CompletionFirstVisible();
+    if (absolute >= completion_.items.size()) {
       return false;
     }
-    out_row = index;
+    out_row = absolute;
     return true;
   }
 
-  // Keeps the scroll window and the selection consistent with each other.
-  void ClampCompletionWindow() {
-    const size_t count = completion_.items.size();
-    const size_t max_offset = count > kCompletionMaxVisible ? count - kCompletionMaxVisible : 0;
-    completion_.scroll_offset = std::min(completion_.scroll_offset, max_offset);
-    if (completion_.selected < completion_.scroll_offset) {
-      completion_.selected = completion_.scroll_offset;
+  // Scrolls by pixels, clamped; keeps the selection visible afterwards.
+  void ScrollCompletionBy(float delta_pixels) {
+    const float max_scroll = CompletionMaxScroll();
+    if (max_scroll <= 0.0F) {
+      return;
     }
-    const size_t window_end = completion_.scroll_offset + kCompletionMaxVisible;
-    if (completion_.selected >= window_end && window_end > 0) {
-      completion_.selected = window_end - 1;
+    completion_.scroll_pixels = std::max(0.0F, std::min(max_scroll, completion_.scroll_pixels + delta_pixels));
+    if (completion_.selected < CompletionFirstVisible()) {
+      completion_.selected = CompletionFirstVisible();
+    }
+    const size_t first = CompletionFirstVisible();
+    if (completion_.selected >= first + kCompletionMaxVisible) {
+      completion_.selected = first + kCompletionMaxVisible - 1;
+    }
+    if (invalidate_) {
+      invalidate_();
     }
   }
 
-  // Scrolls the list by whole rows (positive = later items).
-  void ScrollCompletionBy(int delta) {
+  // Picks the scroll offset that keeps the selection fully visible.
+  void RevealCompletionSelection() {
     const size_t count = completion_.items.size();
     if (count <= kCompletionMaxVisible) {
+      completion_.scroll_pixels = 0.0F;
       return;
     }
-    const size_t max_offset = count - kCompletionMaxVisible;
-    size_t next = completion_.scroll_offset;
-    if (delta > 0) {
-      next = std::min(max_offset, next + static_cast<size_t>(delta));
-    } else {
-      const int signed_offset = static_cast<int>(next) + delta;
-      next = signed_offset > 0 ? static_cast<size_t>(signed_offset) : 0;
+    const size_t first = CompletionFirstVisible();
+    if (completion_.selected < first) {
+      completion_.scroll_pixels = static_cast<float>(completion_.selected) * kCompletionRowHeight;
+    } else if (completion_.selected >= first + kCompletionMaxVisible) {
+      completion_.scroll_pixels =
+          static_cast<float>(completion_.selected - (kCompletionMaxVisible - 1)) * kCompletionRowHeight;
     }
-    if (next != completion_.scroll_offset) {
-      completion_.scroll_offset = next;
-      ClampCompletionWindow();
-      if (invalidate_) {
-        invalidate_();
-      }
+    if (invalidate_) {
+      invalidate_();
     }
   }
 
@@ -3183,17 +3219,47 @@ private:
     return se::Rect{{x, y}, width, height};
   }
 
+  // Height of the scrollbar thumb (0 when the list fits).
+  float CompletionThumbHeight() const {
+    const size_t count = completion_.items.size();
+    if (count <= kCompletionMaxVisible) {
+      return 0.0F;
+    }
+    const float track = kCompletionRowHeight * static_cast<float>(kCompletionMaxVisible);
+    const float all = kCompletionRowHeight * static_cast<float>(count);
+    return std::max(12.0F, track * (track / all));
+  }
+
+  bool CompletionThumbHit(const Point& position) const {
+    const float thumb = CompletionThumbHeight();
+    if (thumb <= 0.0F || !completion_.visible) {
+      return false;
+    }
+    const float track_top = completion_.panel_rect.origin.y + kCompletionPanelPaddingV;
+    const float track_bottom = track_top + kCompletionPanelPaddingV * 0.0F +
+                               kCompletionRowHeight * static_cast<float>(kCompletionMaxVisible);
+    const float travel = (track_bottom - track_top) - thumb;
+    const float thumb_top = travel > 0.0F
+        ? track_top + (completion_.scroll_pixels / CompletionMaxScroll()) * travel
+        : track_top;
+    const float x = completion_.panel_rect.origin.x + completion_.panel_rect.width - 12.0F;
+    return position.x >= x && position.x <= x + 8.0F && position.y >= thumb_top &&
+           position.y <= thumb_top + thumb;
+  }
+
   void DrawCompletionPanel(PaintContext& paint, const se::Rect& rect) {
     const Rect panel{rect.origin.x, rect.origin.y, rect.width, rect.height};
     paint.DrawRect(panel, theme_.completion_background, CornerRadii(12.0F));
     paint.DrawBorder(panel, theme_.completion_border, StrokeStyle{1.0F}, CornerRadii(12.0F));
 
     const float content_left = rect.origin.x + kCompletionPanelPaddingH + kCompletionRowPaddingH;
-    float row_center_y = rect.origin.y + kCompletionPanelPaddingV + kCompletionRowHeight * 0.5F;
-    const size_t rows = CompletionVisibleCount();
-    for (size_t i = 0; i < rows; ++i) {
-      const size_t item_index = completion_.scroll_offset + i;
-      if (item_index >= completion_.items.size()) {
+    const size_t first_row = CompletionFirstVisible();
+    const float fraction = CompletionRowFraction();
+    // First row baseline starts above the padding so the list scrolls smoothly.
+    float row_center_y = rect.origin.y + kCompletionPanelPaddingV - fraction + kCompletionRowHeight * 0.5F;
+    const float panel_bottom = rect.origin.y + rect.height;
+    for (size_t item_index = first_row; item_index < completion_.items.size(); ++item_index) {
+      if (row_center_y - kCompletionRowHeight * 0.5F >= panel_bottom) {
         break;
       }
       const CompletionItem& item = completion_.items[item_index];
@@ -3235,23 +3301,45 @@ private:
           TextStyle{Font::System(kCompletionLabelSize), theme_.completion_label, TextDecoration::None});
 
       if (!item.detail.empty()) {
-        // Estimated advance (reference renders an 11sp detail at the row end).
-        const float detail_advance = kCompletionDetailSize * 0.55F * static_cast<float>(item.detail.size());
-        const float detail_right = rect.origin.x + rect.width - kCompletionPanelPaddingH - kCompletionRowPaddingH;
-        const float detail_x = detail_right - detail_advance;
-        if (detail_x > label_x + kCompletionDetailGap) {
+        const float detail_right = rect.origin.x + rect.width - kCompletionRowPaddingH;
+        const float detail_width = std::min(
+            160.0F,
+            detail_right - (label_x + kCompletionRowPaddingH)
+        );
+        if (detail_width > 40.0F) {
           const float detail_baseline = CenterBaseline(badge_center_y, completion_detail_metrics_);
           paint.DrawTextRun(
-              Rect{detail_x, row_center_y - kCompletionRowHeight * 0.5F, detail_advance, kCompletionRowHeight},
-              Point{detail_x, detail_baseline},
+              Rect{detail_right - detail_width, row_center_y - kCompletionRowHeight * 0.5F, detail_width,
+                   kCompletionRowHeight},
+              Point{detail_right - kCompletionRowPaddingH - 0.0F, detail_baseline},
               item.detail,
               TextStyle{Font::System(kCompletionDetailSize), theme_.completion_detail, TextDecoration::None});
         }
       }
-
       row_center_y += kCompletionRowHeight;
     }
+
+    // Scrollbar: a thin track with a thumb when the list overflows.
+    const float thumb = CompletionThumbHeight();
+    if (thumb > 0.0F) {
+      const float track_left = rect.origin.x + rect.width - 7.0F;
+      const float track_top = rect.origin.y + kCompletionPanelPaddingV;
+      const float track_height = kCompletionRowHeight * static_cast<float>(kCompletionMaxVisible);
+      paint.DrawRect(
+          Rect{track_left, track_top, 2.0F, track_height},
+          Color::Rgb(0, 0, 0, 0.10F),
+          CornerRadii(1.0F));
+      const float travel = track_height - thumb;
+      const float thumb_top = travel > 0.0F
+          ? track_top + (completion_.scroll_pixels / CompletionMaxScroll()) * travel
+          : track_top;
+      paint.DrawRect(
+          Rect{track_left - 1.0F, thumb_top, 4.0F, thumb},
+          Color::Rgb(128, 128, 128, 0.55F),
+          CornerRadii(2.0F));
+    }
   }
+
 
   std::shared_ptr<se::EditorCore> core_;
   std::shared_ptr<se::Document> document_;
@@ -3292,10 +3380,13 @@ private:
     bool request_active{false};
     std::vector<CompletionItem> items;
     size_t selected{0};
-    size_t scroll_offset{0};
+    // Continuous scroll offset in pixels (0 when the list fits).
+    float scroll_pixels{0.0F};
     // Pointer gesture state: a tap selects, a drag scrolls.
     bool panel_tap_armed{false};
     bool panel_scrolling{false};
+    bool thumb_dragging{false};
+    float thumb_drag_anchor{0.0F};
     Point panel_down{};
     float panel_last_y{0.0F};
     CompletionContext::TriggerKind last_trigger_kind{CompletionContext::TriggerKind::Invoked};
