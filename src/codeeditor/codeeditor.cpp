@@ -1253,7 +1253,7 @@ public:
     // Gutter icons share the line-number lane: with max_gutter_icons == 0 the
     // core reports overlay mode (icon replaces the line number); the reference
     // demo sets 1 so the icon renders beside the number.
-    core_->setMaxGutterIcons(1);
+
     // Display options: wrap mode (0=NONE/1=CHAR_BREAK/2=WORD_BREAK) and sticky
     // gutter (line numbers stay fixed during horizontal scroll).
     current_wrap_mode_ = options.wrap_mode;
@@ -2176,6 +2176,20 @@ public:
     }
 
     cached_phantom_entries_ = receiver.merged.phantom_texts;
+    // Reserve gutter icon space only while icons actually exist; with none the
+    // auto-sized gutter collapses back to digits + margins.
+    bool has_gutter_icons = false;
+    for (const auto& [line, icons] : receiver.merged.gutter_icons) {
+      if (!icons.empty()) {
+        has_gutter_icons = true;
+        break;
+      }
+    }
+    const uint32_t reserve = has_gutter_icons ? 1 : 0;
+    if (reserve != last_gutter_icon_reserve_) {
+      last_gutter_icon_reserve_ = reserve;
+      core_->setMaxGutterIcons(reserve);
+    }
     const bool refresh_folds = settled && folds_dirty_;
     ApplyDecorations(*core_, std::move(receiver.merged), settled, refresh_folds);
     if (settled) {
@@ -3372,6 +3386,7 @@ private:
   // Set when document content changed since the last fold publication; the
   // next settled refresh re-applies fold regions (possibly empty to clear).
   bool folds_dirty_{true};
+  uint32_t last_gutter_icon_reserve_{0};
   std::vector<std::shared_ptr<EditorDecorationProvider>> providers_;
   std::vector<sweeteditor::TextChange> pending_changes_;
   std::string synced_document_text_;
