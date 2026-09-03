@@ -3252,6 +3252,14 @@ private:
     paint.DrawRect(panel, theme_.completion_background, CornerRadii(12.0F));
     paint.DrawBorder(panel, theme_.completion_border, StrokeStyle{1.0F}, CornerRadii(12.0F));
 
+    // Clip the list to the panel so rows disappear only once they have fully
+    // scrolled out; partially visible boundary rows never paint outside the
+    // rounded surface.
+    paint.PushClip(
+        Rect{rect.origin.x + 1.0F, rect.origin.y + 1.0F, rect.width - 2.0F, rect.height - 2.0F},
+        CornerRadii(11.0F)
+    );
+
     const float content_left = rect.origin.x + kCompletionPanelPaddingH + kCompletionRowPaddingH;
     const size_t first_row = CompletionFirstVisible();
     const float fraction = CompletionRowFraction();
@@ -3338,6 +3346,7 @@ private:
           Color::Rgb(128, 128, 128, 0.55F),
           CornerRadii(2.0F));
     }
+    paint.PopClip();
   }
 
 
