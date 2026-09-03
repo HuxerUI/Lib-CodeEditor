@@ -132,6 +132,7 @@ Release; tag pushes (`v*`) publish stable releases.
 
 - [API Reference](docs/codeeditor.md) — full parameter tables, events, decoration interface, controller, and completion types
 - [中文 API 参考](docs/codeeditor_zh.md) — 完整参数表、事件、装饰接口、控制器与补全类型
+- [Highlighting without SweetLine](docs/highlighting-without-sweetline.md) — split the engine out and plug in your own highlighter
 
 ## Third-party dependencies
 
