@@ -2532,7 +2532,11 @@ private:
       return;
     }
 
-    const TextStyle style = MakeTextStyle(run.style.font_style, run.style.color, font_size_);
+    // Content runs carry the configured content font (family + weight/slant);
+    // MakeTextStyle seeds the base, then retarget the family so custom fonts
+    // reach the paint path (the measurer path already uses ContentFont()).
+    TextStyle style = MakeTextStyle(run.style.font_style, run.style.color, font_size_);
+    style.font = ContentFont();
     paint.DrawTextRun(Rect{run.x, top, run.width, height}, Point{run.x, run.y}, text, style);
   }
 
