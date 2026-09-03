@@ -319,7 +319,9 @@ void RegisterSyntaxStyles(se::EditorCore& core, const EditorTheme& theme) {
 }
 
 
-void ApplyDecorations(se::EditorCore& core, EditorDecorationResult decorations, bool settled) {
+void ApplyDecorations(
+    se::EditorCore& core, EditorDecorationResult decorations, bool settled, bool refresh_folds
+) {
   // Takes by value: core setters consume non-const vectors, and callers have
   // already released ownership of the merged result.
   core.clearHighlights(se::SpanLayer::SYNTAX);
@@ -341,7 +343,10 @@ void ApplyDecorations(se::EditorCore& core, EditorDecorationResult decorations, 
   core.setBatchLineLinks(std::move(decorations.links));
   core.setBatchLineGutterIcons(std::move(decorations.gutter_icons));
   core.setIndentGuides(std::move(decorations.indent_guides));
-  if (!decorations.fold_regions.empty()) {
+  // Fold regions are applied only when the provider republished them after a
+  // content change; an empty list then clears the core's fold state so the
+  // gutter's fold-arrow area (and width) is released once blocks disappear.
+  if (refresh_folds) {
     core.setFoldRegions(std::move(decorations.fold_regions));
   }
   if (decorations.matched_bracket_open && decorations.matched_bracket_close) {
@@ -2112,6 +2117,9 @@ public:
     if (!core_ || !document_) return;
     const bool needs_text = !pending_changes_.empty();
     if (needs_text) synced_document_text_ = document_->getU8Text();
+    if (needs_text) {
+      folds_dirty_ = true;
+    }
 
     EditorDecorationContext context;
     const se::IntRange visible = core_->getVisibleLineRange();
@@ -2168,7 +2176,11 @@ public:
     }
 
     cached_phantom_entries_ = receiver.merged.phantom_texts;
-    ApplyDecorations(*core_, std::move(receiver.merged), settled);
+    const bool refresh_folds = settled && folds_dirty_;
+    ApplyDecorations(*core_, std::move(receiver.merged), settled, refresh_folds);
+    if (settled) {
+      folds_dirty_ = false;
+    }
     model_dirty_ = true;
   }
 
@@ -3357,6 +3369,9 @@ private:
   EditorTheme theme_;
   std::string font_family_;
   float display_scale_{1.0F};
+  // Set when document content changed since the last fold publication; the
+  // next settled refresh re-applies fold regions (possibly empty to clear).
+  bool folds_dirty_{true};
   std::vector<std::shared_ptr<EditorDecorationProvider>> providers_;
   std::vector<sweeteditor::TextChange> pending_changes_;
   std::string synced_document_text_;
