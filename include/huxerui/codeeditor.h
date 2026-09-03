@@ -318,6 +318,8 @@ struct EditorTheme {
   static EditorTheme Default();
   // Derives an editor theme from an ambient HuxerUI theme specification.
   static EditorTheme FromThemeSpec(const ThemeSpec& spec);
+  // Everforest Dark — warm, low-contrast green forest palette.
+  static EditorTheme Everforest();
 
   bool operator==(const EditorTheme&) const = default;
 };

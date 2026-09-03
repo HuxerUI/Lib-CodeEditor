@@ -157,6 +157,81 @@ EditorTheme EditorTheme::FromThemeSpec(const ThemeSpec& spec) {
   return theme;
 }
 
+// Everforest Dark — a warm, low-contrast forest palette tuned for long
+// editing sessions. Values follow the canonical Everforest Dark scheme.
+EditorTheme EditorTheme::Everforest() {
+  EditorTheme theme;
+  constexpr auto Rgb = [](int red, int green, int blue, float alpha = 1.0F) {
+    return Color::Rgb(red, green, blue, alpha);
+  };
+  // Surfaces: bg0 / bg0_h / bg1 / bg2 / bg3
+  theme.background = Rgb(30, 35, 38);
+  theme.gutter_background = Rgb(35, 42, 46);
+  theme.current_line_background = Rgb(46, 56, 60, 0.6F);
+  theme.separator_color = Rgb(133, 146, 137);
+  // Text
+  theme.text_foreground = Rgb(211, 198, 170);   // fg
+  theme.line_number_color = Rgb(133, 146, 137); // grey
+  theme.caret_color = Rgb(211, 198, 170);
+  // Links and code lens
+  theme.link_color = Rgb(127, 187, 179);        // blue
+  theme.active_link_color = Rgb(131, 192, 146); // aqua
+  theme.codelens_color = Rgb(133, 146, 137, 0.9F);
+  theme.active_codelens_color = Rgb(127, 187, 179);
+  // Selection and highlights
+  theme.selection_background = Rgb(61, 72, 77, 0.55F);        // bg_visual
+  theme.search_match_background = Rgb(219, 188, 127, 0.22F);  // yellow
+  theme.search_current_background = Rgb(219, 188, 127, 0.38F);
+  theme.bracket_match_background = Rgb(131, 192, 146, 0.22F);  // aqua
+  theme.document_highlight_text = Rgb(127, 187, 179, 0.10F);
+  theme.document_highlight_read = Rgb(127, 187, 179, 0.14F);
+  theme.document_highlight_write = Rgb(127, 187, 179, 0.20F);
+  theme.ime_composition_underline = Rgb(131, 192, 146);
+  // Diagnostics
+  theme.diagnostic_error_underline = Rgb(230, 126, 128);  // red
+  theme.diagnostic_warning_underline = Rgb(219, 188, 127);  // yellow
+  theme.diagnostic_info_underline = Rgb(127, 187, 179);  // blue
+  theme.diagnostic_hint_underline = Rgb(133, 146, 137);  // grey
+  // Diff
+  theme.diff_added_background = Rgb(167, 192, 128, 0.16F);   // green
+  theme.diff_removed_background = Rgb(230, 126, 128, 0.16F); // red
+  theme.diff_added_gutter = Rgb(167, 192, 128, 0.24F);
+  theme.diff_removed_gutter = Rgb(230, 126, 128, 0.24F);
+  // Decorations
+  theme.indent_guide_color = Rgb(69, 79, 84);  // bg3
+  theme.inlay_hint_background = Rgb(69, 79, 84, 0.6F);
+  theme.inlay_hint_text = Rgb(157, 169, 160);
+  theme.fold_placeholder_background = Rgb(69, 79, 84, 0.6F);
+  theme.fold_placeholder_text = Rgb(157, 169, 160);
+  theme.gutter_icon_color = Rgb(131, 192, 146);  // aqua
+  // Syntax palette
+  theme.syntax_keyword = Rgb(230, 126, 128);     // red
+  theme.syntax_type = Rgb(131, 192, 146);        // aqua
+  theme.syntax_class = Rgb(127, 187, 179);       // blue
+  theme.syntax_function = Rgb(219, 188, 127);    // yellow
+  theme.syntax_variable = Rgb(211, 198, 170);    // fg
+  theme.syntax_string = Rgb(167, 192, 128);      // green
+  theme.syntax_number = Rgb(230, 152, 117);      // orange
+  theme.syntax_comment = Rgb(133, 146, 137);     // grey
+  theme.syntax_preprocessor = Rgb(230, 152, 117);  // orange
+  theme.syntax_builtin = Rgb(127, 187, 179);     // blue
+  theme.syntax_punctuation = Rgb(157, 169, 160); // grey1
+  theme.syntax_annotation = Rgb(214, 153, 182);  // purple
+  theme.syntax_url = Rgb(127, 187, 179);         // blue
+  theme.syntax_rainbow = {
+      Rgb(230, 126, 128), Rgb(230, 152, 117), Rgb(219, 188, 127), Rgb(167, 192, 128),
+      Rgb(131, 192, 146), Rgb(127, 187, 179), Rgb(214, 153, 182), Rgb(133, 146, 137),
+  };
+  // Completion panel
+  theme.completion_background = Rgb(35, 42, 46, 0.96F);
+  theme.completion_border = Rgb(157, 169, 160, 0.25F);
+  theme.completion_selected_background = Rgb(127, 187, 179, 0.26F);
+  theme.completion_label = Rgb(211, 198, 170);
+  theme.completion_detail = Rgb(157, 169, 160);
+  return theme;
+}
+
+
 namespace {
 
 namespace se = sweeteditor;
