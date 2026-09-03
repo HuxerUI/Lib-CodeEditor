@@ -337,7 +337,7 @@ View DemoToolbar(
     bool diff_enabled, bool wrap_enabled, bool sticky_enabled, bool dark_theme, bool maple_font, bool ligature
 ) {
   const EventEmitter events = UseEvents();
-  return Row {
+  return Flow {
     Button(diff_enabled ? "Diff: On" : "Diff: Off")
         .OnClick([events] { events.Emit<DiffToggleRequested>(); }),
     Button(dark_theme ? "Theme: Dark" : "Theme: Light")
