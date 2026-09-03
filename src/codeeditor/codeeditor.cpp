@@ -492,6 +492,11 @@ public:
                                 : huxerui::Font::Named(font_family_, font_size_);
   }
 
+  void SetFont(std::string font_family, float font_size) {
+    font_family_ = std::move(font_family);
+    font_size_ = font_size;
+  }
+
   float measureWidth(const se::U16String& text, int32_t font_style) override {
     if (!measurer_) {
       return 0.0F;
@@ -1286,8 +1291,9 @@ public:
     completion_badge_char_advance_ = measurer.MeasureRun("W", badge_style).advance;
 
     se::EditorOptions core_options;
-    core_ = std::make_shared<se::EditorCore>(
-        std::make_shared<HuxeruiTextMeasurer>(measurer, font_size_, font_family_), core_options);
+    measurer_ = &measurer;
+    text_measurer_ = std::make_shared<HuxeruiTextMeasurer>(measurer, font_size_, font_family_);
+    core_ = std::make_shared<se::EditorCore>(text_measurer_, core_options);
     theme_ = options.theme.value_or(CodeEditorTheme::Default());
     core_->setEditorRenderColors(MakeRenderColors(theme_));
     core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(theme_));
@@ -1976,6 +1982,28 @@ public:
 
   [[nodiscard]] const std::string& FontFamily() const noexcept {
     return font_family_;
+  }
+
+  // Applies a content font change without resetting the editor: the measurer
+  // bridge retargets and the core's onFontMetricsChanged recomputes layout
+  // while preserving the caret, scroll anchor, undo stack, and folds.
+  void ApplyFont(std::string font_family, float font_size) {
+    if (font_family == font_family_ && font_size == font_size_) {
+      return;
+    }
+    font_family_ = std::move(font_family);
+    font_size_ = font_size;
+    const Font content_font = ContentFont();
+    font_metrics_ = measurer_->Metrics(content_font);
+    char_width_ = measurer_->MeasureRun("0", TextStyle{content_font, Color::Black(), TextDecoration::None}).advance;
+    if (text_measurer_) {
+      text_measurer_->SetFont(font_family_, font_size_);
+      core_->onFontMetricsChanged();
+    }
+    model_dirty_ = true;
+    if (invalidate_) {
+      invalidate_();
+    }
   }
 
   // The content font: the platform monospace default or the configured family.
@@ -3119,6 +3147,8 @@ private:
 
   std::shared_ptr<se::EditorCore> core_;
   std::shared_ptr<se::Document> document_;
+  std::shared_ptr<HuxeruiTextMeasurer> text_measurer_;
+  huxerui::TextMeasurer* measurer_ = nullptr;
   CodeEditorTheme theme_;
   std::string font_family_;
   std::vector<std::shared_ptr<CodeEditorDecorationProvider>> providers_;
@@ -3380,9 +3410,8 @@ struct CodeEditorBehavior {
       // live; only a document switch or a font change (layout metrics)
       // justifies rebuilding the holder.
       holder_->ApplyTheme(behavior.options.theme.value_or(holder_->Theme()));
-      const bool font_changed = behavior.options.font_size != holder_->FontSize() ||
-          behavior.options.font_family != holder_->FontFamily();
-      if (behavior.options.document_key != document_key_ || font_changed) {
+      holder_->ApplyFont(behavior.options.font_family, behavior.options.font_size);
+      if (behavior.options.document_key != document_key_) {
         document_key_ = behavior.options.document_key;
         holder_ = std::make_shared<EditorHolder>(
             *behavior.measurer,
