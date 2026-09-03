@@ -565,6 +565,9 @@ constexpr float kCompletionDetailGap = 8.0F;
 constexpr float kCompletionGap = 4.0F;
 constexpr float kCompletionFramePadding = 8.0F;
 constexpr size_t kCompletionMaxVisible = 4;
+// A down on the completion panel arms a tap; movement beyond this slop turns
+// the gesture into list scrolling instead of selecting a row.
+constexpr float kCompletionTapSlop = 8.0F;
 constexpr float kCompletionLabelSize = 13.0F;
 constexpr float kCompletionDetailSize = 11.0F;
 constexpr float kCompletionBadgeSizePx = 10.0F;
@@ -1639,15 +1642,64 @@ public:
         return true;
       }
     }
-    if (event.type == PointerEventType::Down && completion_.visible && !completion_.items.empty()) {
-      size_t row = 0;
-      if (HitCompletionPanel(event.position, row)) {
-        completion_.selected = row;
-        ConfirmCompletion();
-        return true;
+    if (completion_.visible && !completion_.items.empty()) {
+      const bool in_rect = CompletionPanelHitRect(event.position);
+      switch (event.type) {
+      case PointerEventType::Down:
+        if (in_rect) {
+          // Arm a tap candidate; a drag beyond slop becomes list scrolling.
+          completion_.panel_tap_armed = true;
+          completion_.panel_scrolling = false;
+          completion_.panel_down = event.position;
+          completion_.panel_last_y = event.position.y;
+          return true;
+        }
+        // A tap outside the panel dismisses it, then falls through to the editor.
+        DismissCompletion();
+        break;
+      case PointerEventType::Move:
+        if (completion_.panel_tap_armed || completion_.panel_scrolling) {
+          const float dy = event.position.y - completion_.panel_last_y;
+          completion_.panel_last_y = event.position.y;
+          const float distance = std::hypot(
+              event.position.x - completion_.panel_down.x, event.position.y - completion_.panel_down.y
+          );
+          if (!completion_.panel_scrolling && distance > kCompletionTapSlop) {
+            completion_.panel_scrolling = true;
+            completion_.panel_tap_armed = false;
+          }
+          if (completion_.panel_scrolling) {
+            // Dragging upward reveals later items.
+            const int delta = static_cast<int>(dy / kCompletionRowHeight);
+            if (delta != 0) {
+              ScrollCompletionBy(-delta);
+            }
+          }
+          return true;
+        }
+        break;
+      case PointerEventType::Up:
+      case PointerEventType::Cancel:
+        if (completion_.panel_scrolling) {
+          completion_.panel_scrolling = false;
+          completion_.panel_tap_armed = false;
+          return true;
+        }
+        if (completion_.panel_tap_armed) {
+          completion_.panel_tap_armed = false;
+          // Only a clean tap inside a row confirms; a finger that drifted off
+          // the list (long-press then slide) selects nothing.
+          size_t row = 0;
+          if (HitCompletionPanel(event.position, row)) {
+            completion_.selected = completion_.scroll_offset + row;
+            ConfirmCompletion();
+          }
+          return true;
+        }
+        break;
+      default:
+        break;
       }
-      // A tap outside the panel dismisses it, then falls through to the editor.
-      DismissCompletion();
     }
     try {
       const bool touch = event.device_kind == PointerDeviceKind::Touch;
@@ -2919,6 +2971,9 @@ private:
     completion_.visible = false;
     completion_.request_active = false;
     completion_.items.clear();
+    completion_.scroll_offset = 0;
+    completion_.panel_tap_armed = false;
+    completion_.panel_scrolling = false;
     if (invalidate_) {
       invalidate_();
     }
@@ -2942,6 +2997,7 @@ private:
     }
     completion_.items = std::move(items);
     completion_.selected = 0;
+    completion_.scroll_offset = 0;
     completion_.visible = true;
     if (invalidate_) {
       invalidate_();
@@ -3018,10 +3074,35 @@ private:
     const int next = std::max(0, std::min(count - 1, static_cast<int>(completion_.selected) + delta));
     if (static_cast<size_t>(next) != completion_.selected) {
       completion_.selected = static_cast<size_t>(next);
+      // Follow the selection with the scroll window when it leaves it.
+      if (completion_.selected < completion_.scroll_offset) {
+        completion_.scroll_offset = completion_.selected;
+      }
+      const size_t window_end = completion_.scroll_offset + kCompletionMaxVisible;
+      if (completion_.selected >= window_end && window_end > 0) {
+        completion_.scroll_offset = completion_.selected - (kCompletionMaxVisible - 1);
+      }
       if (invalidate_) {
         invalidate_();
       }
     }
+  }
+
+  // Visible row count for the current scroll offset.
+  size_t CompletionVisibleCount() const {
+    if (completion_.items.empty()) {
+      return 0;
+    }
+    return std::min(kCompletionMaxVisible, completion_.items.size() - completion_.scroll_offset);
+  }
+
+  bool CompletionPanelHitRect(const Point& position) const {
+    if (!completion_.visible) {
+      return false;
+    }
+    const se::Rect& rect = completion_.panel_rect;
+    return position.x >= rect.origin.x && position.x < rect.origin.x + rect.width &&
+           position.y >= rect.origin.y && position.y < rect.origin.y + rect.height;
   }
 
   bool HitCompletionPanel(const Point& position, size_t& out_row) const {
@@ -3038,11 +3119,48 @@ private:
       return false;
     }
     const size_t index = static_cast<size_t>(row);
-    if (index >= completion_.items.size()) {
+    if (index >= CompletionVisibleCount()) {
       return false;
     }
     out_row = index;
     return true;
+  }
+
+  // Keeps the scroll window and the selection consistent with each other.
+  void ClampCompletionWindow() {
+    const size_t count = completion_.items.size();
+    const size_t max_offset = count > kCompletionMaxVisible ? count - kCompletionMaxVisible : 0;
+    completion_.scroll_offset = std::min(completion_.scroll_offset, max_offset);
+    if (completion_.selected < completion_.scroll_offset) {
+      completion_.selected = completion_.scroll_offset;
+    }
+    const size_t window_end = completion_.scroll_offset + kCompletionMaxVisible;
+    if (completion_.selected >= window_end && window_end > 0) {
+      completion_.selected = window_end - 1;
+    }
+  }
+
+  // Scrolls the list by whole rows (positive = later items).
+  void ScrollCompletionBy(int delta) {
+    const size_t count = completion_.items.size();
+    if (count <= kCompletionMaxVisible) {
+      return;
+    }
+    const size_t max_offset = count - kCompletionMaxVisible;
+    size_t next = completion_.scroll_offset;
+    if (delta > 0) {
+      next = std::min(max_offset, next + static_cast<size_t>(delta));
+    } else {
+      const int signed_offset = static_cast<int>(next) + delta;
+      next = signed_offset > 0 ? static_cast<size_t>(signed_offset) : 0;
+    }
+    if (next != completion_.scroll_offset) {
+      completion_.scroll_offset = next;
+      ClampCompletionWindow();
+      if (invalidate_) {
+        invalidate_();
+      }
+    }
   }
 
   se::Rect ComputeCompletionPanelRect(const se::PointF& cursor, float cursor_height) const {
@@ -3072,10 +3190,14 @@ private:
 
     const float content_left = rect.origin.x + kCompletionPanelPaddingH + kCompletionRowPaddingH;
     float row_center_y = rect.origin.y + kCompletionPanelPaddingV + kCompletionRowHeight * 0.5F;
-    const size_t rows = std::min(completion_.items.size(), kCompletionMaxVisible);
+    const size_t rows = CompletionVisibleCount();
     for (size_t i = 0; i < rows; ++i) {
-      const CompletionItem& item = completion_.items[i];
-      const bool selected = (i == completion_.selected);
+      const size_t item_index = completion_.scroll_offset + i;
+      if (item_index >= completion_.items.size()) {
+        break;
+      }
+      const CompletionItem& item = completion_.items[item_index];
+      const bool selected = (item_index == completion_.selected);
       if (selected) {
         paint.DrawRect(
             Rect{rect.origin.x + kCompletionPanelPaddingH, row_center_y - kCompletionRowHeight * 0.5F,
@@ -3170,6 +3292,12 @@ private:
     bool request_active{false};
     std::vector<CompletionItem> items;
     size_t selected{0};
+    size_t scroll_offset{0};
+    // Pointer gesture state: a tap selects, a drag scrolls.
+    bool panel_tap_armed{false};
+    bool panel_scrolling{false};
+    Point panel_down{};
+    float panel_last_y{0.0F};
     CompletionContext::TriggerKind last_trigger_kind{CompletionContext::TriggerKind::Invoked};
     std::string last_trigger_char;
     se::Rect panel_rect{};
