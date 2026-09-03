@@ -244,14 +244,18 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
 
   // Fold regions cover the whole document; publish once (the editor owns the
   // interactive fold state afterwards).
-  if (!fold_regions_published_ && context.viewport_settled) {
+  if (!fold_regions_published_ && context.viewport_settled && total_lines > 0) {
     if (const sl::SharedPtr<sl::IndentGuideResult> full = analyzer_->analyzeIndentGuidesInLineRange({0, total_lines})) {
       for (const sl::IndentGuideLine& guide : full->guide_lines) {
         if (guide.end_line > guide.start_line) {
           result.fold_regions.push_back({static_cast<uint32_t>(guide.start_line), static_cast<uint32_t>(guide.end_line)});
         }
       }
-      fold_regions_published_ = true;
+      // Only mark published when folds were actually found: an early attempt
+      // with a not-yet-populated analyzer or an empty document must retry.
+      if (!result.fold_regions.empty()) {
+        fold_regions_published_ = true;
+      }
     }
   }
 
