@@ -102,9 +102,9 @@ std::vector<CompletionItem> ProvideCompletions(const CompletionContext& context)
 }  // namespace
 
 // Dark showcase theme: starts from the light reference and overrides every
-// major surface, demonstrating partial theming on top of CodeEditorTheme.
-huxerui::codeeditor::CodeEditorTheme MakeDarkTheme() {
-  auto theme = huxerui::codeeditor::CodeEditorTheme::Default();
+// major surface, demonstrating partial theming on top of EditorTheme.
+huxerui::codeeditor::EditorTheme MakeDarkTheme() {
+  auto theme = huxerui::codeeditor::EditorTheme::Default();
   theme.background = Color::Rgb(30, 30, 46);
   theme.gutter_background = Color::Rgb(24, 24, 37);
   theme.current_line_background = Color::Rgb(255, 255, 255, 0.06F);
@@ -384,7 +384,7 @@ View EditorStatusBar(State<std::string> cursor_status, State<std::string> select
   }.With(Spacing(16.0F), Padding(8.0F));
 }
 
-huxerui::codeeditor::CodeEditorOptions MakeEditorOptions(
+huxerui::codeeditor::EditorOptions MakeEditorOptions(
     const DemoDocument& document,
     bool diff_enabled,
     const std::string& diff_original,
@@ -395,7 +395,7 @@ huxerui::codeeditor::CodeEditorOptions MakeEditorOptions(
     bool ligature,
     State<std::vector<uint32_t>> breakpoints
 ) {
-  huxerui::codeeditor::CodeEditorOptions options;
+  huxerui::codeeditor::EditorOptions options;
   options.initial_text = document.text;
   options.document_key = document.key;
   options.completion_provider = ProvideCompletions;
@@ -448,7 +448,7 @@ huxerui::codeeditor::CodeEditorOptions MakeEditorOptions(
 }
 
 [[huxerui::composable]]
-View CodeEditorDemo() {
+View EditorDemo() {
   auto current_file = UseState<std::size_t>(0);
   auto diff_enabled = UseState(false);
   auto diff_original = UseState(std::string());
@@ -472,7 +472,7 @@ View CodeEditorDemo() {
   const auto documents = LoadDemoDocuments(
       cpp_syntax, java_syntax, kotlin_syntax, lua_syntax, java_file, kotlin_file, lua_file, gc_file);
   const ToastHandle toast = UseToast();
-  const huxerui::codeeditor::CodeEditorController controller = huxerui::codeeditor::UseCodeEditorController();
+  const huxerui::codeeditor::EditorController controller = huxerui::codeeditor::UseEditorController();
   const DemoDocument& document = documents[current_file.Get()];
   const auto options = MakeEditorOptions(
       document, diff_enabled.Get(), diff_original.Get(), wrap_enabled.Get(), sticky_enabled.Get(), dark_theme.Get(),
@@ -505,13 +505,13 @@ View CodeEditorDemo() {
           diff_original = std::string();
         }),
     huxerui::codeeditor::CodeEditor(options, controller)
-        .On<huxerui::codeeditor::CodeEditorEvents::LinkClicked>([toast](const std::string& url) {
+        .On<huxerui::codeeditor::EditorEvents::LinkClicked>([toast](const std::string& url) {
           toast.Show("Link: " + url);
         })
-        .On<huxerui::codeeditor::CodeEditorEvents::CodeLensClicked>([toast](int32_t command_id) {
+        .On<huxerui::codeeditor::EditorEvents::CodeLensClicked>([toast](int32_t command_id) {
           toast.Show("CodeLens: " + std::to_string(command_id));
         })
-        .On<huxerui::codeeditor::CodeEditorEvents::GutterIconClicked>([toast, breakpoints](uint32_t line, int32_t) {
+        .On<huxerui::codeeditor::EditorEvents::GutterIconClicked>([toast, breakpoints](uint32_t line, int32_t) {
           std::vector<uint32_t> lines = breakpoints.Get();
           const auto found = std::find(lines.begin(), lines.end(), line);
           if (found == lines.end()) {
@@ -523,13 +523,13 @@ View CodeEditorDemo() {
           }
           breakpoints = std::move(lines);
         })
-        .On<huxerui::codeeditor::CodeEditorEvents::InlayClicked>([toast](uint32_t line, uint32_t column) {
+        .On<huxerui::codeeditor::EditorEvents::InlayClicked>([toast](uint32_t line, uint32_t column) {
           toast.Show("Inlay: " + std::to_string(line + 1) + ":" + std::to_string(column + 1));
         })
-        .On<huxerui::codeeditor::CodeEditorEvents::CursorChanged>([cursor_status](uint32_t line, uint32_t column) {
+        .On<huxerui::codeeditor::EditorEvents::CursorChanged>([cursor_status](uint32_t line, uint32_t column) {
           cursor_status = "Ln " + std::to_string(line + 1) + ", Col " + std::to_string(column + 1);
         })
-        .On<huxerui::codeeditor::CodeEditorEvents::SelectionChanged>(
+        .On<huxerui::codeeditor::EditorEvents::SelectionChanged>(
             [selection_status](uint32_t, uint32_t, uint32_t line, uint32_t column) {
               selection_status = "Selection Ln " + std::to_string(line + 1) + ", Col " +
                                  std::to_string(column + 1);
@@ -541,7 +541,7 @@ View CodeEditorDemo() {
 }
 
 View App() {
-  return CodeEditorDemo();
+  return EditorDemo();
 }
 
 const Application application{

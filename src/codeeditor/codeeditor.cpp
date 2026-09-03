@@ -30,8 +30,8 @@
 
 namespace huxerui::codeeditor {
 
-CodeEditorTheme CodeEditorTheme::Default() {
-  CodeEditorTheme theme;
+EditorTheme EditorTheme::Default() {
+  EditorTheme theme;
   theme.background = Color::Rgb(255, 255, 255);
   theme.gutter_background = Color::Rgb(242, 243, 245);
   theme.current_line_background = Color::Rgb(0, 0, 0, 0.06F);
@@ -91,13 +91,13 @@ CodeEditorTheme CodeEditorTheme::Default() {
   return theme;
 }
 
-CodeEditorTheme CodeEditorTheme::FromThemeSpec(const ThemeSpec& spec) {
+EditorTheme EditorTheme::FromThemeSpec(const ThemeSpec& spec) {
   const ColorScheme& colors = spec.colors;
   const auto with_alpha = [](Color color, float alpha) {
     color.alpha = alpha;
     return color;
   };
-  CodeEditorTheme theme;
+  EditorTheme theme;
   theme.background = colors.surface;
   theme.gutter_background = colors.surface_container_highest;
   theme.current_line_background = with_alpha(colors.on_surface, 0.06F);
@@ -203,12 +203,12 @@ std::string Utf16ToUtf8(const se::U16String& input) {
 // ---- Decoration result -> SweetEditor core conversions --------------------
 
 std::vector<std::pair<size_t, std::vector<se::StyleSpan>>> ToCoreSpanEntries(
-    const CodeEditorLineEntries<CodeEditorStyleSpan>& spans
+    const EditorLineEntries<EditorStyleSpan>& spans
 ) {
   std::vector<std::pair<size_t, std::vector<se::StyleSpan>>> entries;
   for (const auto& [line, items] : spans) {
     std::vector<se::StyleSpan> converted;
-    for (const CodeEditorStyleSpan& span : items) {
+    for (const EditorStyleSpan& span : items) {
       if (span.length == 0) {
         continue;
       }
@@ -222,12 +222,12 @@ std::vector<std::pair<size_t, std::vector<se::StyleSpan>>> ToCoreSpanEntries(
 }
 
 std::vector<std::pair<size_t, std::vector<se::InlayHint>>> ToCoreInlayEntries(
-    const CodeEditorLineEntries<CodeEditorInlayHint>& hints
+    const EditorLineEntries<EditorInlayHint>& hints
 ) {
   std::vector<std::pair<size_t, std::vector<se::InlayHint>>> entries;
   for (const auto& [line, items] : hints) {
     std::vector<se::InlayHint> converted;
-    for (const CodeEditorInlayHint& hint : items) {
+    for (const EditorInlayHint& hint : items) {
       converted.push_back({se::InlayType::TEXT, hint.column, 0, se::U8String(hint.text)});
     }
     if (!converted.empty()) {
@@ -238,12 +238,12 @@ std::vector<std::pair<size_t, std::vector<se::InlayHint>>> ToCoreInlayEntries(
 }
 
 std::vector<std::pair<size_t, std::vector<se::Diagnostic>>> ToCoreDiagnosticEntries(
-    const CodeEditorLineEntries<CodeEditorDiagnostic>& diagnostics
+    const EditorLineEntries<EditorDiagnostic>& diagnostics
 ) {
   std::vector<std::pair<size_t, std::vector<se::Diagnostic>>> entries;
   for (const auto& [line, items] : diagnostics) {
     std::vector<se::Diagnostic> converted;
-    for (const CodeEditorDiagnostic& diagnostic : items) {
+    for (const EditorDiagnostic& diagnostic : items) {
       converted.push_back(
           {diagnostic.column, diagnostic.length, static_cast<se::DiagnosticSeverity>(diagnostic.severity)}
       );
@@ -256,12 +256,12 @@ std::vector<std::pair<size_t, std::vector<se::Diagnostic>>> ToCoreDiagnosticEntr
 }
 
 std::vector<std::pair<size_t, std::vector<se::CodeLensItem>>> ToCoreCodeLensEntries(
-    const CodeEditorLineEntries<CodeEditorCodeLens>& lenses
+    const EditorLineEntries<EditorCodeLens>& lenses
 ) {
   std::vector<std::pair<size_t, std::vector<se::CodeLensItem>>> entries;
   for (const auto& [line, items] : lenses) {
     std::vector<se::CodeLensItem> converted;
-    for (const CodeEditorCodeLens& lens : items) {
+    for (const EditorCodeLens& lens : items) {
       converted.push_back({static_cast<int32_t>(lens.column), lens.command_id, se::U8String(lens.title)});
     }
     if (!converted.empty()) {
@@ -272,12 +272,12 @@ std::vector<std::pair<size_t, std::vector<se::CodeLensItem>>> ToCoreCodeLensEntr
 }
 
 std::vector<std::pair<size_t, std::vector<se::LinkSpan>>> ToCoreLinkEntries(
-    const CodeEditorLineEntries<CodeEditorLink>& links
+    const EditorLineEntries<EditorLink>& links
 ) {
   std::vector<std::pair<size_t, std::vector<se::LinkSpan>>> entries;
   for (const auto& [line, items] : links) {
     std::vector<se::LinkSpan> converted;
-    for (const CodeEditorLink& link : items) {
+    for (const EditorLink& link : items) {
       converted.push_back({link.column, link.length, se::U8String(link.url)});
     }
     if (!converted.empty()) {
@@ -288,12 +288,12 @@ std::vector<std::pair<size_t, std::vector<se::LinkSpan>>> ToCoreLinkEntries(
 }
 
 std::vector<std::pair<size_t, std::vector<se::GutterIcon>>> ToCoreGutterIconEntries(
-    const CodeEditorLineEntries<CodeEditorGutterIcon>& icons
+    const EditorLineEntries<EditorGutterIcon>& icons
 ) {
   std::vector<std::pair<size_t, std::vector<se::GutterIcon>>> entries;
   for (const auto& [line, items] : icons) {
     std::vector<se::GutterIcon> converted;
-    for (const CodeEditorGutterIcon& icon : items) {
+    for (const EditorGutterIcon& icon : items) {
       converted.push_back({icon.icon_id});
     }
     if (!converted.empty()) {
@@ -304,12 +304,12 @@ std::vector<std::pair<size_t, std::vector<se::GutterIcon>>> ToCoreGutterIconEntr
 }
 
 std::vector<std::pair<size_t, std::vector<se::DocumentHighlight>>> ToCoreDocumentHighlightEntries(
-    const CodeEditorLineEntries<CodeEditorStyleSpan>& highlights
+    const EditorLineEntries<EditorStyleSpan>& highlights
 ) {
   std::vector<std::pair<size_t, std::vector<se::DocumentHighlight>>> entries;
   for (const auto& [line, items] : highlights) {
     std::vector<se::DocumentHighlight> converted;
-    for (const CodeEditorStyleSpan& span : items) {
+    for (const EditorStyleSpan& span : items) {
       if (span.length == 0) {
         continue;
       }
@@ -331,35 +331,35 @@ int32_t ToArgb(const Color& color) {
   return (channel(color.alpha) << 24) | (channel(color.red) << 16) | (channel(color.green) << 8) | channel(color.blue);
 }
 
-// Registers the syntax token palette so CodeEditorStyle ids resolve to the
+// Registers the syntax token palette so EditorStyle ids resolve to the
 // theme's colors; safe to call again on theme changes (registerTextStyle
 // replaces the previous style).
-void RegisterSyntaxStyles(se::EditorCore& core, const CodeEditorTheme& theme) {
+void RegisterSyntaxStyles(se::EditorCore& core, const EditorTheme& theme) {
   const auto style = [](const Color& color) {
     return se::TextStyle{ToArgb(color), 0, se::FONT_STYLE_NORMAL};
   };
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Keyword), style(theme.syntax_keyword));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Type), style(theme.syntax_type));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Class), style(theme.syntax_class));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Function), style(theme.syntax_function));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Variable), style(theme.syntax_variable));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::String), style(theme.syntax_string));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Number), style(theme.syntax_number));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Comment), style(theme.syntax_comment));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Preprocessor), style(theme.syntax_preprocessor));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Builtin), style(theme.syntax_builtin));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Punctuation), style(theme.syntax_punctuation));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Annotation), style(theme.syntax_annotation));
-  core.registerTextStyle(static_cast<uint32_t>(CodeEditorStyle::Url), style(theme.syntax_url));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Keyword), style(theme.syntax_keyword));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Type), style(theme.syntax_type));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Class), style(theme.syntax_class));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Function), style(theme.syntax_function));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Variable), style(theme.syntax_variable));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::String), style(theme.syntax_string));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Number), style(theme.syntax_number));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Comment), style(theme.syntax_comment));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Preprocessor), style(theme.syntax_preprocessor));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Builtin), style(theme.syntax_builtin));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Punctuation), style(theme.syntax_punctuation));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Annotation), style(theme.syntax_annotation));
+  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Url), style(theme.syntax_url));
   for (std::size_t index = 0; index < theme.syntax_rainbow.size(); ++index) {
     core.registerTextStyle(
-        static_cast<uint32_t>(CodeEditorStyle::RainbowFirst) + index, style(theme.syntax_rainbow[index])
+        static_cast<uint32_t>(EditorStyle::RainbowFirst) + index, style(theme.syntax_rainbow[index])
     );
   }
 }
 
-void MergeDecorations(CodeEditorDecorationResult& target, CodeEditorDecorationResult part) {
-  const auto append_entries = []<typename T>(CodeEditorLineEntries<T>& dst, CodeEditorLineEntries<T>&& src) {
+void MergeDecorations(EditorDecorationResult& target, EditorDecorationResult part) {
+  const auto append_entries = []<typename T>(EditorLineEntries<T>& dst, EditorLineEntries<T>&& src) {
     dst.insert(dst.end(), std::make_move_iterator(src.begin()), std::make_move_iterator(src.end()));
   };
   append_entries(target.syntax_spans, std::move(part.syntax_spans));
@@ -385,7 +385,7 @@ void MergeDecorations(CodeEditorDecorationResult& target, CodeEditorDecorationRe
 }
 
 void ApplyDecorations(
-    se::EditorCore& core, const CodeEditorDecorationResult& decorations, bool settled
+    se::EditorCore& core, const EditorDecorationResult& decorations, bool settled
 ) {
   // Unsettled refreshes (fast scroll, viewport resize) publish only the light
   // slice — syntax spans and indent guides — and deliberately leave every
@@ -398,7 +398,7 @@ void ApplyDecorations(
   if (!settled) {
     std::vector<se::IndentGuide> guides;
     guides.reserve(decorations.indent_guides.size());
-    for (const CodeEditorIndentGuide& guide : decorations.indent_guides) {
+    for (const EditorIndentGuide& guide : decorations.indent_guides) {
       if (guide.end_line < guide.start_line) {
         continue;
       }
@@ -423,7 +423,7 @@ void ApplyDecorations(
   core.setBatchLineGutterIcons(ToCoreGutterIconEntries(decorations.gutter_icons));
   std::vector<se::IndentGuide> guides;
   guides.reserve(decorations.indent_guides.size());
-  for (const CodeEditorIndentGuide& guide : decorations.indent_guides) {
+  for (const EditorIndentGuide& guide : decorations.indent_guides) {
     if (guide.end_line < guide.start_line) {
       continue;
     }
@@ -438,7 +438,7 @@ void ApplyDecorations(
   if (!decorations.fold_regions.empty()) {
     std::vector<se::FoldRegion> folds;
     folds.reserve(decorations.fold_regions.size());
-    for (const CodeEditorFoldRegion& fold : decorations.fold_regions) {
+    for (const EditorFoldRegion& fold : decorations.fold_regions) {
       if (fold.end_line <= fold.start_line) {
         continue;
       }
@@ -649,7 +649,7 @@ se::GestureEvent ToWheelGestureEvent(const ScrollInputEvent& event) {
 // ---- Theme defaults --------------------------------------------------------
 
 // Auto-closing bracket pairs enabled by default (reference platform ships
-// with these); hosts may override via CodeEditorOptions.auto_closing_pairs.
+// with these); hosts may override via EditorOptions.auto_closing_pairs.
 const std::vector<std::pair<char32_t, char32_t>> kDefaultAutoClosingPairs = {
     {U'(', U')'},
     {U'{', U'}'},
@@ -738,7 +738,7 @@ std::vector<se::BracketPair> MakeBracketPairs(const std::vector<std::pair<char32
   return result;
 }
 
-se::EditorRenderColors MakeRenderColors(const CodeEditorTheme& theme) {
+se::EditorRenderColors MakeRenderColors(const EditorTheme& theme) {
   se::EditorRenderColors colors;
   colors.text_foreground = ToArgb(theme.text_foreground);
   colors.link_foreground = ToArgb(theme.link_color);
@@ -752,7 +752,7 @@ se::EditorRenderColors MakeRenderColors(const CodeEditorTheme& theme) {
   return colors;
 }
 
-se::EditorRangeEffectStyles MakeRangeEffectStyles(const CodeEditorTheme& theme) {
+se::EditorRangeEffectStyles MakeRangeEffectStyles(const EditorTheme& theme) {
   se::EditorRangeEffectStyles styles;
   styles.selection.background_color = ToArgb(theme.selection_background);
   styles.search_match.background_color = ToArgb(theme.search_match_background);
@@ -777,9 +777,9 @@ se::EditorRangeEffectStyles MakeRangeEffectStyles(const CodeEditorTheme& theme) 
 
 
 // ---- Text input bridge (HuxerUI IME session -> SweetEditor core) -----------
-class CodeEditorTextInputClient final : public TextInputClient, public TextSelectionClient {
+class EditorTextInputClient final : public TextInputClient, public TextSelectionClient {
 public:
-  CodeEditorTextInputClient(
+  EditorTextInputClient(
       std::shared_ptr<se::EditorCore> core,
       std::shared_ptr<se::Document> document,
       std::function<void(const std::vector<se::TextChange>&)> on_content_changed,
@@ -788,7 +788,7 @@ public:
       std::function<void()> on_edit,
       std::function<bool()> on_tab,
       bool read_only,
-      CodeEditorTheme theme
+      EditorTheme theme
   )
       : core_(std::move(core)),
         theme_(std::move(theme)),
@@ -865,9 +865,9 @@ public:
   // Live pipeline counters surfaced through the component telemetry hint.
   uint64_t telemetry_apply_calls = 0;
   uint64_t telemetry_notify_calls = 0;
-  CodeEditorTheme theme_;
+  EditorTheme theme_;
 
-  void SetTheme(const CodeEditorTheme& theme) { theme_ = theme; }
+  void SetTheme(const EditorTheme& theme) { theme_ = theme; }
 
   void SetReadOnly(bool read_only) { read_only_ = read_only; }
 
@@ -1266,10 +1266,10 @@ class EditorHolder {
 public:
   EditorHolder(
       TextMeasurer& measurer,
-      const CodeEditorOptions& options,
+      const EditorOptions& options,
       std::function<void()> invalidate,
       huxerui::EventEmitter events,
-      CodeEditorController controller
+      EditorController controller
   )
       : font_size_(options.font_size),
         invalidate_(std::move(invalidate)),
@@ -1278,7 +1278,7 @@ public:
         completion_provider_(options.completion_provider),
         completion_trigger_characters_(options.completion_trigger_characters),
         font_family_(options.font_family),
-        theme_(options.theme.value_or(CodeEditorTheme::Default())) {
+        theme_(options.theme.value_or(EditorTheme::Default())) {
     const Font content_font = ContentFont();
     font_metrics_ = measurer.Metrics(content_font);
     char_width_ = measurer.MeasureRun("0", TextStyle{content_font, Color::Black(), TextDecoration::None})
@@ -1294,7 +1294,7 @@ public:
     measurer_ = &measurer;
     text_measurer_ = std::make_shared<HuxeruiTextMeasurer>(measurer, font_size_, font_family_);
     core_ = std::make_shared<se::EditorCore>(text_measurer_, core_options);
-    theme_ = options.theme.value_or(CodeEditorTheme::Default());
+    theme_ = options.theme.value_or(EditorTheme::Default());
     core_->setEditorRenderColors(MakeRenderColors(theme_));
     core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(theme_));
     core_->setLineSpacing(options.line_spacing_add, options.line_spacing_mult);
@@ -1364,7 +1364,7 @@ public:
     // lights the first viewport once providers are attached.
     RefreshDecorations(true);
 
-    text_input_client_ = std::make_shared<CodeEditorTextInputClient>(
+    text_input_client_ = std::make_shared<EditorTextInputClient>(
         core_, document_,
         [this](const std::vector<se::TextChange>& changes) {
           RecordPendingChanges(changes);
@@ -1747,18 +1747,18 @@ public:
           model_dirty_ = true;
           return true;
         case se::HitTargetType::LINK:
-          events_.Emit<CodeEditorEvents::LinkClicked>(LinkTextAt(target.line, target.column));
+          events_.Emit<EditorEvents::LinkClicked>(LinkTextAt(target.line, target.column));
           return true;
         case se::HitTargetType::CODELENS:
-          events_.Emit<CodeEditorEvents::CodeLensClicked>(target.icon_id);
+          events_.Emit<EditorEvents::CodeLensClicked>(target.icon_id);
           return true;
         case se::HitTargetType::GUTTER_ICON:
-          events_.Emit<CodeEditorEvents::GutterIconClicked>(static_cast<uint32_t>(target.line), target.icon_id);
+          events_.Emit<EditorEvents::GutterIconClicked>(static_cast<uint32_t>(target.line), target.icon_id);
           return true;
         case se::HitTargetType::INLAY_HINT_TEXT:
         case se::HitTargetType::INLAY_HINT_ICON:
         case se::HitTargetType::INLAY_HINT_COLOR:
-          events_.Emit<CodeEditorEvents::InlayClicked>(
+          events_.Emit<EditorEvents::InlayClicked>(
               static_cast<uint32_t>(target.line), static_cast<uint32_t>(target.column)
           );
           return true;
@@ -1914,7 +1914,7 @@ public:
     }
     if (result.scroll_changed) {
       const se::ViewState view = core_->getViewState();
-      events_.Emit<CodeEditorEvents::ScrollChanged>(view.scroll_x, view.scroll_y);
+      events_.Emit<EditorEvents::ScrollChanged>(view.scroll_x, view.scroll_y);
     }
     if (result.needs_redraw) {
       model_dirty_ = true;
@@ -1940,7 +1940,7 @@ public:
     }
   }
 
-  std::shared_ptr<CodeEditorTextInputClient> TextInputClient() const {
+  std::shared_ptr<EditorTextInputClient> TextInputClient() const {
     return text_input_client_;
   }
 
@@ -1972,7 +1972,7 @@ public:
     return true;
   }
 
-  [[nodiscard]] const CodeEditorTheme& Theme() const noexcept {
+  [[nodiscard]] const EditorTheme& Theme() const noexcept {
     return theme_;
   }
 
@@ -2013,7 +2013,7 @@ public:
 
   // Re-applies editing and presentation options that map directly to core
   // setters, so declarative changes take effect without a holder rebuild.
-  void SyncEditingOptions(const CodeEditorOptions& options) {
+  void SyncEditingOptions(const EditorOptions& options) {
     core_->setLineSpacing(options.line_spacing_add, options.line_spacing_mult);
     core_->setReadOnly(options.read_only);
     if (text_input_client_) {
@@ -2036,7 +2036,7 @@ public:
   }
 
   // Swaps holder-held hooks and provider lists; cheap and stateless.
-  void SyncRuntimeOptions(const CodeEditorOptions& options) {
+  void SyncRuntimeOptions(const EditorOptions& options) {
     completion_provider_ = options.completion_provider;
     completion_trigger_characters_ = options.completion_trigger_characters;
     newline_action_ = options.newline_action;
@@ -2045,7 +2045,7 @@ public:
   }
 
   // Applies a resolved theme change without resetting retained state.
-  void ApplyTheme(CodeEditorTheme theme) {
+  void ApplyTheme(EditorTheme theme) {
     if (theme == theme_) {
       return;
     }
@@ -2069,7 +2069,7 @@ public:
   // Buffers incremental edits so providers receive them on the next refresh.
   void RecordPendingChanges(const std::vector<se::TextChange>& changes) {
     for (const se::TextChange& change : changes) {
-      CodeEditorTextChange pending;
+      EditorTextChange pending;
       pending.start_line = static_cast<uint32_t>(change.range.start.line);
       pending.start_column = static_cast<uint32_t>(change.range.start.column);
       pending.end_line = static_cast<uint32_t>(change.range.end.line);
@@ -2091,7 +2091,7 @@ public:
     if (needs_document_text) {
       synced_document_text_ = document_->getU8Text();
     }
-    CodeEditorDecorationContext context;
+    EditorDecorationContext context;
     const se::IntRange visible = core_->getVisibleLineRange();
     context.visible_start_line =
         visible.isEmpty() ? 0U : static_cast<uint32_t>(std::max(0, visible.start));
@@ -2105,8 +2105,8 @@ public:
     context.text_changes = std::move(pending_changes_);
     pending_changes_.clear();
 
-    CodeEditorDecorationResult merged;
-    for (const std::shared_ptr<CodeEditorDecorationProvider>& provider : providers_) {
+    EditorDecorationResult merged;
+    for (const std::shared_ptr<EditorDecorationProvider>& provider : providers_) {
       if (!provider) {
         continue;
       }
@@ -2158,9 +2158,9 @@ public:
 
   void FireCaretEvents() {
     const se::TextPosition cursor = core_->getCursorPosition();
-    events_.Emit<CodeEditorEvents::CursorChanged>(static_cast<uint32_t>(cursor.line), static_cast<uint32_t>(cursor.column));
+    events_.Emit<EditorEvents::CursorChanged>(static_cast<uint32_t>(cursor.line), static_cast<uint32_t>(cursor.column));
     const se::TextRange selection = core_->getSelection();
-    events_.Emit<CodeEditorEvents::SelectionChanged>(
+    events_.Emit<EditorEvents::SelectionChanged>(
         static_cast<uint32_t>(selection.start.line),
         static_cast<uint32_t>(selection.start.column),
         static_cast<uint32_t>(selection.end.line),
@@ -2171,13 +2171,13 @@ public:
   void FirePointerEvents(const se::EditorActionResult& result) {
     switch (result.gesture_type) {
     case se::GestureType::LONG_PRESS:
-      events_.Emit<CodeEditorEvents::LongPressed>(
+      events_.Emit<EditorEvents::LongPressed>(
           static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
       );
       ShowContextMenu(result.tap_point);
       break;
     case se::GestureType::DOUBLE_TAP:
-      events_.Emit<CodeEditorEvents::DoubleTapped>(
+      events_.Emit<EditorEvents::DoubleTapped>(
           static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
       );
       ShowContextMenu(result.tap_point);
@@ -2188,11 +2188,11 @@ public:
   }
 
   void FireFoldToggle(size_t line) {
-    events_.Emit<CodeEditorEvents::FoldToggled>(line);
+    events_.Emit<EditorEvents::FoldToggled>(line);
   }
 
   void FireTextChanged() {
-    events_.Emit<CodeEditorEvents::TextChanged>();
+    events_.Emit<EditorEvents::TextChanged>();
   }
 
   // Applies phantom (ghost) text for the visible lines (reference phantom text
@@ -2207,7 +2207,7 @@ public:
       if (static_cast<int32_t>(line) < start_line || static_cast<int32_t>(line) > end_line) {
         continue;
       }
-      for (const CodeEditorPhantomText& phantom : items) {
+      for (const EditorPhantomText& phantom : items) {
         if (!phantom.text.empty()) {
           next[line] = phantom.text;
         }
@@ -2285,7 +2285,7 @@ public:
       if (line != static_cast<uint32_t>(cursor.line)) {
         continue;
       }
-      for (const CodeEditorPhantomText& phantom : items) {
+      for (const EditorPhantomText& phantom : items) {
         if (!phantom.text.empty()) {
           text = phantom.text;
         }
@@ -3149,13 +3149,13 @@ private:
   std::shared_ptr<se::Document> document_;
   std::shared_ptr<HuxeruiTextMeasurer> text_measurer_;
   huxerui::TextMeasurer* measurer_ = nullptr;
-  CodeEditorTheme theme_;
+  EditorTheme theme_;
   std::string font_family_;
-  std::vector<std::shared_ptr<CodeEditorDecorationProvider>> providers_;
-  std::vector<CodeEditorTextChange> pending_changes_;
+  std::vector<std::shared_ptr<EditorDecorationProvider>> providers_;
+  std::vector<EditorTextChange> pending_changes_;
   std::string synced_document_text_;
-  CodeEditorLineEntries<CodeEditorPhantomText> cached_phantom_entries_;
-  std::shared_ptr<CodeEditorTextInputClient> text_input_client_;
+  EditorLineEntries<EditorPhantomText> cached_phantom_entries_;
+  std::shared_ptr<EditorTextInputClient> text_input_client_;
   std::function<void()> invalidate_;
   se::Size viewport_;
   se::IntRange last_visible_range_{0, -1};
@@ -3169,7 +3169,7 @@ private:
   FontMetrics completion_badge_metrics_;
   float completion_badge_char_advance_{0.0F};
 
-  CodeEditorController controller_;
+  EditorController controller_;
   huxerui::EventEmitter events_;
   std::function<std::string(uint32_t, uint32_t)> newline_action_;
   bool accept_phantom_on_tab_{true};
@@ -3245,7 +3245,7 @@ struct SearchBridge {
 
 namespace detail {
 
-struct CodeEditorControllerState {
+struct EditorControllerState {
   std::function<void(const std::string&, const std::string&)> load_document;
   std::function<std::string()> get_text;
   std::function<bool(uint32_t, uint32_t)> set_cursor;
@@ -3258,23 +3258,23 @@ struct CodeEditorControllerState {
   std::function<void()> toggle_search;
 };
 
-struct CodeEditorControllerAccess {
-  static const std::shared_ptr<CodeEditorControllerState>& State(const CodeEditorController& controller) noexcept {
+struct EditorControllerAccess {
+  static const std::shared_ptr<EditorControllerState>& State(const EditorController& controller) noexcept {
     return controller.state_;
   }
 };
 
 }  // namespace detail
 
-CodeEditorController::CodeEditorController()
-    : state_(std::make_shared<detail::CodeEditorControllerState>()) {}
+EditorController::EditorController()
+    : state_(std::make_shared<detail::EditorControllerState>()) {}
 
-bool CodeEditorController::IsConnected() const noexcept {
-  return detail::CodeEditorControllerAccess::State(*this)->load_document != nullptr;
+bool EditorController::IsConnected() const noexcept {
+  return detail::EditorControllerAccess::State(*this)->load_document != nullptr;
 }
 
-bool CodeEditorController::LoadDocument(const std::string& document_key, const std::string& text) const {
-  const auto& state = detail::CodeEditorControllerAccess::State(*this);
+bool EditorController::LoadDocument(const std::string& document_key, const std::string& text) const {
+  const auto& state = detail::EditorControllerAccess::State(*this);
   if (!state->load_document) {
     return false;
   }
@@ -3282,18 +3282,18 @@ bool CodeEditorController::LoadDocument(const std::string& document_key, const s
   return true;
 }
 
-std::string CodeEditorController::Text() const {
-  const auto& state = detail::CodeEditorControllerAccess::State(*this);
+std::string EditorController::Text() const {
+  const auto& state = detail::EditorControllerAccess::State(*this);
   return state->get_text ? state->get_text() : std::string();
 }
 
-bool CodeEditorController::SetCursor(std::uint32_t line, std::uint32_t column) const {
-  const auto& state = detail::CodeEditorControllerAccess::State(*this);
+bool EditorController::SetCursor(std::uint32_t line, std::uint32_t column) const {
+  const auto& state = detail::EditorControllerAccess::State(*this);
   return state->set_cursor ? state->set_cursor(line, column) : false;
 }
 
-bool CodeEditorController::RunSearch(const std::string& pattern) const {
-  const auto& state = detail::CodeEditorControllerAccess::State(*this);
+bool EditorController::RunSearch(const std::string& pattern) const {
+  const auto& state = detail::EditorControllerAccess::State(*this);
   if (!state->run_search) {
     return false;
   }
@@ -3301,8 +3301,8 @@ bool CodeEditorController::RunSearch(const std::string& pattern) const {
   return true;
 }
 
-bool CodeEditorController::FindNext() const {
-  const auto& state = detail::CodeEditorControllerAccess::State(*this);
+bool EditorController::FindNext() const {
+  const auto& state = detail::EditorControllerAccess::State(*this);
   if (!state->find_next) {
     return false;
   }
@@ -3310,8 +3310,8 @@ bool CodeEditorController::FindNext() const {
   return true;
 }
 
-bool CodeEditorController::FindPrevious() const {
-  const auto& state = detail::CodeEditorControllerAccess::State(*this);
+bool EditorController::FindPrevious() const {
+  const auto& state = detail::EditorControllerAccess::State(*this);
   if (!state->find_previous) {
     return false;
   }
@@ -3319,8 +3319,8 @@ bool CodeEditorController::FindPrevious() const {
   return true;
 }
 
-bool CodeEditorController::ReplaceCurrent(const std::string& replacement) const {
-  const auto& state = detail::CodeEditorControllerAccess::State(*this);
+bool EditorController::ReplaceCurrent(const std::string& replacement) const {
+  const auto& state = detail::EditorControllerAccess::State(*this);
   if (!state->replace_current) {
     return false;
   }
@@ -3328,8 +3328,8 @@ bool CodeEditorController::ReplaceCurrent(const std::string& replacement) const 
   return true;
 }
 
-bool CodeEditorController::ReplaceAll(const std::string& replacement) const {
-  const auto& state = detail::CodeEditorControllerAccess::State(*this);
+bool EditorController::ReplaceAll(const std::string& replacement) const {
+  const auto& state = detail::EditorControllerAccess::State(*this);
   if (!state->replace_all) {
     return false;
   }
@@ -3337,8 +3337,8 @@ bool CodeEditorController::ReplaceAll(const std::string& replacement) const {
   return true;
 }
 
-bool CodeEditorController::ClearSearch() const {
-  const auto& state = detail::CodeEditorControllerAccess::State(*this);
+bool EditorController::ClearSearch() const {
+  const auto& state = detail::EditorControllerAccess::State(*this);
   if (!state->clear_search) {
     return false;
   }
@@ -3346,8 +3346,8 @@ bool CodeEditorController::ClearSearch() const {
   return true;
 }
 
-bool CodeEditorController::ToggleSearch() const {
-  const auto& state = detail::CodeEditorControllerAccess::State(*this);
+bool EditorController::ToggleSearch() const {
+  const auto& state = detail::EditorControllerAccess::State(*this);
   if (!state->toggle_search) {
     return false;
   }
@@ -3355,14 +3355,14 @@ bool CodeEditorController::ToggleSearch() const {
   return true;
 }
 
-struct CodeEditorBehavior {
+struct EditorBehavior {
   huxerui::TextMeasurer* measurer = nullptr;
-  CodeEditorOptions options;
-  CodeEditorController controller;
+  EditorOptions options;
+  EditorController controller;
   huxerui::EventEmitter events;
 
   struct Extension final : NodeExtension {
-    Extension(MountedNode& node, const CodeEditorBehavior& behavior)
+    Extension(MountedNode& node, const EditorBehavior& behavior)
         : measurer_(behavior.measurer),
           options_(behavior.options),
           events_(behavior.events),
@@ -3379,8 +3379,8 @@ struct CodeEditorBehavior {
       static_cast<void>(node);
     }
 
-    void BindController(CodeEditorController controller) {
-      auto& state = detail::CodeEditorControllerAccess::State(controller);
+    void BindController(EditorController controller) {
+      auto& state = detail::EditorControllerAccess::State(controller);
       state->load_document = [this](const std::string& key, const std::string& text) {
         document_key_ = key;
         options_.initial_text = text;
@@ -3399,7 +3399,7 @@ struct CodeEditorBehavior {
       state->clear_search = [this] { holder_->CloseSearch(); };
     }
 
-    void Update(MountedNode& node, const CodeEditorBehavior& behavior) {
+    void Update(MountedNode& node, const EditorBehavior& behavior) {
       static_cast<void>(node);
       measurer_ = behavior.measurer;
       options_ = behavior.options;
@@ -3515,19 +3515,19 @@ struct CodeEditorBehavior {
     }
 
     huxerui::TextMeasurer* measurer_ = nullptr;
-    CodeEditorOptions options_;
+    EditorOptions options_;
     huxerui::EventEmitter events_;
-    CodeEditorController controller_;
+    EditorController controller_;
     std::shared_ptr<EditorHolder> holder_;
     std::string document_key_;
   };
 };
 
-View CodeEditorSearchBar(
+View EditorSearchBar(
     State<std::string> search_text,
     State<std::string> replace_text,
     State<bool> visible,
-    CodeEditorController controller
+    EditorController controller
 ) {
   return Column {
     Row {
@@ -3562,41 +3562,41 @@ View CodeEditorSearchBar(
 }
 
 [[huxerui::composable]]
-View CodeEditor(CodeEditorOptions options, CodeEditorController controller) {
+View CodeEditor(EditorOptions options, EditorController controller) {
   TextMeasurer& measurer = UseTextMeasurer();
   // An empty document key keeps one default document so callers never have to
   // invent a storage key. The theme resolves from the ambient HuxerUI theme
   // unless explicitly overridden, so the editor follows Theme changes live.
-  CodeEditorOptions effective_options = options;
+  EditorOptions effective_options = options;
   if (effective_options.document_key.empty()) {
     effective_options.document_key = "codeeditor:default";
   }
-  // Priority: explicit options.theme, then a CodeEditorTheme placed in the
-  // environment through Theme{ThemeDefinition{}.Set(CodeEditorTheme{...})},
+  // Priority: explicit options.theme, then a EditorTheme placed in the
+  // environment through Theme{ThemeDefinition{}.Set(EditorTheme{...})},
   // then the ambient ThemeSpec.
   if (!effective_options.theme) {
-    const CodeEditorTheme& environment_style = UseEnvironment<CodeEditorTheme>();
-    if (!(environment_style == CodeEditorTheme::Default())) {
+    const EditorTheme& environment_style = UseEnvironment<EditorTheme>();
+    if (!(environment_style == EditorTheme::Default())) {
       effective_options.theme = environment_style;
     }
   }
-  effective_options.theme = effective_options.theme.value_or(CodeEditorTheme::FromThemeSpec(UseTheme()));
+  effective_options.theme = effective_options.theme.value_or(EditorTheme::FromThemeSpec(UseTheme()));
 
   // Search is composed outside the retained editor node; the editor itself only owns editing semantics.
   auto search_visible = UseState(false);
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
   const EventEmitter events = UseEvents();
-  detail::CodeEditorControllerAccess::State(controller)->toggle_search =
+  detail::EditorControllerAccess::State(controller)->toggle_search =
       [search_visible] { search_visible = !search_visible.Get(); };
   View editor = Canvas([](PaintContext&, Size) {}).With(
-      CodeEditorBehavior{&measurer, std::move(effective_options), controller, events}, Focusable{}
+      EditorBehavior{&measurer, std::move(effective_options), controller, events}, Focusable{}
   );
   if (!search_visible.Get()) {
     return editor;
   }
   return Column {
-    CodeEditorSearchBar(search_text, replace_text, search_visible, controller),
+    EditorSearchBar(search_text, replace_text, search_visible, controller),
     std::move(editor).With(Grow{}),
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
 }

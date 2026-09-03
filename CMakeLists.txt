@@ -134,4 +134,4 @@ target_include_directories(codeeditor PUBLIC
         "$<INSTALL_INTERFACE:include>"
 )
 
-add_library(CodeEditor::CodeEditor ALIAS codeeditor)
+add_library(HuxerUI::CodeEditor ALIAS codeeditor)

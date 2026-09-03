@@ -19,25 +19,25 @@ namespace ce = huxerui::codeeditor;
 namespace sl = sweetline;
 
 // Style names registered on the SweetLine engine; the ids match the
-// CodeEditorStyle palette the editor registers on its core.
+// EditorStyle palette the editor registers on its core.
 void RegisterEngineStyles(const sl::SharedPtr<sl::HighlightEngine>& engine) {
   const auto name = [&engine](const char* key, int32_t id) { engine->registerStyleName(key, static_cast<uint32_t>(id)); };
-  name("keyword", static_cast<int32_t>(ce::CodeEditorStyle::Keyword));
-  name("type", static_cast<int32_t>(ce::CodeEditorStyle::Type));
-  name("class", static_cast<int32_t>(ce::CodeEditorStyle::Class));
-  name("method", static_cast<int32_t>(ce::CodeEditorStyle::Function));
-  name("function", static_cast<int32_t>(ce::CodeEditorStyle::Function));
-  name("variable", static_cast<int32_t>(ce::CodeEditorStyle::Variable));
-  name("field", static_cast<int32_t>(ce::CodeEditorStyle::Variable));
-  name("string", static_cast<int32_t>(ce::CodeEditorStyle::String));
-  name("number", static_cast<int32_t>(ce::CodeEditorStyle::Number));
-  name("comment", static_cast<int32_t>(ce::CodeEditorStyle::Comment));
-  name("preprocessor", static_cast<int32_t>(ce::CodeEditorStyle::Preprocessor));
-  name("macro", static_cast<int32_t>(ce::CodeEditorStyle::Preprocessor));
-  name("builtin", static_cast<int32_t>(ce::CodeEditorStyle::Builtin));
-  name("punctuation", static_cast<int32_t>(ce::CodeEditorStyle::Punctuation));
-  name("annotation", static_cast<int32_t>(ce::CodeEditorStyle::Annotation));
-  name("url", static_cast<int32_t>(ce::CodeEditorStyle::Url));
+  name("keyword", static_cast<int32_t>(ce::EditorStyle::Keyword));
+  name("type", static_cast<int32_t>(ce::EditorStyle::Type));
+  name("class", static_cast<int32_t>(ce::EditorStyle::Class));
+  name("method", static_cast<int32_t>(ce::EditorStyle::Function));
+  name("function", static_cast<int32_t>(ce::EditorStyle::Function));
+  name("variable", static_cast<int32_t>(ce::EditorStyle::Variable));
+  name("field", static_cast<int32_t>(ce::EditorStyle::Variable));
+  name("string", static_cast<int32_t>(ce::EditorStyle::String));
+  name("number", static_cast<int32_t>(ce::EditorStyle::Number));
+  name("comment", static_cast<int32_t>(ce::EditorStyle::Comment));
+  name("preprocessor", static_cast<int32_t>(ce::EditorStyle::Preprocessor));
+  name("macro", static_cast<int32_t>(ce::EditorStyle::Preprocessor));
+  name("builtin", static_cast<int32_t>(ce::EditorStyle::Builtin));
+  name("punctuation", static_cast<int32_t>(ce::EditorStyle::Punctuation));
+  name("annotation", static_cast<int32_t>(ce::EditorStyle::Annotation));
+  name("url", static_cast<int32_t>(ce::EditorStyle::Url));
 }
 
 size_t FindIgnoreCase(std::string_view text, const char* needle) {
@@ -154,10 +154,10 @@ void SweetLineDecorationProvider::RebuildDocument(const std::string& text) {
   fold_regions_published_ = false;
 }
 
-ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
-    const ce::CodeEditorDecorationContext& context
+ce::EditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
+    const ce::EditorDecorationContext& context
 ) {
-  ce::CodeEditorDecorationResult result;
+  ce::EditorDecorationResult result;
   if (analyzer_ == nullptr || document_ == nullptr) {
     return result;
   }
@@ -179,7 +179,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
   const char* analysis_path = "full";
   sl::SharedPtr<sl::DocumentHighlightSlice> incremental_slice;
   if (analyzer_ != nullptr && !context.text_changes.empty()) {
-    for (const ce::CodeEditorTextChange& change : context.text_changes) {
+    for (const ce::EditorTextChange& change : context.text_changes) {
       incremental_slice = analyzer_->analyzeIncrementalInLineRange(
           sl::TextRange{
               sl::TextPosition{change.start_line, change.start_column},
@@ -211,7 +211,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
   if (slice) {
     size_t line = slice->start_line;
     for (const sl::LineHighlight& line_highlight : slice->lines) {
-      std::vector<ce::CodeEditorStyleSpan> spans;
+      std::vector<ce::EditorStyleSpan> spans;
       for (const sl::TokenSpan& token : line_highlight.spans) {
         if (token.style_id <= 0 || !IsSingleLine(token)) {
           continue;
@@ -221,7 +221,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
         if (length == 0) {
           continue;
         }
-        spans.push_back({column, length, static_cast<ce::CodeEditorStyle>(token.style_id)});
+        spans.push_back({column, length, static_cast<ce::EditorStyle>(token.style_id)});
       }
       if (!spans.empty()) {
         result.syntax_spans.emplace_back(static_cast<uint32_t>(line), std::move(spans));
@@ -292,7 +292,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
     if (const sl::SharedPtr<sl::BracketPairResult> brackets = analyzer_->analyzeBracketPairsInLineRange(viewport)) {
       size_t line = brackets->start_line;
       for (const sl::LineBracketPairs& line_pairs : brackets->lines) {
-        std::vector<ce::CodeEditorStyleSpan> rainbow;
+        std::vector<ce::EditorStyleSpan> rainbow;
         for (const sl::BracketToken& token : line_pairs.tokens) {
           if (!IsSingleLine(token)) {
             continue;
@@ -304,7 +304,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
           }
           const uint32_t depth = static_cast<uint32_t>(std::max(0, token.depth)) % 8;
           rainbow.push_back(
-              {column, length, static_cast<ce::CodeEditorStyle>(static_cast<int32_t>(ce::CodeEditorStyle::RainbowFirst) + depth)}
+              {column, length, static_cast<ce::EditorStyle>(static_cast<int32_t>(ce::EditorStyle::RainbowFirst) + depth)}
           );
         }
         if (!rainbow.empty()) {
@@ -341,7 +341,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
     if (!word.empty() && slice) {
       size_t line = slice->start_line;
       for (const sl::LineHighlight& line_highlight : slice->lines) {
-        std::vector<ce::CodeEditorStyleSpan> highlights;
+        std::vector<ce::EditorStyleSpan> highlights;
         for (const sl::TokenSpan& token : line_highlight.spans) {
           if (!IsSingleLine(token) || TokenLiteral(*document_, token) != word) {
             continue;
@@ -349,7 +349,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
           const uint32_t column = static_cast<uint32_t>(token.range.start.column);
           const uint32_t length = static_cast<uint32_t>(token.range.end.column - token.range.start.column);
           if (length > 0) {
-            highlights.push_back({column, length, ce::CodeEditorStyle::Variable});
+            highlights.push_back({column, length, ce::EditorStyle::Variable});
           }
         }
         if (!highlights.empty()) {
@@ -364,11 +364,11 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
     if (slice) {
       size_t line = slice->start_line;
       for (const sl::LineHighlight& line_highlight : slice->lines) {
-        std::vector<ce::CodeEditorInlayHint> inlays;
-        std::vector<ce::CodeEditorDiagnostic> diagnostics;
-        std::vector<ce::CodeEditorCodeLens> lenses;
-        std::vector<ce::CodeEditorLink> links;
-        std::vector<ce::CodeEditorGutterIcon> icons;
+        std::vector<ce::EditorInlayHint> inlays;
+        std::vector<ce::EditorDiagnostic> diagnostics;
+        std::vector<ce::EditorCodeLens> lenses;
+        std::vector<ce::EditorLink> links;
+        std::vector<ce::EditorGutterIcon> icons;
         for (const sl::TokenSpan& token : line_highlight.spans) {
           if (!IsSingleLine(token)) {
             continue;
@@ -377,7 +377,7 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
           const uint32_t length = static_cast<uint32_t>(token.range.end.column - token.range.start.column);
           const std::string_view literal = TokenLiteral(*document_, token);
 
-          if (token.style_id == static_cast<int32_t>(ce::CodeEditorStyle::Comment)) {
+          if (token.style_id == static_cast<int32_t>(ce::EditorStyle::Comment)) {
             const size_t fixme = FindIgnoreCase(literal, "FIXME");
             const size_t todo = FindIgnoreCase(literal, "TODO");
             if (fixme != std::string::npos) {
@@ -385,18 +385,18 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
             } else if (todo != std::string::npos) {
               diagnostics.push_back({column + static_cast<uint32_t>(todo), 4, 1, "TODO"});
             }
-          } else if (token.style_id == static_cast<int32_t>(ce::CodeEditorStyle::String)) {
+          } else if (token.style_id == static_cast<int32_t>(ce::EditorStyle::String)) {
             int32_t color = 0;
             if (ParseHexColor(literal, color)) {
               // COLOR inlays are not exposed through the decoration interface
               // yet; skip until the editor adds color-swatch support.
               static_cast<void>(color);
             }
-          } else if (token.style_id == static_cast<int32_t>(ce::CodeEditorStyle::Url)) {
+          } else if (token.style_id == static_cast<int32_t>(ce::EditorStyle::Url)) {
             if (!literal.empty()) {
               links.push_back({column, length, std::string(literal)});
             }
-          } else if (token.style_id == static_cast<int32_t>(ce::CodeEditorStyle::Class) && length > 0) {
+          } else if (token.style_id == static_cast<int32_t>(ce::EditorStyle::Class) && length > 0) {
             lenses.push_back({column, 1, "Run"});
             icons.push_back({1});
           }
@@ -425,13 +425,13 @@ ce::CodeEditorDecorationResult SweetLineDecorationProvider::ProvideDecorations(
   if (gutter_icons_) {
     const auto icons = gutter_icons_(context.visible_start_line, context.visible_end_line);
     for (const auto& [line, icon_id] : icons) {
-      result.gutter_icons.emplace_back(line, std::vector<ce::CodeEditorGutterIcon>{{icon_id}});
+      result.gutter_icons.emplace_back(line, std::vector<ce::EditorGutterIcon>{{icon_id}});
     }
   }
   if (phantom_) {
     const std::string text = phantom_(0);
     if (!text.empty()) {
-      result.phantom_texts.emplace_back(0U, std::vector<ce::CodeEditorPhantomText>{{0, text}});
+      result.phantom_texts.emplace_back(0U, std::vector<ce::EditorPhantomText>{{0, text}});
     }
   }
   CE_TRACE(

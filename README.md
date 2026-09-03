@@ -5,7 +5,7 @@ A cross-platform code editor for [HuxerUI](https://github.com/HuxerUI/HuxerUI), 
 completion, search, decorations, and events are exposed the HuxerUI-native way.
 
 - Header: `<huxerui/codeeditor.h>` — namespace `huxerui::codeeditor`
-- CMake target: `codeeditor` (alias `CodeEditor::CodeEditor`)
+- CMake target: `codeeditor` (alias `HuxerUI::CodeEditor`)
 - Platforms: Windows, macOS, Linux, Web, Android, iOS (following HuxerUI)
 
 ## Features
@@ -57,7 +57,7 @@ Consume the library from any HuxerUI application with `huxerui_use_library`:
 ```cmake
 # In your app's CMakeLists.txt, after huxerui_add_app(...):
 huxerui_use_library(your_app
-        TARGET CodeEditor::CodeEditor
+        TARGET HuxerUI::CodeEditor
         PATH "/path/to/Lib-CodeEditor"
 )
 ```

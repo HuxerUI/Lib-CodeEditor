@@ -1,6 +1,6 @@
 # CodeEditor API 参考
 
-头文件：`<huxerui/codeeditor.h>` · 命名空间：`huxerui::codeeditor` · CMake：`huxerui_use_library(app TARGET CodeEditor::CodeEditor PATH ...)`
+头文件：`<huxerui/codeeditor.h>` · 命名空间：`huxerui::codeeditor` · CMake：`huxerui_use_library(app TARGET HuxerUI::CodeEditor PATH ...)`
 
 ## 1. 组件入口
 

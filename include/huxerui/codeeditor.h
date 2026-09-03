@@ -23,9 +23,9 @@ namespace huxerui::codeeditor {
 // Typed editor events, aggregated like ViewEvents. Bind them on the View
 // returned by CodeEditor():
 //
-//   CodeEditor(options).On<CodeEditorEvents::TextChanged>([] { ... })
+//   CodeEditor(options).On<EditorEvents::TextChanged>([] { ... })
 //
-struct CodeEditorEvents {
+struct EditorEvents {
   struct TextChanged : huxerui::Event<void()> {};
   struct CursorChanged : huxerui::Event<void(std::uint32_t, std::uint32_t)> {};
   struct SelectionChanged
@@ -42,7 +42,7 @@ struct CodeEditorEvents {
 
 // Syntax style ids resolved by the default palette the component registers on
 // the editor core. Custom ids may be registered through the controller.
-enum class CodeEditorStyle : std::int32_t {
+enum class EditorStyle : std::int32_t {
   Keyword = 1,
   Type = 2,
   Class = 3,
@@ -64,22 +64,22 @@ enum class CodeEditorStyle : std::int32_t {
 // ---- Decoration interface (mirrors the SweetEditor platform wrappers) ----
 
 // One style span inside a line: [column, column + length).
-struct CodeEditorStyleSpan {
+struct EditorStyleSpan {
   std::uint32_t column = 0;
   std::uint32_t length = 0;
-  CodeEditorStyle style = CodeEditorStyle::Keyword;
+  EditorStyle style = EditorStyle::Keyword;
 };
 
 // Per-line item lists keyed by 0-based line number.
 template <typename T>
-using CodeEditorLineEntries = std::vector<std::pair<std::uint32_t, std::vector<T>>>;
+using EditorLineEntries = std::vector<std::pair<std::uint32_t, std::vector<T>>>;
 
-struct CodeEditorInlayHint {
+struct EditorInlayHint {
   std::uint32_t column = 0;
   std::string text;
 };
 
-struct CodeEditorDiagnostic {
+struct EditorDiagnostic {
   std::uint32_t column = 0;
   std::uint32_t length = 0;
   // 0 = error, 1 = warning, 2 = info, 3 = hint.
@@ -87,34 +87,34 @@ struct CodeEditorDiagnostic {
   std::string message;
 };
 
-struct CodeEditorCodeLens {
+struct EditorCodeLens {
   std::uint32_t column = 0;
   std::int32_t command_id = 0;
   std::string title;
 };
 
-struct CodeEditorLink {
+struct EditorLink {
   std::uint32_t column = 0;
   std::uint32_t length = 0;
   std::string url;
 };
 
-struct CodeEditorGutterIcon {
+struct EditorGutterIcon {
   std::int32_t icon_id = 0;
 };
 
-struct CodeEditorIndentGuide {
+struct EditorIndentGuide {
   std::uint32_t start_line = 0;
   std::uint32_t end_line = 0;
   std::uint32_t column = 0;
 };
 
-struct CodeEditorFoldRegion {
+struct EditorFoldRegion {
   std::uint32_t start_line = 0;
   std::uint32_t end_line = 0;
 };
 
-struct CodeEditorBracketMatch {
+struct EditorBracketMatch {
   std::uint32_t line = 0;
   std::uint32_t column = 0;
   std::uint32_t partner_line = 0;
@@ -123,13 +123,13 @@ struct CodeEditorBracketMatch {
 
 // Ghost suggestion rendered at the end of a line; committed by Tab when
 // `accept_phantom_on_tab` is enabled.
-struct CodeEditorPhantomText {
+struct EditorPhantomText {
   std::uint32_t column = 0;
   std::string text;
 };
 
 // One incremental document edit since the previous refresh.
-struct CodeEditorTextChange {
+struct EditorTextChange {
   std::uint32_t start_line = 0;
   std::uint32_t start_column = 0;
   std::uint32_t end_line = 0;
@@ -139,23 +139,23 @@ struct CodeEditorTextChange {
 
 // Everything a provider may contribute for the requested viewport. Empty
 // fields are skipped, so providers fill only what they compute.
-struct CodeEditorDecorationResult {
-  CodeEditorLineEntries<CodeEditorStyleSpan> syntax_spans;
-  CodeEditorLineEntries<CodeEditorStyleSpan> overlay_spans;
-  CodeEditorLineEntries<CodeEditorStyleSpan> document_highlights;
-  CodeEditorLineEntries<CodeEditorInlayHint> inlay_hints;
-  CodeEditorLineEntries<CodeEditorDiagnostic> diagnostics;
-  CodeEditorLineEntries<CodeEditorCodeLens> code_lens;
-  CodeEditorLineEntries<CodeEditorLink> links;
-  CodeEditorLineEntries<CodeEditorGutterIcon> gutter_icons;
-  CodeEditorLineEntries<CodeEditorPhantomText> phantom_texts;
-  std::vector<CodeEditorIndentGuide> indent_guides;
-  std::vector<CodeEditorFoldRegion> fold_regions;
-  std::optional<CodeEditorBracketMatch> matched_bracket;
+struct EditorDecorationResult {
+  EditorLineEntries<EditorStyleSpan> syntax_spans;
+  EditorLineEntries<EditorStyleSpan> overlay_spans;
+  EditorLineEntries<EditorStyleSpan> document_highlights;
+  EditorLineEntries<EditorInlayHint> inlay_hints;
+  EditorLineEntries<EditorDiagnostic> diagnostics;
+  EditorLineEntries<EditorCodeLens> code_lens;
+  EditorLineEntries<EditorLink> links;
+  EditorLineEntries<EditorGutterIcon> gutter_icons;
+  EditorLineEntries<EditorPhantomText> phantom_texts;
+  std::vector<EditorIndentGuide> indent_guides;
+  std::vector<EditorFoldRegion> fold_regions;
+  std::optional<EditorBracketMatch> matched_bracket;
 };
 
 // Context handed to providers on every refresh.
-struct CodeEditorDecorationContext {
+struct EditorDecorationContext {
   // Visible 0-based line range, inclusive.
   std::uint32_t visible_start_line = 0;
   std::uint32_t visible_end_line = 0;
@@ -170,7 +170,7 @@ struct CodeEditorDecorationContext {
   const std::string* document_text = nullptr;
   // Incremental edits applied since the previous refresh (empty on the first
   // refresh and after a document reload).
-  std::vector<CodeEditorTextChange> text_changes;
+  std::vector<EditorTextChange> text_changes;
 };
 
 // Unified decoration source: syntax highlighting, diagnostics, inlay hints,
@@ -178,11 +178,11 @@ struct CodeEditorDecorationContext {
 // highlights, and bracket matching all flow through this interface, so the
 // editor never depends on a concrete highlighting engine. Wire SweetLine, a
 // language server, or any custom backend by implementing this class.
-class CodeEditorDecorationProvider {
+class EditorDecorationProvider {
  public:
-  virtual ~CodeEditorDecorationProvider() = default;
+  virtual ~EditorDecorationProvider() = default;
 
-  virtual CodeEditorDecorationResult ProvideDecorations(const CodeEditorDecorationContext& context) = 0;
+  virtual EditorDecorationResult ProvideDecorations(const EditorDecorationContext& context) = 0;
 };
 
 // ---- Code completion ----
@@ -242,23 +242,23 @@ using CompletionProvider = std::function<std::vector<CompletionItem>(const Compl
 // ---- Controller ----
 
 namespace detail {
-class CodeEditorControllerState;
-struct CodeEditorControllerAccess;
+class EditorControllerState;
+struct EditorControllerAccess;
 }  // namespace detail
 
 // External control surface for a mounted CodeEditor. A controller is scope
-// state created with UseCodeEditorController() and passed to CodeEditor().
+// state created with UseEditorController() and passed to CodeEditor().
 // Methods operate on the currently mounted editor node and return false when
 // no editor is connected (for example before the component mounts or after it
 // unmounts).
-class CodeEditorController {
+class EditorController {
  public:
-  CodeEditorController();
+  EditorController();
 
   [[nodiscard]] bool IsConnected() const noexcept;
 
   // Loads a different document, recreating the editor core for
-  // `document_key` (like changing CodeEditorOptions).
+  // `document_key` (like changing EditorOptions).
   bool LoadDocument(const std::string& document_key, const std::string& text) const;
   [[nodiscard]] std::string Text() const;
   bool SetCursor(std::uint32_t line, std::uint32_t column) const;
@@ -273,25 +273,25 @@ class CodeEditorController {
   // Toggles the component's built-in search bar.
   bool ToggleSearch() const;
 
-  bool operator==(const CodeEditorController&) const = default;
+  bool operator==(const EditorController&) const = default;
 
  private:
-  std::shared_ptr<detail::CodeEditorControllerState> state_;
+  std::shared_ptr<detail::EditorControllerState> state_;
 
-  friend struct detail::CodeEditorControllerAccess;
+  friend struct detail::EditorControllerAccess;
 };
 
-inline CodeEditorController UseCodeEditorController(
+inline EditorController UseEditorController(
     const std::source_location& location = std::source_location::current()
 ) {
-  return huxerui::UseState(CodeEditorController{}, location).Get();
+  return huxerui::UseState(EditorController{}, location).Get();
 }
 
 // Visual theme for the editor chrome, range effects, and decorations.
 // Defaults derive from the ambient HuxerUI ThemeSpec (so the editor follows
 // MaterialTheme light/dark automatically); override `options.theme` with a
 // fully populated struct to take manual control.
-struct CodeEditorTheme {
+struct EditorTheme {
   // Surfaces.
   Color background;
   Color gutter_background;
@@ -341,7 +341,7 @@ struct CodeEditorTheme {
   Color fold_placeholder_text;
   Color gutter_icon_color;
 
-  // Syntax token palette (resolves the CodeEditorStyle ids).
+  // Syntax token palette (resolves the EditorStyle ids).
   Color syntax_keyword;
   Color syntax_type;
   Color syntax_class;
@@ -355,7 +355,7 @@ struct CodeEditorTheme {
   Color syntax_punctuation;
   Color syntax_annotation;
   Color syntax_url;
-  // Rainbow bracket depth palette (CodeEditorStyle::RainbowFirst..Last).
+  // Rainbow bracket depth palette (EditorStyle::RainbowFirst..Last).
   std::array<Color, 8> syntax_rainbow;
 
   // Completion panel.
@@ -366,16 +366,16 @@ struct CodeEditorTheme {
   Color completion_detail;
 
   // The light reference theme (the historical hardcoded look).
-  static CodeEditorTheme Default();
+  static EditorTheme Default();
   // Derives an editor theme from an ambient HuxerUI theme specification.
-  static CodeEditorTheme FromThemeSpec(const ThemeSpec& spec);
+  static EditorTheme FromThemeSpec(const ThemeSpec& spec);
 
-  bool operator==(const CodeEditorTheme&) const = default;
+  bool operator==(const EditorTheme&) const = default;
 };
 // ---- Options ----
 
 // Declarative configuration for a CodeEditor instance.
-struct CodeEditorOptions {
+struct EditorOptions {
   // Initial document content; loaded when the editor is created or when
   // `document_key` changes. Not a controlled value.
   std::string initial_text;
@@ -394,7 +394,7 @@ struct CodeEditorOptions {
   float line_spacing_mult = 1.2F;
   // Explicit visual override; when empty the editor derives its theme from
   // the ambient HuxerUI theme (UseTheme) and follows Theme changes live.
-  std::optional<CodeEditorTheme> theme;
+  std::optional<EditorTheme> theme;
 
   bool read_only = false;
   uint32_t tab_size = 4;
@@ -409,9 +409,9 @@ struct CodeEditorOptions {
   // Decoration sources: syntax highlighting, diagnostics, inlay hints, code
   // lens, links, gutter icons, indent guides, fold regions, document
   // highlights, and bracket matching. The editor ships no highlighting
-  // engine; implement CodeEditorDecorationProvider (or reuse the optional
+  // engine; implement EditorDecorationProvider (or reuse the optional
   // SweetLine integration from examples/preview) to light the editor up.
-  std::vector<std::shared_ptr<CodeEditorDecorationProvider>> decoration_providers;
+  std::vector<std::shared_ptr<EditorDecorationProvider>> decoration_providers;
   // Whether Tab commits the caret-line phantom text supplied by providers.
   bool accept_phantom_on_tab = true;
 
@@ -440,7 +440,7 @@ struct CodeEditorOptions {
 // The component owns one retained editor-core extension, bridges text
 // measurement to HuxerUI's platform measurer, paints the editor render model,
 // forwards input into the core, and applies decorations from the registered
-// CodeEditorDecorationProvider instances.
-huxerui::View CodeEditor(CodeEditorOptions options = {}, CodeEditorController controller = {});
+// EditorDecorationProvider instances.
+huxerui::View CodeEditor(EditorOptions options = {}, EditorController controller = {});
 
 }  // namespace huxerui::codeeditor

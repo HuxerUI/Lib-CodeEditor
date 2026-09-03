@@ -1,6 +1,6 @@
 # CodeEditor API Reference
 
-Header: `<huxerui/codeeditor.h>` · Namespace: `huxerui::codeeditor` · CMake: `huxerui_use_library(app TARGET CodeEditor::CodeEditor PATH ...)`
+Header: `<huxerui/codeeditor.h>` · Namespace: `huxerui::codeeditor` · CMake: `huxerui_use_library(app TARGET HuxerUI::CodeEditor PATH ...)`
 
 ## 1. Component entry
 

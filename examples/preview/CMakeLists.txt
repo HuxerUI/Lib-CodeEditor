@@ -154,6 +154,6 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
 endif ()
 
 huxerui_use_library(example_codeeditor
-        TARGET CodeEditor::CodeEditor
+        TARGET HuxerUI::CodeEditor
         PATH "${CMAKE_CURRENT_SOURCE_DIR}/../.."
 )
