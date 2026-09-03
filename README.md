@@ -130,7 +130,8 @@ Release; tag pushes (`v*`) publish stable releases.
 
 ## Documentation
 
-- [Component documentation](docs/codeeditor.md) — API, decoration contract, architecture, limitations
+- [API Reference](docs/codeeditor.md) — full parameter tables, events, decoration interface, controller, and completion types
+- [中文 API 参考](docs/codeeditor_zh.md) — 完整参数表、事件、装饰接口、控制器与补全类型
 
 ## Third-party dependencies
 
