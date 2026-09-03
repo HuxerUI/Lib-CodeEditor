@@ -1,173 +1,320 @@
-# CodeEditor Component
+# CodeEditor API Reference
 
-## 1. Overview
+Header: `<huxerui/codeeditor.h>` · Namespace: `huxerui::codeeditor` · CMake: `huxerui_use_library(app TARGET CodeEditor::CodeEditor PATH ...)`
 
-`huxerui::codeeditor::CodeEditor` is a HuxerUI code editor built on the SweetEditor core
-(`3dparty/SweetEditor`). HuxerUI owns composition, layout, focus, IME, clipboard, painting, and
-frame scheduling; SweetEditor owns the document, editing, undo/redo, search, completion, folding,
-and the render model.
-
-The public header is `<huxerui/codeeditor.h>`; everything lives in `huxerui::codeeditor`. The
-implementation sits in `src/codeeditor/codeeditor.cpp` and is packaged as the `codeeditor`
-dependency library.
-
-## 2. Minimal usage
+## 1. Component entry
 
 ```cpp
-#include <huxerui/huxerui.h>
-#include <huxerui/codeeditor.h>
+huxerui::View CodeEditor(CodeEditorOptions options = {}, CodeEditorController controller = {});
+```
 
-View App() {
+Returns a declarative `View` carrying a retained editor extension. Place it anywhere a `View` fits:
+
+```cpp
+[[huxerui::composable]]
+View EditorPage() {
+  const auto controller = huxerui::codeeditor::UseCodeEditorController();
   huxerui::codeeditor::CodeEditorOptions options;
-  options.initial_text = "int main() {\n  return 0;\n}\n";
-  return huxerui::codeeditor::CodeEditor(std::move(options)).With(Grow{});
+  options.initial_text = "int main() { return 0; }";
+  return huxerui::codeeditor::CodeEditor(std::move(options), controller).With(Grow{});
 }
 ```
 
-`initial_text` loads when the editor is created or when `document_key` changes; it is not a
-controlled value. `document_key` is optional — empty keeps one default document; distinct keys
-recreate the document state (multi-file switching).
+---
 
-## 3. Architecture
+## 2. CodeEditorOptions
 
-```text
-CodeEditor()                          composable entry (search bar + Canvas)
-  -> Canvas View
-  -> CodeEditorBehavior retained modifier
-  -> CodeEditorBehavior::Extension    NodeExtension: pointer/key/focus/frame/paint, IME clients
-  -> EditorHolder                     core + document + completion + decoration pipeline
-  -> SweetEditor EditorCore
+### Document
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `initial_text` | `std::string` | `""` | Initial UTF-8 document content. Loaded when the editor mounts or when `document_key` changes. **Not** a controlled value — after mount the retained core owns the text; use `CodeEditorEvents::TextChanged` to observe and `Controller::Text()` / `LoadDocument()` to read or replace it. |
+| `document_key` | `std::string` | `""` | Stable document identity. Changing it between recompositions reloads `initial_text` and recreates the editor state (undo history, cursor, folds reset). Empty keeps one default document. Distinct keys enable multi-document switching. |
+
+### Typography
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `font_family` | `std::string` | `""` | Content font family. Empty = platform monospace. A named family resolves against platform-bundled fonts (`assets/fonts/<family>.ttf` on Android) then the system table. Changes apply live without state loss. |
+| `font_size` | `float` | `14.0` | Content font size in logical pixels. |
+| `line_spacing_add` | `float` | `0.0` | Extra spacing added to each line height. |
+| `line_spacing_mult` | `float` | `1.2` | Line height multiplier. |
+| `theme` | `std::optional<CodeEditorTheme>` | `{}` | Explicit visual override. When empty the editor derives from the ambient `UseTheme()` and follows `MaterialTheme` light/dark live. See §3. |
+
+### Editing behavior
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `read_only` | `bool` | `false` | Rejects all text-changing operations. Selection and navigation remain active. |
+| `tab_size` | `uint32_t` | `4` | Width of one indentation level in spaces. |
+| `backspace_unindent` | `bool` | `true` | Backspace on leading whitespace steps back to the previous indentation stop. |
+| `insert_spaces` | `bool` | `true` | Tab inserts spaces instead of a literal `\t`. |
+| `auto_closing_pairs` | `std::vector<std::pair<char32_t, char32_t>>` | `{}` | Auto-closing bracket pairs. Empty uses core defaults: `( )`, `{ }`, `[ ]`. |
+
+### Completion
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `completion_provider` | `CompletionProvider` | `{}` | Callback receiving a `CompletionContext`; returns `std::vector<CompletionItem>`. See §7. |
+| `completion_trigger_characters` | `std::function<bool(const std::string&)>` | `{}` | Returns `true` when typing the given character should fire a request. |
+
+### Decoration
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `decoration_providers` | `std::vector<std::shared_ptr<CodeEditorDecorationProvider>>` | `{}` | Decoration sources; the editor merges all results. See §5. |
+| `accept_phantom_on_tab` | `bool` | `true` | Whether Tab commits the caret-line phantom text. |
+
+### Hooks and diff
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `newline_action` | `std::function<std::string(uint32_t line, uint32_t column)>` | `{}` | Invoked before inserting a newline. Return replacement text or empty for default. |
+| `original_text` | `std::string` | `""` | Diff baseline. Non-empty computes a line-level diff (added/removed backgrounds). Empty disables. |
+
+### Display
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `render_whitespace` | `bool` | `false` | Whitespace markers (space dots, tab arrows). |
+| `render_line_breaks` | `bool` | `false` | Line-break symbols. |
+| `wrap_mode` | `int` | `0` | `0` = no wrap, `1` = character wrap, `2` = word wrap. |
+| `sticky_gutter` | `bool` | `false` | Keep the gutter fixed during horizontal scrolling. |
+| `scrollbar_thickness` | `float` | `0.0` | Scrollbar thickness. `0.0` = core default. |
+| `scrollbar_mode` | `int` | `0` | `0` = always, `1` = transient, `2` = never. |
+| `content_start_padding` | `float` | `0.0` | Extra padding between gutter and text. |
+
+---
+
+## 3. CodeEditorTheme
+
+All colors are `huxerui::Color`. Factories: `Default()` (light reference), `FromThemeSpec(const ThemeSpec&)` (ambient derivation). Has `operator==`.
+
+### Surfaces
+`background`, `gutter_background`, `current_line_background` (focused-line highlight), `separator_color`.
+
+### Text and caret
+`text_foreground`, `line_number_color`, `caret_color`, `caret_width` (float, default 2.0).
+
+### Links and code lens
+`link_color`, `active_link_color`, `codelens_color`, `active_codelens_color`.
+
+### Selection and highlights
+`selection_background`, `search_match_background`, `search_current_background`, `bracket_match_background`, `document_highlight_text/read/write`, `ime_composition_underline`.
+
+### Diagnostics (wavy underlines)
+`diagnostic_error/warning/info/hint_underline`.
+
+### Diff
+`diff_added/removed_background`, `diff_added/removed_gutter`.
+
+### Decorations
+`indent_guide_color`, `inlay_hint_background/text`, `fold_placeholder_background/text`, `gutter_icon_color`.
+
+### Syntax palette
+`syntax_keyword/type/class/function/variable/string/number/comment/preprocessor/builtin/punctuation/annotation/url`, `syntax_rainbow` (`std::array<Color, 8>`).
+
+### Completion panel
+`completion_background/border/selected_background/label/detail`.
+
+### Usage
+
+```cpp
+auto theme = huxerui::codeeditor::CodeEditorTheme::Default();
+theme.background = Color::Rgb(30, 30, 46);
+theme.text_foreground = Color::Rgb(205, 214, 244);
+theme.syntax_keyword = Color::Rgb(203, 166, 247);
+options.theme = theme;
 ```
 
-State changes notify the runtime through `InvalidatePaint()`; `OnFrame()` returns a `FrameResult`
-and stays bounded (the initial highlight bootstrap is capped). The extension clips its painting to
-the component bounds.
+---
 
-## 4. Decoration providers
+## 4. CodeEditorEvents
 
-Highlighting and every decoration flow through one interface (mirroring the SweetEditor platform
-wrappers): the editor never depends on an engine.
+All events bind with `.On<Event>(handler)` on the `View` returned by `CodeEditor()`. Line and column parameters are **0-based**; display `line + 1` to users.
+
+| Event | Handler signature | Parameters |
+|---|---|---|
+| `TextChanged` | `void()` | Fired after any text edit. |
+| `CursorChanged` | `void(uint32_t line, uint32_t column)` | `line` — 0-based caret line. `column` — 0-based caret column. |
+| `SelectionChanged` | `void(uint32_t sl, uint32_t sc, uint32_t el, uint32_t ec)` | Selection start (sl, sc) to end (el, ec), 0-based, normalized. |
+| `ScrollChanged` | `void(float x, float y)` | Horizontal and vertical scroll offsets in logical pixels. |
+| `FoldToggled` | `void(std::size_t line)` | 0-based line of the fold that was expanded or collapsed. |
+| `LongPressed` | `void(uint32_t line, uint32_t column)` | 0-based position of the long-press. |
+| `DoubleTapped` | `void(uint32_t line, uint32_t column)` | 0-based position of the double-tap. |
+| `LinkClicked` | `void(const std::string& url)` | URL string of the clicked link token. |
+| `CodeLensClicked` | `void(int32_t command_id)` | Command id assigned by the provider's `CodeEditorCodeLens.command_id`. |
+| `GutterIconClicked` | `void(uint32_t line, int32_t icon_id)` | `line` — 0-based line. `icon_id` — provider-assigned id. `1` = diamond, `2` = circle, others = dot. |
+| `InlayClicked` | `void(uint32_t line, uint32_t column)` | 0-based position of the clicked inlay hint. |
+
+```cpp
+CodeEditor(options, controller)
+    .On<CodeEditorEvents::CursorChanged>([status](uint32_t line, uint32_t col) {
+      status = "Ln " + std::to_string(line + 1) + ", Col " + std::to_string(col + 1);
+    })
+    .On<CodeEditorEvents::GutterIconClicked>([this](uint32_t line, int32_t id) {
+      if (id == 2) ToggleBreakpoint(line);
+    });
+```
+
+---
+
+## 5. CodeEditorDecorationProvider
 
 ```cpp
 class CodeEditorDecorationProvider {
  public:
   virtual ~CodeEditorDecorationProvider() = default;
-  virtual CodeEditorDecorationResult ProvideDecorations(const CodeEditorDecorationContext& context) = 0;
+  virtual CodeEditorDecorationResult ProvideDecorations(
+      const CodeEditorDecorationContext& context) = 0;
 };
 ```
 
-`CodeEditorDecorationContext` carries the visible line range (inclusive), total line count, caret
-position, a `viewport_settled` flag (false during fast scrolling), the full UTF-8 document text
-(valid for the call), and the incremental `text_changes` since the previous refresh.
+### CodeEditorDecorationContext
 
-`CodeEditorDecorationResult` accepts per-line syntax spans, overlay spans (rainbow brackets),
-document highlights, inlay hints, diagnostics, code lens, links, gutter icons, phantom text,
-indent guides, fold regions, and one bracket match. Empty fields are skipped; results from
-multiple providers are merged.
-
-Refresh cadence: immediately on viewport changes (`settled=false`), after edits and caret moves,
-once when the viewport settles (`settled=true`), and once after a document loads (fold regions are
-published there). Style ids resolve through the default `CodeEditorStyle` palette registered on
-the core.
-
-The reference implementation — SweetLine incremental analysis, overscan, folds, rainbow brackets,
-bracket matching, word highlights, TODO/FIXME diagnostics, URL links, code lens, gutter icons,
-phantom text — lives in `examples/preview/src/sweetline_provider.cpp`.
-
-## 5. Options
-
-Documents: `initial_text`, `document_key`. Typography: `font_size`, `font_family`,
-`line_spacing_add`, `line_spacing_mult`. `font_family` selects the content font: empty uses the
-platform monospace default; a named family resolves against fonts bundled by the host platform
-(`assets/fonts/<family>.ttf` on Android) and falls back to the system family table. Font changes
-apply live through the core's font-metrics hook (caret, scroll anchor, undo, and fold state are
-preserved). `theme` (`CodeEditorTheme`) covers every visual surface: component and gutter
-backgrounds, focused-line highlight, caret color/width, line numbers, selection, search and
-bracket-match backgrounds, document highlights, IME composition and diagnostic underlines, diff
-rows and gutters, links and code lens, indent guides, inlay hints, fold placeholders, gutter icons,
-the completion panel, and the syntax token palette (13 token colors plus 8 rainbow bracket
-levels). Theme defaults derive from the ambient HuxerUI `ThemeSpec` (`FromThemeSpec`), so the
-editor follows `MaterialTheme` light/dark automatically; override `options.theme` with a fully
-populated struct for manual control, or place one through the environment with
-`Theme{ThemeDefinition{}.Set(CodeEditorTheme{...}), ...}`. Editing: `read_only`, `tab_size`, `backspace_unindent`, `insert_spaces`,
-`auto_closing_pairs`. All editing and presentation options reconcile live on recomposition;
-only a document-key switch rebuilds the editor. Completion: `completion_provider`, `completion_trigger_characters`.
-Decorations: `decoration_providers`, `accept_phantom_on_tab`. Hooks: `newline_action`.
-Diff: `original_text` (empty disables). Display: `render_whitespace`, `render_line_breaks`,
-`wrap_mode` (0/1/2), `sticky_gutter`, `scrollbar_thickness`, `scrollbar_mode` (0/1/2),
-`content_start_padding`.
-
-## 6. Events
-
-All events aggregate in `CodeEditorEvents` and bind on the returned `View`:
-
-```cpp
-CodeEditor(options)
-    .On<CodeEditorEvents::TextChanged>([] {})
-    .On<CodeEditorEvents::CursorChanged>([](uint32_t line, uint32_t column) {})      // 0-based
-    .On<CodeEditorEvents::SelectionChanged>([](uint32_t, uint32_t, uint32_t, uint32_t) {})
-    .On<CodeEditorEvents::ScrollChanged>([](float x, float y) {})
-    .On<CodeEditorEvents::FoldToggled>([](std::size_t line) {})
-    .On<CodeEditorEvents::LinkClicked>([](const std::string& url) {})
-    .On<CodeEditorEvents::CodeLensClicked>([](int32_t command_id) {})
-    .On<CodeEditorEvents::GutterIconClicked>([](uint32_t line, int32_t icon_id) {})
-    .On<CodeEditorEvents::InlayClicked>([](uint32_t line, uint32_t column) {})
-    .On<CodeEditorEvents::LongPressed>([](uint32_t line, uint32_t column) {})
-    .On<CodeEditorEvents::DoubleTapped>([](uint32_t line, uint32_t column) {});
-```
-
-Line and column numbers are 0-based; display `line + 1`.
-
-## 7. Controller
-
-```cpp
-[[huxerui::composable]]
-View Page() {
-  const auto controller = huxerui::codeeditor::UseCodeEditorController();
-  // ...
-  return huxerui::codeeditor::CodeEditor(options, controller).With(Grow{});
-}
-```
-
-`IsConnected()`, `LoadDocument(key, text)`, `Text()`, `SetCursor(line, column)`,
-`RunSearch(pattern)`, `FindNext()`, `FindPrevious()`, `ReplaceCurrent(replacement)`,
-`ReplaceAll(replacement)`, `ClearSearch()`, `ToggleSearch()` (built-in search bar, also Ctrl+F).
-Methods return `false` while no editor is mounted.
-
-## 8. Consumption
-
-```cmake
-huxerui_use_library(your_app
-        TARGET CodeEditor::CodeEditor
-        PATH "/path/to/Lib-CodeEditor"
-)
-```
-
-The library links the vendored SweetEditor core. SweetLine is intentionally not a dependency; the
-demo adds it itself to showcase the provider integration.
-
-## 9. Decoration refresh model
-
-| Event | Refresh | Notes |
+| Field | Type | Description |
 |---|---|---|
-| Viewport established (first paint, document switch, keyboard insets) | Full settled refresh, painted in the same frame | Two-pass model build: the first publishes the visible range, decorations land, the second rebuilds with them |
-| Fast scrolling | Light (syntax spans + indent guides), then full on settle | Heavy categories (rainbows, diagnostics, inlay hints, code lens, links, gutter icons) are untouched during scroll and applied when the viewport settles |
-| Text edit or caret move | Full settled refresh | Incremental analysis feeds the decoration provider |
-| Theme or font change | Hot-applied | No editor state loss (undo, caret, scroll, folds) |
-| Document switch | Holder rebuild | New document, new decoration state |
+| `visible_start_line` | `uint32_t` | First visible line (0-based, inclusive). |
+| `visible_end_line` | `uint32_t` | Last visible line (0-based, inclusive). |
+| `total_line_count` | `uint32_t` | Total lines in the document. |
+| `cursor_line` | `uint32_t` | Caret line (0-based). |
+| `cursor_column` | `uint32_t` | Caret column (0-based). |
+| `viewport_settled` | `bool` | `false` during fast scrolling — skip heavy computation. |
+| `document_text` | `const std::string*` | Full UTF-8 text. May be `nullptr`. Valid only during the call. |
+| `text_changes` | `std::vector<CodeEditorTextChange>` | Incremental edits since last refresh. |
 
-## 10. Limitations
+### CodeEditorTextChange
 
-- `initial_text` is an initializer, not a fully controlled `TextEditingValue`; use
-  `CodeEditorEvents::TextChanged`, `CodeEditorController::Text()`, and `LoadDocument()` to observe
-  and drive content.
-- Color-swatch inlays and separator/bracket connector guides are not yet exposed through the
-  decoration result.
-- Fold regions are provider-owned; the editor preserves interactive fold state after publication.
+| Field | Description |
+|---|---|
+| `start_line`, `start_column` | Change range start (pre-edit coordinates). |
+| `end_line`, `end_column` | Change range end. |
+| `new_text` | Replacement text (UTF-8). Empty for deletes. |
 
-## 11. Validation checklist
+### CodeEditorDecorationResult
 
-Mount, recomposition, document-key switching, unmount, editing, clipboard, undo/redo, CJK IME,
-emoji, caret blink, mouse/touch selection, scrolling, folding, brackets, highlighting (via a
-provider), completion, snippets, search/replace, diff, diagnostics, inlay hints, code lens,
-gutter/CodeLens clicks without raising the keyboard, pinch zoom, and the Android arm64-v8a build.
+| Field | Type | Description |
+|---|---|---|
+| `syntax_spans` | `LineEntries<StyleSpan>` | Per-line syntax tokens. |
+| `overlay_spans` | `LineEntries<StyleSpan>` | Rainbow brackets. |
+| `document_highlights` | `LineEntries<StyleSpan>` | Same-word highlights. |
+| `inlay_hints` | `LineEntries<InlayHint>` | Inline pills. |
+| `diagnostics` | `LineEntries<Diagnostic>` | Squigglies. |
+| `code_lens` | `LineEntries<CodeLens>` | Clickable commands. |
+| `links` | `LineEntries<Link>` | Clickable URLs. |
+| `gutter_icons` | `LineEntries<GutterIcon>` | Line-number area icons. |
+| `phantom_texts` | `LineEntries<PhantomText>` | Ghost text (Tab commits). |
+| `indent_guides` | `std::vector<IndentGuide>` | Indent guide lines. |
+| `fold_regions` | `std::vector<FoldRegion>` | Foldable regions (once per document). |
+| `matched_bracket` | `std::optional<BracketMatch>` | Bracket pair under cursor. |
+
+### Item types
+
+**StyleSpan** — `{column, length, style}`. `style` is a `CodeEditorStyle` enum value resolving through the theme's syntax palette.
+
+**InlayHint** — `{column, text}`.
+
+**Diagnostic** — `{column, length, severity, message}`. Severity: `0` = error, `1` = warning, `2` = info, `3` = hint.
+
+**CodeLens** — `{column, command_id, title}`. `command_id` is delivered back via `CodeLensClicked`.
+
+**Link** — `{column, length, url}`. `url` delivered via `LinkClicked`.
+
+**GutterIcon** — `{icon_id}`. Delivered via `GutterIconClicked`. `1` = diamond, `2` = circle, others = dot.
+
+**PhantomText** — `{column, text}`.
+
+**IndentGuide** — `{start_line, end_line, column}`.
+
+**FoldRegion** — `{start_line, end_line}`. Arrow renders at `start_line`.
+
+**BracketMatch** — `{line, column, partner_line, partner_column}`.
+
+### Refresh model
+
+| Event | Strategy |
+|---|---|
+| Viewport established | Full settled, same frame |
+| Fast scrolling | Light (syntax + guides), then full on settle |
+| Edit or caret move | Full settled |
+| Theme or font change | Hot-applied |
+| Document switch | Editor rebuild |
+
+### Reference implementation
+
+`examples/preview/src/sweetline_provider.cpp` — full SweetLine integration.
+
+---
+
+## 6. CodeEditorController
+
+```cpp
+inline CodeEditorController UseCodeEditorController();
+```
+
+Methods operate on the mounted editor and return `false` when disconnected.
+
+| Method | Return | Description |
+|---|---|---|
+| `IsConnected()` | `bool` | An editor is mounted and bound. |
+| `LoadDocument(key, text)` | `bool` | Replaces the document (undo, cursor, folds reset). |
+| `Text()` | `std::string` | Full document text (UTF-8). |
+| `SetCursor(line, column)` | `bool` | Moves the caret (0-based), scrolls into view. |
+| `RunSearch(pattern)` | `bool` | Runs a search, highlights all matches. |
+| `FindNext()` | `bool` | Jumps to the next match. |
+| `FindPrevious()` | `bool` | Jumps to the previous match. |
+| `ReplaceCurrent(replacement)` | `bool` | Replaces the current match, advances. |
+| `ReplaceAll(replacement)` | `bool` | Replaces all matches. |
+| `ClearSearch()` | `bool` | Clears search highlights. |
+| `ToggleSearch()` | `bool` | Shows/hides the built-in search bar (also Ctrl+F). |
+
+---
+
+## 7. Completion types
+
+### CompletionContext
+
+| Field | Type | Description |
+|---|---|---|
+| `trigger_kind` | `TriggerKind` | `Invoked` (0, Ctrl+Space), `Character` (1, trigger char), `Retrigger` (2, panel open). |
+| `trigger_character` | `std::string` | Character that fired the request. |
+| `cursor_line` / `cursor_column` | `uint32_t` | Caret position (0-based). |
+| `line_text` | `std::string` | Full caret line text. |
+| `word_start` / `word_end` | `uint32_t` | Word range around the caret. |
+
+### CompletionItem
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `label` | `std::string` | — | Display label. |
+| `detail` | `std::string` | — | Detail (right side). |
+| `insert_text` | `std::string` | — | Text inserted on confirm. Falls back to `label`. |
+| `kind` | `CompletionItemKind` | `Text` | Badge kind. |
+| `filter_text` | `std::string` | — | Fuzzy filter override. |
+| `sort_key` | `std::string` | — | Sort override. |
+| `insert_text_is_snippet` | `bool` | `false` | Snippet template (`${1:ph}`, `$0`). |
+| `has_text_edit` | `bool` | `false` | Replace range instead of insert at caret. |
+| `text_edit_start` / `text_edit_end` | `uint32_t` | `0` | Replacement range (columns in cursor line). |
+| `text_edit_text` | `std::string` | — | Replacement text. |
+
+### CompletionItemKind
+
+`Keyword`(0), `Function`(1), `Variable`(2), `Class`(3), `Interface`(4), `Module`(5), `Property`(6), `Snippet`(7), `Text`(8).
+
+---
+
+## 8. Architecture
+
+```text
+CodeEditor() -> Canvas -> CodeEditorBehavior -> Extension(NodeExtension) -> EditorHolder -> SweetEditor EditorCore
+```
+
+## 9. Limitations
+
+- `initial_text` is an initializer, not a fully controlled value.
+- Color-swatch inlays and separator guides not yet exposed.
+- Fold regions are provider-owned; the editor preserves interactive fold state.
+
+## 10. Validation checklist
+
+Mount, recomposition, document switching, unmount, editing, clipboard, undo/redo, CJK IME, emoji, caret blink, selection, scrolling, folding, brackets, highlighting, completion, snippets, search/replace, diff, diagnostics, inlay hints, code lens, gutter clicks, pinch zoom, custom fonts, theme switching, Android arm64-v8a build.
