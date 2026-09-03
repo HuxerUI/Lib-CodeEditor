@@ -633,6 +633,23 @@ public:
   }
 
   TextInputState State() const override {
+    // Self-heal the revision contract: the core can move the caret through
+    // deferred or non-notified actions, and the runtime throws when an
+    // observable change is reported without a revision advance. Comparing the
+    // live core state against the last report and bumping here keeps every
+    // transition valid no matter which path moved the caret.
+    const TextSelection selection = Selection();
+    const std::optional<TextOffset> comp_start = composition_start_ >= 0 ? std::optional(composition_start_) : std::nullopt;
+    const std::optional<TextOffset> comp_end = composition_end_ >= 0 ? std::optional(composition_end_) : std::nullopt;
+    if (!last_reported_selection_valid_ || last_reported_selection_ != selection ||
+        last_reported_composition_start_ != comp_start || last_reported_composition_end_ != comp_end) {
+      ++revision_;
+    }
+    last_reported_selection_ = selection;
+    last_reported_selection_valid_ = true;
+    last_reported_composition_start_ = comp_start;
+    last_reported_composition_end_ = comp_end;
+
     std::optional<TextRange> composition;
     if (composition_start_ >= 0 && composition_end_ >= composition_start_) {
       composition = TextRange{composition_start_, composition_end_};
@@ -641,7 +658,7 @@ public:
         session_id_,
         revision_,
         content_revision_,
-        Selection(),
+        selection,
         composition,
     };
   }
@@ -655,12 +672,16 @@ public:
   // (for example, a click or drag that moves the caret), not only on text edits.
   void NotifySelectionChanged() {
     ++revision_;
+    last_reported_selection_ = Selection();
+    last_reported_selection_valid_ = true;
   }
 
   void NotifyContentChanged(const std::vector<se::TextChange>& changes) {
     ++telemetry_notify_calls;
     ++revision_;
     ++content_revision_;
+    last_reported_selection_ = Selection();
+    last_reported_selection_valid_ = true;
     if (on_content_changed_) {
       on_content_changed_(changes);
     }
@@ -1071,8 +1092,14 @@ private:
   bool read_only_;
   PlatformClipboard* clipboard_{nullptr};
   TextInputSessionId session_id_ = 0;
-  std::uint64_t revision_ = 0;
-  std::uint64_t content_revision_ = 0;
+  mutable std::uint64_t revision_ = 0;
+  mutable std::uint64_t content_revision_ = 0;
+  // Last selection reported through State(); used to self-heal the revision
+  // when the core moves the caret outside the notification paths.
+  mutable TextSelection last_reported_selection_{0, 0, TextAffinity::Downstream};
+  mutable bool last_reported_selection_valid_{false};
+  mutable std::optional<TextOffset> last_reported_composition_start_;
+  mutable std::optional<TextOffset> last_reported_composition_end_;
   // SweetEditor core IME session id (distinct from the HuxerUI session id).
   uint64_t ime_session_id_{0};
   bool ime_session_open_{false};
