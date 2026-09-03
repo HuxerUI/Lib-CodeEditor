@@ -76,14 +76,22 @@ phantom text — lives in `examples/preview/src/sweetline_provider.cpp`.
 
 ## 5. Options
 
-Documents: `initial_text`, `document_key`. Typography: `font_size`, `line_spacing_add`,
-`line_spacing_mult`, and `theme` (`CodeEditorTheme`) covering every visual surface: component and
-gutter backgrounds, focused-line highlight, caret color/width, line numbers, selection, search and
+Documents: `initial_text`, `document_key`. Typography: `font_size`, `font_family`,
+`line_spacing_add`, `line_spacing_mult`. `font_family` selects the content font: empty uses the
+platform monospace default; a named family resolves against fonts bundled by the host platform
+(`assets/fonts/<family>.ttf` on Android) and falls back to the system family table. Font changes
+apply live through the core's font-metrics hook (caret, scroll anchor, undo, and fold state are
+preserved). `theme` (`CodeEditorTheme`) covers every visual surface: component and gutter
+backgrounds, focused-line highlight, caret color/width, line numbers, selection, search and
 bracket-match backgrounds, document highlights, IME composition and diagnostic underlines, diff
 rows and gutters, links and code lens, indent guides, inlay hints, fold placeholders, gutter icons,
-and the completion panel. All colors are `0xAARRGGBB`; the defaults form the light reference
-theme, so a dark theme is a matter of overriding the struct. Editing: `read_only`, `tab_size`, `backspace_unindent`, `insert_spaces`,
-`auto_closing_pairs`. Completion: `completion_provider`, `completion_trigger_characters`.
+the completion panel, and the syntax token palette (13 token colors plus 8 rainbow bracket
+levels). Theme defaults derive from the ambient HuxerUI `ThemeSpec` (`FromThemeSpec`), so the
+editor follows `MaterialTheme` light/dark automatically; override `options.theme` with a fully
+populated struct for manual control, or place one through the environment with
+`Theme{ThemeDefinition{}.Set(CodeEditorTheme{...}), ...}`. Editing: `read_only`, `tab_size`, `backspace_unindent`, `insert_spaces`,
+`auto_closing_pairs`. All editing and presentation options reconcile live on recomposition;
+only a document-key switch rebuilds the editor. Completion: `completion_provider`, `completion_trigger_characters`.
 Decorations: `decoration_providers`, `accept_phantom_on_tab`. Hooks: `newline_action`.
 Diff: `original_text` (empty disables). Display: `render_whitespace`, `render_line_breaks`,
 `wrap_mode` (0/1/2), `sticky_gutter`, `scrollbar_thickness`, `scrollbar_mode` (0/1/2),
@@ -138,7 +146,17 @@ huxerui_use_library(your_app
 The library links the vendored SweetEditor core. SweetLine is intentionally not a dependency; the
 demo adds it itself to showcase the provider integration.
 
-## 9. Limitations
+## 9. Decoration refresh model
+
+| Event | Refresh | Notes |
+|---|---|---|
+| Viewport established (first paint, document switch, keyboard insets) | Full settled refresh, painted in the same frame | Two-pass model build: the first publishes the visible range, decorations land, the second rebuilds with them |
+| Fast scrolling | Light (syntax spans + indent guides), then full on settle | Heavy categories (rainbows, diagnostics, inlay hints, code lens, links, gutter icons) are untouched during scroll and applied when the viewport settles |
+| Text edit or caret move | Full settled refresh | Incremental analysis feeds the decoration provider |
+| Theme or font change | Hot-applied | No editor state loss (undo, caret, scroll, folds) |
+| Document switch | Holder rebuild | New document, new decoration state |
+
+## 10. Limitations
 
 - `initial_text` is an initializer, not a fully controlled `TextEditingValue`; use
   `CodeEditorEvents::TextChanged`, `CodeEditorController::Text()`, and `LoadDocument()` to observe
@@ -147,7 +165,7 @@ demo adds it itself to showcase the provider integration.
   decoration result.
 - Fold regions are provider-owned; the editor preserves interactive fold state after publication.
 
-## 10. Validation checklist
+## 11. Validation checklist
 
 Mount, recomposition, document-key switching, unmount, editing, clipboard, undo/redo, CJK IME,
 emoji, caret blink, mouse/touch selection, scrolling, folding, brackets, highlighting (via a

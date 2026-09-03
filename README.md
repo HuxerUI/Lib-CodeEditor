@@ -13,8 +13,12 @@ completion, search, decorations, and events are exposed the HuxerUI-native way.
 - Declarative component: `CodeEditor(options, controller)` returns an ordinary HuxerUI `View`
 - Retained `NodeExtension`: the editor core, document, and input state live on the mounted node
 - Editing: caret/selection, undo/redo, auto-indent, auto-closing brackets, Tab/space policy, read-only, pinch zoom
+- Custom fonts: `font_family` loads platform-bundled fonts (Android assets) with live switching
 - Completion: provider-driven panel, snippet expansion, replacement ranges
 - Search and replace: built-in declarative search bar or programmatic `CodeEditorController`
+- Full theming: `CodeEditorTheme` covers every visual surface including the syntax token palette
+  and rainbow brackets; defaults derive from the ambient HuxerUI theme (light/dark follows
+  `MaterialTheme` automatically), and changes apply live without editor state loss
 - Decorations: syntax spans, diagnostics, inlay hints, code lens, links, gutter icons, indent guides,
   fold regions, document highlights, bracket matching, phantom text, diff — all through **one
   unified provider interface**
@@ -111,6 +115,7 @@ Lib-CodeEditor/
 ├── src/codeeditor/                # component implementation
 ├── examples/preview/              # demo app; wires optional SweetLine highlighting
 │   ├── src/sweetline_provider.*   # reference CodeEditorDecorationProvider
+│   ├── platform/android/...assets/fonts/  # Maple Mono (+ no-ligature build)
 │   └── platform/                  # per-platform shells
 └── 3dparty/SweetEditor/           # editor core (vendored gitlink)
 ```
