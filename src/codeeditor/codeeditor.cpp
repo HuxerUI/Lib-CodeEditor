@@ -1452,6 +1452,10 @@ public:
       if (active_pointers_.size() >= 2) {
         pinch_last_distance_ = active_pointers_[0].second.distance(active_pointers_[1].second);
       }
+      CODEEDITOR_TRACE(
+          "pinch down id=%lld count=%zu type=%d dist=%.1f", static_cast<long long>(event.pointer_id),
+          active_pointers_.size(), static_cast<int>(out.type), pinch_last_distance_
+      );
       break;
     }
     case PointerEventType::Move: {
@@ -1468,6 +1472,11 @@ public:
         if (pinch_last_distance_ > 0.0F && distance > 0.0F) {
           out.type = se::EventType::DIRECT_SCALE;
           out.direct_scale = distance / pinch_last_distance_;
+          CODEEDITOR_TRACE(
+              "pinch scale ratio=%.3f last=%.1f dist=%.1f", out.direct_scale, pinch_last_distance_, distance
+          );
+        } else {
+          CODEEDITOR_TRACE("pinch move skipped last=%.1f dist=%.1f", pinch_last_distance_, distance);
         }
         pinch_last_distance_ = distance;
         break;
@@ -1540,8 +1549,11 @@ public:
     }
     try {
       const bool touch = event.device_kind == PointerDeviceKind::Touch;
-      const se::EditorActionResult result =
-          core_->handleGestureEvent(touch ? BuildTouchGestureEvent(event) : ToGestureEvent(event));
+      const se::GestureEvent gesture = touch ? BuildTouchGestureEvent(event) : ToGestureEvent(event);
+      const se::EditorActionResult result = core_->handleGestureEvent(gesture);
+      if (result.scale_changed) {
+        ApplyDisplayScale();
+      }
       if (result.selection_changed || result.cursor_changed) {
         text_input_client_->NotifySelectionChanged();
         RefreshDecorations(true);
@@ -1817,7 +1829,7 @@ public:
     font_metrics_ = measurer_->Metrics(content_font);
     char_width_ = measurer_->MeasureRun("0", TextStyle{content_font, Color::Black(), TextDecoration::None}).advance;
     if (text_measurer_) {
-      text_measurer_->SetFont(font_family_, font_size_);
+      text_measurer_->SetFont(font_family_, EffectiveFontSize());
       core_->onFontMetricsChanged();
     }
     model_dirty_ = true;
@@ -1826,9 +1838,38 @@ public:
     }
   }
 
+  // The base content size scaled by the display scale (pinch zoom). The core
+  // tracks the scale in its view state; the platform applies it to rendering
+  // by feeding the scaled size back through the measurer and paint fonts.
+  [[nodiscard]] float EffectiveFontSize() const {
+    return font_size_ * display_scale_;
+  }
+
   // The content font: the platform monospace default or the configured family.
   [[nodiscard]] Font ContentFont() const {
-    return font_family_.empty() ? Font::Monospace(font_size_) : Font::Named(font_family_, font_size_);
+    return font_family_.empty() ? Font::Monospace(EffectiveFontSize())
+                                : Font::Named(font_family_, EffectiveFontSize());
+  }
+
+  // Applies the core's current display scale (reported through scale_changed
+  // after pinch gestures) without touching the configured base font size.
+  void ApplyDisplayScale() {
+    const float next = core_->getViewState().scale;
+    if (std::abs(next - display_scale_) < 1e-4F) {
+      return;
+    }
+    display_scale_ = next;
+    const Font content_font = ContentFont();
+    font_metrics_ = measurer_->Metrics(content_font);
+    char_width_ = measurer_->MeasureRun("0", TextStyle{content_font, Color::Black(), TextDecoration::None}).advance;
+    if (text_measurer_) {
+      text_measurer_->SetFont(font_family_, EffectiveFontSize());
+      core_->onFontMetricsChanged();
+    }
+    model_dirty_ = true;
+    if (invalidate_) {
+      invalidate_();
+    }
   }
 
   // Re-applies editing and presentation options that map directly to core
@@ -2994,6 +3035,7 @@ private:
   huxerui::TextMeasurer* measurer_ = nullptr;
   EditorTheme theme_;
   std::string font_family_;
+  float display_scale_{1.0F};
   std::vector<std::shared_ptr<EditorDecorationProvider>> providers_;
   std::vector<sweeteditor::TextChange> pending_changes_;
   std::string synced_document_text_;
@@ -3276,6 +3318,11 @@ struct EditorBehavior {
 
     PointerResult OnPointer(MountedNode& node, const PointerEvent& event) override {
       static_cast<void>(node);
+      CODEEDITOR_TRACE(
+          "pointer id=%lld type=%d pos=(%.0f,%.0f) device=%d", static_cast<long long>(event.pointer_id),
+          static_cast<int>(event.type), event.position.x, event.position.y,
+          static_cast<int>(event.device_kind)
+      );
       const bool changed = holder_->HandlePointer(event);
       if (changed) {
         InvalidatePaint();
