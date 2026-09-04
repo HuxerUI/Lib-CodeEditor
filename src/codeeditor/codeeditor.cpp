@@ -1442,15 +1442,22 @@ public:
   void ShowContextMenu(const se::PointF& point) {
     context_menu_.visible = true;
     context_menu_.anchor = point;
-    context_menu_.entries = {
-        {"Cut", 0},
-        {"Copy", 1},
-        {"Paste", 2},
-        {"Select All", 3},
-        {"Find", 4},
-        {"Fold All", 5},
-        {"Unfold All", 6},
-    };
+    context_menu_.entries.clear();
+    if (context_menu_items_) {
+      for (const EditorContextItem& item : context_menu_items_()) {
+        context_menu_.entries.push_back({item.label.c_str(), item.command, item.enabled});
+      }
+    } else {
+      const ContextMenuEntry defaults[] = {
+          {"Cut", 0}, {"Copy", 1}, {"Paste", 2}, {"Select All", 3},
+          {"Find", 4}, {"Fold All", 5}, {"Unfold All", 6},
+      };
+      context_menu_.entries.assign(std::begin(defaults), std::end(defaults));
+    }
+    if (context_menu_.entries.empty()) {
+      context_menu_.visible = false;
+      return;
+    }
     // Simple anchored sizing: 150px wide, menu row height, clamped to the
     // viewport so the panel never floats off-screen.
     const float width = 150.0F;
@@ -1478,7 +1485,7 @@ public:
     }
     const float row_height = 30.0F;
     const size_t index = static_cast<size_t>((point.y - rect.origin.y - 4.0F) / row_height);
-    if (index < context_menu_.entries.size()) {
+    if (index < context_menu_.entries.size() && context_menu_.entries[index].enabled) {
       out_command = context_menu_.entries[index].command;
       return true;
     }
@@ -1515,6 +1522,8 @@ public:
       AfterCoreAction(core_->unfoldAll());
       break;
     default:
+      // Application-defined command: report it and let the host react.
+      events_.Emit<EditorEvents::ContextCommandInvoked>(command);
       break;
     }
     DismissContextMenu();
@@ -1532,11 +1541,13 @@ public:
     float y = rect.origin.y + 4.0F;
     for (const ContextMenuEntry& entry : context_menu_.entries) {
       const float baseline = y + (row_height + font_metrics_.descent - font_metrics_.ascent) * 0.5F;
+      const TextStyle style{Font::System(13.0F),
+                            entry.enabled ? Argb(0xFF1F1F1F) : Argb(0xFFB0B0B0), TextDecoration::None};
       paint.DrawTextRun(
           Rect{rect.origin.x + 10.0F, y, rect.width - 20.0F, row_height},
           Point{rect.origin.x + 10.0F, baseline},
           entry.label,
-          item_style);
+          style);
       y += row_height;
     }
   }
@@ -2080,6 +2091,7 @@ public:
     newline_action_ = options.newline_action;
     accept_phantom_on_tab_ = options.accept_phantom_on_tab;
     providers_ = options.decoration_providers;
+    context_menu_items_ = options.context_menu_items;
   }
 
   // Applies a resolved theme change without resetting retained state.
@@ -3387,6 +3399,7 @@ private:
   // next settled refresh re-applies fold regions (possibly empty to clear).
   bool folds_dirty_{true};
   uint32_t last_gutter_icon_reserve_{0};
+  std::function<std::vector<EditorContextItem>()> context_menu_items_;
   std::vector<std::shared_ptr<EditorDecorationProvider>> providers_;
   std::vector<sweeteditor::TextChange> pending_changes_;
   std::string synced_document_text_;
@@ -3442,6 +3455,7 @@ private:
   struct ContextMenuEntry {
     const char* label;
     int command;  // 0=cut, 1=copy, 2=paste, 3=select-all, 4=find
+    bool enabled{true};
   };
   struct ContextMenuState {
     bool visible{false};
@@ -3832,17 +3846,25 @@ View CodeEditor(EditorOptions options, EditorController controller) {
   }
   effective_options.theme = effective_options.theme.value_or(EditorTheme::FromThemeSpec(UseTheme()));
 
-  // Search is composed outside the retained editor node; the editor itself only owns editing semantics.
+  // Search UI is decoupled from the retained editor node. The default bar is
+  // composed here unless the caller opted out (built_in_search_bar = false),
+  // in which case they compose the exported EditorSearchBar themselves and
+  // mirror visibility through the SearchVisibilityChanged event.
   auto search_visible = UseState(false);
   auto search_text = UseState(std::string());
   auto replace_text = UseState(std::string());
   const EventEmitter events = UseEvents();
+  const bool use_builtin_bar = effective_options.built_in_search_bar;
   detail::EditorControllerAccess::State(controller)->toggle_search =
-      [search_visible] { search_visible = !search_visible.Get(); };
+      [search_visible, events] {
+        const bool next = !search_visible.Get();
+        search_visible = next;
+        events.Emit<EditorEvents::SearchVisibilityChanged>(next);
+      };
   View editor = Canvas([](PaintContext&, Size) {}).With(
       EditorBehavior{&measurer, std::move(effective_options), controller, events}, Focusable{}
   );
-  if (!search_visible.Get()) {
+  if (!use_builtin_bar || !search_visible.Get()) {
     return editor;
   }
   return Column {

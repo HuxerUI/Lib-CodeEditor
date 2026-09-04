@@ -41,6 +41,12 @@ struct EditorEvents {
   struct CodeLensClicked : huxerui::Event<void(std::int32_t)> {};
   struct GutterIconClicked : huxerui::Event<void(std::uint32_t, std::int32_t)> {};
   struct InlayClicked : huxerui::Event<void(std::uint32_t, std::uint32_t)> {};
+  // Fired when the built-in search UI toggles (Ctrl+F), so an application can
+  // mirror the visibility of its own search bar.
+  struct SearchVisibilityChanged : huxerui::Event<void(bool)> {};
+  // Fired when the context menu executes an application-defined command id
+  // (one outside the built-in set below).
+  struct ContextCommandInvoked : huxerui::Event<void(std::int32_t)> {};
 };
 
 // Syntax style ids resolved by the default palette the component registers on
@@ -132,6 +138,16 @@ class EditorDecorationProvider {
   virtual void ProvideDecorations(
       const EditorDecorationContext& context, EditorDecorationReceiver& receiver
   ) = 0;
+};
+
+// A selectable entry for the selection/context menu. The editor executes the
+// built-in ids 0..6 (cut, copy, paste, select all, find, fold all, unfold
+// all); any other id is reported through EditorEvents::ContextCommandInvoked
+// so applications can attach their own actions.
+struct EditorContextItem {
+  std::string label;
+  std::int32_t command = -1;
+  bool enabled = true;
 };
 
 // ---- Code completion ----
@@ -353,6 +369,11 @@ struct EditorOptions {
   bool insert_spaces = true;
   std::vector<std::pair<char32_t, char32_t>> auto_closing_pairs;
 
+  // Selection/context menu customization. Empty uses the built-in list
+  // (Cut/Copy/Paste/Select All/Find). Supplying a builder replaces the whole
+  // list; ids outside the built-in set fire ContextCommandInvoked.
+  std::function<std::vector<EditorContextItem>()> context_menu_items;
+
   // Optional code completion.
   CompletionProvider completion_provider;
   std::function<bool(const std::string&)> completion_trigger_characters;
@@ -365,6 +386,10 @@ struct EditorOptions {
   std::vector<std::shared_ptr<EditorDecorationProvider>> decoration_providers;
   // Whether Tab commits the caret-line phantom text supplied by providers.
   bool accept_phantom_on_tab = true;
+  // When true the component composes its default search bar above the editor;
+  // when false, callers compose the exported EditorSearchBar themselves (or
+  // none) and mirror visibility through the SearchVisibilityChanged event.
+  bool built_in_search_bar = true;
 
   // Newline action hook: invoked before inserting a newline; may return
   // replacement text.
@@ -393,5 +418,15 @@ struct EditorOptions {
 // forwards input into the core, and applies decorations from the registered
 // EditorDecorationProvider instances.
 huxerui::View CodeEditor(EditorOptions options = {}, EditorController controller = {});
+
+// The exported search bar UI. Compose it wherever you like and feed it the
+// three application states; set EditorOptions::built_in_search_bar = false on
+// the editor when you take over the search UI.
+huxerui::View EditorSearchBar(
+    huxerui::State<std::string> search_text,
+    huxerui::State<std::string> replace_text,
+    huxerui::State<bool> visible,
+    EditorController controller
+);
 
 }  // namespace huxerui::codeeditor
