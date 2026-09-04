@@ -2092,6 +2092,7 @@ public:
     accept_phantom_on_tab_ = options.accept_phantom_on_tab;
     providers_ = options.decoration_providers;
     context_menu_items_ = options.context_menu_items;
+    built_in_context_menu_ = options.built_in_context_menu;
   }
 
   // Applies a resolved theme change without resetting retained state.
@@ -2258,19 +2259,84 @@ public:
     );
   }
 
+  // Text of [start..end] line/column range (0-based), joined with newlines.
+  std::string ExtractDocumentText(
+      const se::TextPosition& start, const se::TextPosition& end
+  ) const {
+    if (!document_ || start.line > end.line) {
+      return {};
+    }
+    const auto line_text = [this](size_t line) -> std::u16string {
+      const se::U16String source = document_->getLineU16Text(line);
+      return std::u16string(reinterpret_cast<const char16_t*>(source.data()), source.size());
+    };
+    std::string result;
+    if (start.line == end.line) {
+      const std::u16string text = line_text(start.line);
+      const size_t from = std::min<size_t>(start.column, text.size());
+      const size_t to = std::min<size_t>(end.column, text.size());
+      result = Utf16ToUtf8(std::u16string_view(text).substr(from, to - from));
+    } else {
+      for (size_t line = start.line; line <= end.line; ++line) {
+        const std::u16string text = line_text(line);
+        size_t from = line == start.line ? std::min<size_t>(start.column, text.size()) : 0;
+        size_t to = line == end.line ? std::min<size_t>(end.column, text.size()) : text.size();
+        if (!result.empty()) {
+          result.push_back('\n');
+        }
+        result.append(Utf16ToUtf8(std::u16string_view(text).substr(from, to - from)));
+      }
+    }
+    return result;
+  }
+
+  EditorContextMenuInfo BuildContextMenuInfo(const se::PointF& point) const {
+    EditorContextMenuInfo info;
+    const se::TextPosition caret = core_->getCursorPosition();
+    info.cursor_line = static_cast<uint32_t>(caret.line);
+    info.cursor_column = static_cast<uint32_t>(caret.column);
+    info.position_x = point.x;
+    info.position_y = point.y;
+    if (document_) {
+      const se::U16String caret_line = document_->getLineU16Text(caret.line);
+      info.caret_line_text =
+          Utf16ToUtf8(std::u16string_view(
+              reinterpret_cast<const char16_t*>(caret_line.data()), caret_line.size()
+          ));
+    }
+    const se::TextRange selection = core_->getSelection().normalized();
+    if (!(selection.start == selection.end)) {
+      info.has_selection = true;
+      info.selection_start_line = static_cast<uint32_t>(selection.start.line);
+      info.selection_start_column = static_cast<uint32_t>(selection.start.column);
+      info.selection_end_line = static_cast<uint32_t>(selection.end.line);
+      info.selection_end_column = static_cast<uint32_t>(selection.end.column);
+      info.selected_text = ExtractDocumentText(selection.start, selection.end);
+    }
+    return info;
+  }
+
   void FirePointerEvents(const se::EditorActionResult& result) {
     switch (result.gesture_type) {
     case se::GestureType::LONG_PRESS:
       events_.Emit<EditorEvents::LongPressed>(
           static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
       );
-      ShowContextMenu(result.tap_point);
+      if (built_in_context_menu_) {
+        ShowContextMenu(result.tap_point);
+      } else {
+        events_.Emit<EditorEvents::ContextMenuRequested>(BuildContextMenuInfo(result.tap_point));
+      }
       break;
     case se::GestureType::DOUBLE_TAP:
       events_.Emit<EditorEvents::DoubleTapped>(
           static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
       );
-      ShowContextMenu(result.tap_point);
+      if (built_in_context_menu_) {
+        ShowContextMenu(result.tap_point);
+      } else {
+        events_.Emit<EditorEvents::ContextMenuRequested>(BuildContextMenuInfo(result.tap_point));
+      }
       break;
     default:
       break;
@@ -3400,6 +3466,7 @@ private:
   bool folds_dirty_{true};
   uint32_t last_gutter_icon_reserve_{0};
   std::function<std::vector<EditorContextItem>()> context_menu_items_;
+  bool built_in_context_menu_{true};
   std::vector<std::shared_ptr<EditorDecorationProvider>> providers_;
   std::vector<sweeteditor::TextChange> pending_changes_;
   std::string synced_document_text_;

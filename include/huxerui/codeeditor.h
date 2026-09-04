@@ -28,6 +28,28 @@ namespace huxerui::codeeditor {
 //
 //   CodeEditor(options).On<EditorEvents::TextChanged>([] { ... })
 //
+// Information the editor hands back when the selection/context gesture fires
+// and the built-in menu is disabled (built_in_context_menu = false). The
+// application builds its own UI from this data.
+struct EditorContextMenuInfo {
+  // Caret position (0-based).
+  uint32_t cursor_line = 0;
+  uint32_t cursor_column = 0;
+  // Whether a non-empty selection exists.
+  bool has_selection = false;
+  // Selection range (0-based), valid when has_selection.
+  uint32_t selection_start_line = 0;
+  uint32_t selection_start_column = 0;
+  uint32_t selection_end_line = 0;
+  uint32_t selection_end_column = 0;
+  // Selected text (or empty) and the full caret line text.
+  std::string selected_text;
+  std::string caret_line_text;
+  // Local editor-space position where the gesture fired (for placing UI).
+  float position_x = 0.0F;
+  float position_y = 0.0F;
+};
+
 struct EditorEvents {
   struct TextChanged : huxerui::Event<void()> {};
   struct CursorChanged : huxerui::Event<void(std::uint32_t, std::uint32_t)> {};
@@ -47,6 +69,10 @@ struct EditorEvents {
   // Fired when the context menu executes an application-defined command id
   // (one outside the built-in set below).
   struct ContextCommandInvoked : huxerui::Event<void(std::int32_t)> {};
+  // Fired instead of the built-in menu when built_in_context_menu is false:
+  // carries the caret/selection/text/position so the application draws its own
+  // selection-and-copy UI.
+  struct ContextMenuRequested : huxerui::Event<void(const EditorContextMenuInfo&)> {};
 };
 
 // Syntax style ids resolved by the default palette the component registers on
@@ -386,6 +412,11 @@ struct EditorOptions {
   std::vector<std::shared_ptr<EditorDecorationProvider>> decoration_providers;
   // Whether Tab commits the caret-line phantom text supplied by providers.
   bool accept_phantom_on_tab = true;
+  // When true the component draws the default selection/context menu on
+  // long-press / double-tap; when false it emits ContextMenuRequested with the
+  // caret, selection, text, and position instead, and the application builds
+  // its own menu UI.
+  bool built_in_context_menu = true;
   // When true the component composes its default search bar above the editor;
   // when false, callers compose the exported EditorSearchBar themselves (or
   // none) and mirror visibility through the SearchVisibilityChanged event.
