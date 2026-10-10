@@ -53,7 +53,9 @@ if (NOT TARGET HuxerUI::huxerui)
 endif ()
 
 # SweetEditor — third-party cross-platform editor core (C++17, vendored).
+set(SWEETEDITOR_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/SweetEditor/include")
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
+    include(FetchContent)
     set(SWEETEDITOR_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(SWEETEDITOR_BUILD_STATIC ON CACHE BOOL "" FORCE)
     set(SWEETEDITOR_BUILD_SHARED OFF CACHE BOOL "" FORCE)
@@ -61,11 +63,29 @@ if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
     set(SWEETEDITOR_BUILD_APPLE_FRAMEWORK OFF CACHE BOOL "" FORCE)
     set(SWEETEDITOR_BUILD_WASM_C_ABI OFF CACHE BOOL "" FORCE)
     set(SWEETEDITOR_BUILD_WASM_EMBIND OFF CACHE BOOL "" FORCE)
-    add_subdirectory(
-        "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/SweetEditor"
-        "${CMAKE_BINARY_DIR}/sweeteditor"
-        EXCLUDE_FROM_ALL
-    )
+    if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/SweetEditor/CMakeLists.txt")
+        add_subdirectory(
+            "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/SweetEditor"
+            "${CMAKE_BINARY_DIR}/sweeteditor"
+            EXCLUDE_FROM_ALL
+        )
+    else ()
+        FetchContent_Declare(
+            sweeteditor_source
+            GIT_REPOSITORY https://github.com/FinalScave/SweetEditor.git
+            GIT_TAG bd4330e70eda5c71b71ecac54cf7312d82d2eae2
+            GIT_SHALLOW FALSE
+            # logging.hpp routes Apple logging through os/log.h, which
+            # hard-errors under GCC, so the patch restricts it to clang.
+            # Nested 3dparty checkouts must carry the same patch (see
+            # 3dparty/patches/).
+            PATCH_COMMAND bash -c "git apply -R --check '${CMAKE_CURRENT_LIST_DIR}/3dparty/patches/sweeteditor-oslog-gcc.patch' 2>/dev/null || git apply '${CMAKE_CURRENT_LIST_DIR}/3dparty/patches/sweeteditor-oslog-gcc.patch'"
+        )
+        FetchContent_MakeAvailable(sweeteditor_source)
+        # The public header includes <sweeteditor/decoration.h>; point
+        # consumers at the fetched copy instead of the empty vendored dir.
+        set(SWEETEDITOR_INCLUDE_DIR "${sweeteditor_source_SOURCE_DIR}/include")
+    endif ()
 endif ()
 
 # SweetLine is intentionally NOT a dependency: highlighting plugs in through
@@ -98,14 +118,19 @@ endif ()
 # ShouldCommitFocusOnPointerUp is a newer HuxerUI NodeExtension hook (keeps
 # editor drags and command taps from raising the keyboard) that released SDKs
 # may not ship. Detect it so the component overrides it only when available.
+# ScrollInputEvent likewise exists only in newer SDKs; scan every header so
+# one hook's match cannot hide the other.
 set(HUXERUI_HAS_FOCUS_POINTER_HOOK OFF)
+set(HUXERUI_HAS_SCROLL_INPUT_EVENT OFF)
 if (HUXERUI_HOME AND IS_DIRECTORY "${HUXERUI_HOME}/include/huxerui")
     file(GLOB HUXERUI_PUBLIC_HEADERS "${HUXERUI_HOME}/include/huxerui/*.h")
     foreach (HUXERUI_HEADER ${HUXERUI_PUBLIC_HEADERS})
         file(READ "${HUXERUI_HEADER}" HUXERUI_HEADER_CONTENT)
         if (HUXERUI_HEADER_CONTENT MATCHES "ShouldCommitFocusOnPointerUp")
             set(HUXERUI_HAS_FOCUS_POINTER_HOOK ON)
-            break()
+        endif ()
+        if (HUXERUI_HEADER_CONTENT MATCHES "struct ScrollInputEvent")
+            set(HUXERUI_HAS_SCROLL_INPUT_EVENT ON)
         endif ()
     endforeach ()
 endif ()
@@ -115,6 +140,9 @@ if (HUXERUI_HAS_FOCUS_POINTER_HOOK)
         PRIVATE
             CODEEDITOR_HAS_SHOULD_COMMIT_FOCUS_ON_POINTER_UP
     )
+endif ()
+if (HUXERUI_HAS_SCROLL_INPUT_EVENT)
+    target_compile_definitions(codeeditor PRIVATE CODEEDITOR_HAS_SCROLL_INPUT_EVENT)
 endif ()
 
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY)
@@ -131,7 +159,7 @@ endif ()
 
 target_include_directories(codeeditor PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/3dparty/SweetEditor/include>"
+        "$<BUILD_INTERFACE:${SWEETEDITOR_INCLUDE_DIR}>"
         "$<INSTALL_INTERFACE:include>"
 )
 
@@ -143,7 +171,8 @@ add_library(HuxerUI::CodeEditor ALIAS codeeditor)
 # SDK build skips them.
 set(HUXERUI_CODEEDITOR_DEFAULT_TESTS OFF)
 if (NOT HUXERUI_LIBRARY_GRAPH_ONLY AND NOT EMSCRIPTEN AND NOT IOS AND NOT ANDROID
-        AND HUXERUI_HOME AND EXISTS "${HUXERUI_HOME}/3dparty/catch2/huxerui_3p.cmake")
+        AND HUXERUI_HOME AND TARGET HuxerUI::huxerui_static
+        AND EXISTS "${HUXERUI_HOME}/3dparty/catch2/huxerui_3p.cmake")
     set(HUXERUI_CODEEDITOR_DEFAULT_TESTS ON)
 endif ()
 option(HUXERUI_CODEEDITOR_BUILD_TESTS "Build CodeEditor component tests" ${HUXERUI_CODEEDITOR_DEFAULT_TESTS})

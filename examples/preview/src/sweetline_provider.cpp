@@ -5,7 +5,9 @@
 #include <map>
 #include <string_view>
 
-#if defined(__ANDROID__)
+#if !defined(SWEETLINE_PROVIDER_TRACE)
+#define CE_TRACE(...) ((void)0)
+#elif defined(__ANDROID__)
 #include <android/log.h>
 #define CE_TRACE(...) __android_log_print(ANDROID_LOG_INFO, "CodeEditor", __VA_ARGS__)
 #else
