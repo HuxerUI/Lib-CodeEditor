@@ -1,5 +1,5 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <Bundle Name="CodeEditor Preview" Manufacturer="com.example.sweetedithuxer" Version="@HUXERUI_WINDOWS_PROJECT_VERSION@"
+  <Bundle Name="CodeEditor Preview" Manufacturer="org.huxerui.lib.codeeditor.preview" Version="@HUXERUI_WINDOWS_PROJECT_VERSION@"
           UpgradeCode="@HUXERUI_WINDOWS_BUNDLE_UPGRADE_CODE@"
           IconSourceFile="!(bindpath.Project)\app.ico">
     <BootstrapperApplication SourceFile="!(bindpath.Installer)\example_codeeditor-Installer.exe">

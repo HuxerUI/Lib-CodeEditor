@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity name="com.example.sweetedithuxer" version="1.0.0.0" type="win32" />
+  <assemblyIdentity name="org.huxerui.lib.codeeditor.preview" version="1.0.0.0" type="win32" />
   <description>CodeEditor Preview</description>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>

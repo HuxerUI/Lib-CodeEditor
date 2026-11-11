@@ -1,4 +1,4 @@
-package com.example.sweetedithuxer;
+package org.huxerui.lib.codeeditor.preview;
 
 import org.huxerui.HuxerUIActivity;
 

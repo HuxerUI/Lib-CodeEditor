@@ -5,7 +5,7 @@ function(huxerui_configure_web_app target_name)
 
     set_target_properties(${target_name} PROPERTIES SUFFIX ".js")
     set(HUXERUI_WEB_MODULE_FILE "${target_name}.js")
-    set(HUXERUI_WEB_STORAGE_KEY "com.example.sweetedithuxer")
+    set(HUXERUI_WEB_STORAGE_KEY "org.huxerui.lib.codeeditor.preview")
     set(HUXERUI_WEB_ENTRY_FILE "${target_name}.html")
     set(HUXERUI_WEB_FAVICON_FILE "${target_name}.favicon.svg")
     set(HUXERUI_WEB_APPLE_TOUCH_ICON_FILE "${target_name}.apple-touch-icon.png")

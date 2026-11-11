@@ -13,7 +13,7 @@
   <key>CFBundleVersion</key>
   <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
   <key>CFBundleIdentifier</key>
-  <string>com.example.sweetedithuxer</string>
+  <string>org.huxerui.lib.codeeditor.preview</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>CFBundleName</key>

@@ -41,7 +41,7 @@ huxerui_add_app(example_codeeditor
         BUNDLE_NAME
             "CodeEditor Preview"
         BUNDLE_IDENTIFIER
-            "com.example.sweetedithuxer"
+            "org.huxerui.lib.codeeditor.preview"
 )
 
 huxerui_configure_project_app(example_codeeditor)

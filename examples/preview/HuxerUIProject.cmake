@@ -9,7 +9,7 @@ if (HUXERUI_PROJECT_PLAN_OUTPUT)
   "schema": 1,
   "kind": "app",
   "name": "CodeEditor Preview",
-  "id": "com.example.sweetedithuxer",
+  "id": "org.huxerui.lib.codeeditor.preview",
   "target": "example_codeeditor"
 }
 ]=])

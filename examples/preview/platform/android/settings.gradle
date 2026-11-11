@@ -38,7 +38,7 @@ dependencyResolutionManagement {
 gradle.ext.huxeruiHome = huxeruiHome
 gradle.ext.huxeruiUsesSource = huxeruiUsesSource
 gradle.ext.huxeruiAndroidArchive = huxeruiArchive
-rootProject.name = "sweetedit_huxer"
+rootProject.name = "CodeEditor Preview"
 if (huxeruiUsesSource) {
     include(":HuxerUI")
     project(":HuxerUI").projectDir = huxeruiLibrary

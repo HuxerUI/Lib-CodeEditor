@@ -8,8 +8,8 @@ if (HUXERUI_PROJECT_PLAN_OUTPUT)
 {
   "schema": 1,
   "kind": "library",
-  "name": "codeeditor",
-  "id": "com.example.codeeditor",
+  "name": "CodeEditor",
+  "id": "org.huxerui.lib.codeeditor",
   "target": "codeeditor",
   "namespace": "huxerui::codeeditor",
   "publicTarget": "HuxerUI::CodeEditor"

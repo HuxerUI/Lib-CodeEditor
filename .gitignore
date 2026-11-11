@@ -13,7 +13,7 @@
 Thumbs.db
 
 # Local backup directories
-/sweetedit-backup/
+/codeeditor-backup/
 
 # Local CLI-generated demo project
 /demo/

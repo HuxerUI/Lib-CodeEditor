@@ -9,9 +9,9 @@
                         buildForAnalyzing="YES">
         <BuildableReference BuildableIdentifier="primary"
                             BlueprintIdentifier="000000000000000000000500"
-                            BuildableName="sweetedit_huxer.app"
-                            BlueprintName="sweetedit_huxer"
-                            ReferencedContainer="container:sweetedit_huxer.xcodeproj"/>
+                            BuildableName="example_codeeditor.app"
+                            BlueprintName="example_codeeditor"
+                            ReferencedContainer="container:example_codeeditor.xcodeproj"/>
       </BuildActionEntry>
     </BuildActionEntries>
   </BuildAction>
@@ -31,9 +31,9 @@
     <BuildableProductRunnable runnableDebuggingMode="0">
       <BuildableReference BuildableIdentifier="primary"
                           BlueprintIdentifier="000000000000000000000500"
-                          BuildableName="sweetedit_huxer.app"
-                          BlueprintName="sweetedit_huxer"
-                          ReferencedContainer="container:sweetedit_huxer.xcodeproj"/>
+                          BuildableName="example_codeeditor.app"
+                          BlueprintName="example_codeeditor"
+                          ReferencedContainer="container:example_codeeditor.xcodeproj"/>
     </BuildableProductRunnable>
   </LaunchAction>
   <ProfileAction buildConfiguration="Release"
@@ -44,9 +44,9 @@
     <BuildableProductRunnable runnableDebuggingMode="0">
       <BuildableReference BuildableIdentifier="primary"
                           BlueprintIdentifier="000000000000000000000500"
-                          BuildableName="sweetedit_huxer.app"
-                          BlueprintName="sweetedit_huxer"
-                          ReferencedContainer="container:sweetedit_huxer.xcodeproj"/>
+                          BuildableName="example_codeeditor.app"
+                          BlueprintName="example_codeeditor"
+                          ReferencedContainer="container:example_codeeditor.xcodeproj"/>
     </BuildableProductRunnable>
   </ProfileAction>
   <AnalyzeAction buildConfiguration="Debug"/>

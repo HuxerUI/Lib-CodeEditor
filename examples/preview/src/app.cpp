@@ -561,7 +561,7 @@ View App() {
 const Application application{
     App,
     {
-        .window = {.title = "CodeEditor"},
+        .window = {.title = "CodeEditor Preview"},
         .show_debug_overlay = true,
     },
 };

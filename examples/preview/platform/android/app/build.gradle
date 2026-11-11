@@ -47,12 +47,12 @@ android {
         buildConfig = true
     }
 
-    namespace = "com.example.sweetedithuxer"
+    namespace = "org.huxerui.lib.codeeditor.preview"
     compileSdk = huxeruiCompileSdk
     ndkVersion = huxeruiNdkVersion
 
     defaultConfig {
-        applicationId = "com.example.sweetedithuxer"
+        applicationId = "org.huxerui.lib.codeeditor.preview"
         minSdk = huxeruiMinSdk
         targetSdk = huxeruiTargetSdk
         versionCode = 1

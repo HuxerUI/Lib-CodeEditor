@@ -25,11 +25,11 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		000000000000000000000200 /* sweetedit_huxer.app */ = {
+		000000000000000000000200 /* example_codeeditor.app */ = {
 			isa = PBXFileReference;
 			explicitFileType = wrapper.application;
 			includeInIndex = 0;
-			path = "sweetedit_huxer.app";
+			path = "example_codeeditor.app";
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
 		000000000000000000000201 /* main.mm */ = {
@@ -141,7 +141,7 @@
 		000000000000000000000403 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				000000000000000000000200 /* sweetedit_huxer.app */,
+				000000000000000000000200 /* example_codeeditor.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -158,7 +158,7 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		000000000000000000000500 /* sweetedit_huxer */ = {
+		000000000000000000000500 /* example_codeeditor */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 000000000000000000000702;
 			buildPhases = (
@@ -170,12 +170,12 @@
 			);
 			buildRules = ();
 			dependencies = ();
-			name = sweetedit_huxer;
+			name = example_codeeditor;
 			packageProductDependencies = (
 				000000000000000000000901 /* HuxerUILibraries */,
 			);
-			productName = "sweetedit_huxer";
-			productReference = 000000000000000000000200 /* sweetedit_huxer.app */;
+			productName = "example_codeeditor";
+			productReference = 000000000000000000000200 /* example_codeeditor.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -208,7 +208,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				000000000000000000000500 /* sweetedit_huxer */,
+				000000000000000000000500 /* example_codeeditor */,
 			);
 		};
 /* End PBXProject section */

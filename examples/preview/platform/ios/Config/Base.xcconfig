@@ -1,5 +1,5 @@
-PRODUCT_NAME = sweetedit_huxer
-PRODUCT_BUNDLE_IDENTIFIER = com.example.sweetedithuxer
+PRODUCT_NAME = example_codeeditor
+PRODUCT_BUNDLE_IDENTIFIER = org.huxerui.lib.codeeditor.preview
 MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
 IPHONEOS_DEPLOYMENT_TARGET = 15.0

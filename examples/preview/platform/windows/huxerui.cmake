@@ -39,13 +39,13 @@ function(huxerui_configure_windows_project_package target_name install_component
 
     string(UUID HUXERUI_WINDOWS_MSI_UPGRADE_CODE
             NAMESPACE 6ba7b810-9dad-11d1-80b4-00c04fd430c8
-            NAME "com.example.sweetedithuxer.msi"
+            NAME "org.huxerui.lib.codeeditor.preview.msi"
             TYPE SHA1
             UPPER
     )
     string(UUID HUXERUI_WINDOWS_BUNDLE_UPGRADE_CODE
             NAMESPACE 6ba7b810-9dad-11d1-80b4-00c04fd430c8
-            NAME "com.example.sweetedithuxer.bundle"
+            NAME "org.huxerui.lib.codeeditor.preview.bundle"
             TYPE SHA1
             UPPER
     )
