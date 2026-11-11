@@ -1,0 +1,17 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Bundle Name="CodeEditor Preview" Manufacturer="com.example.sweetedithuxer" Version="@HUXERUI_WINDOWS_PROJECT_VERSION@"
+          UpgradeCode="@HUXERUI_WINDOWS_BUNDLE_UPGRADE_CODE@"
+          IconSourceFile="!(bindpath.Project)\app.ico">
+    <BootstrapperApplication SourceFile="!(bindpath.Installer)\example_codeeditor-Installer.exe">
+      <PayloadGroupRef Id="HuxerUIInstallerPayloads" />
+    </BootstrapperApplication>
+    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]CodeEditor Preview" />
+    <Variable Name="CreateDesktopShortcut" Type="numeric" Value="0" />
+    <Chain>
+      <MsiPackage SourceFile="!(bindpath.Package)\example_codeeditor.msi">
+        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
+        <MsiProperty Name="CREATE_DESKTOP_SHORTCUT" Value="[CreateDesktopShortcut]" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

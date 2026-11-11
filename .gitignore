@@ -7,6 +7,7 @@
 /.idea/
 /.vscode/
 /.vs/
+/.agents/
 
 .DS_Store
 Thumbs.db
@@ -17,8 +18,9 @@ Thumbs.db
 # Local CLI-generated demo project
 /demo/
 
-# Generated project graph
+# Preview build outputs
 /examples/preview/.huxerui/
+/examples/preview/dist/
 
 # Android Gradle build outputs
 /examples/preview/platform/android/.gradle/

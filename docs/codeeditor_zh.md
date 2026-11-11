@@ -154,7 +154,7 @@ CodeEditor(options)
 
 | 字段 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `font_family` | `std::string` | `""` | 正文字体族。空 = 平台等宽字体。命名族优先解析平台打包字体（Android 为 `assets/fonts/<族名>.ttf`），找不到回退系统字体表。变更实时生效，不丢失编辑状态。 |
+| `font_family` | `FontFamily` | `FontFamily::Monospace()` | 正文字体族。已安装的字体用 `FontFamily::Named`，随应用打包的字体用 `FontFamily::FromResources`。切换实时生效，保留编辑状态。 |
 | `font_size` | `float` | `14.0` | 正文字号（逻辑像素）。 |
 | `line_spacing_add` | `float` | `0.0` | 每行额外增加的行距。 |
 | `line_spacing_mult` | `float` | `1.2` | 行高倍率。 |
@@ -518,12 +518,12 @@ options.theme = theme;
 
 或者不设 `options.theme`——编辑器自动跟随环境 `MaterialTheme` 亮/暗。
 
-### 自定义字体（Android）
+### 自定义字体
 
-把 TTF 放到 `assets/fonts/<族名>.ttf`，然后：
+把静态 TTF 放到 `resources/raw/fonts/`，在应用线程加载。
 
 ```cpp
-options.font_family = "MyFont";   // 加载 assets/fonts/MyFont.ttf
+options.font_family = FontFamily::FromResources({RawResource("app", "raw/fonts/MyFont.ttf")});
 options.font_size = 15.0F;
 ```
 

@@ -3,11 +3,21 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleDisplayName</key>
-  <string>sweetedit_huxer</string>
+  <string>CodeEditor Preview</string>
+  <key>CFBundleExecutable</key>
+  <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+  <key>CFBundleVersion</key>
+  <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
   <key>CFBundleIdentifier</key>
   <string>com.example.sweetedithuxer</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
   <key>CFBundleName</key>
-  <string>sweetedit_huxer</string>
+  <string>CodeEditor Preview</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
 </dict>

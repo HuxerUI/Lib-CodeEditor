@@ -13,7 +13,7 @@ completion, search, decorations, and events are exposed the HuxerUI-native way.
 - Declarative component: `CodeEditor(options, controller)` returns an ordinary HuxerUI `View`
 - Retained `NodeExtension`: the editor core, document, and input state live on the mounted node
 - Editing: caret/selection, undo/redo, auto-indent, auto-closing brackets, Tab/space policy, read-only, pinch zoom
-- Custom fonts: `font_family` loads platform-bundled fonts (Android assets) with live switching
+- Custom fonts: `font_family` accepts HuxerUI font families loaded from resources, files, or installed fonts
 - Completion: provider-driven panel, snippet expansion, replacement ranges
 - Search and replace: built-in declarative search bar or programmatic `EditorController`
 - Full theming: `EditorTheme` covers every visual surface including the syntax token palette
@@ -64,9 +64,13 @@ huxerui_use_library(your_app
 )
 ```
 
-The library links the vendored SweetEditor core itself. Building requires the HuxerUI SDK
-(`HUXERUI_HOME`); see the
+Building requires HuxerUI SDK 0.4.0 (`HUXERUI_HOME`); see the
 [HuxerUI installation guide](https://github.com/HuxerUI/HuxerUI/blob/main/docs/guide/installation.md).
+After cloning, initialize the pinned SweetEditor and SweetLine submodules with Git.
+
+```sh
+git submodule update --init --recursive
+```
 
 ## Highlighting: implement a decoration provider
 
@@ -113,28 +117,27 @@ editor is mounted.
 ```text
 Lib-CodeEditor/
 ├── CMakeLists.txt                 # codeeditor library (links SweetEditor only)
+├── HuxerUIProject.cmake           # CLI project metadata and SDK discovery
 ├── include/huxerui/codeeditor.h   # public API
 ├── src/codeeditor/                # component implementation
 ├── tests/                         # Catch2 suite for pure public-API logic
 ├── examples/preview/              # demo app; wires optional SweetLine highlighting
 │   ├── src/sweetline_provider.*   # reference EditorDecorationProvider
-│   ├── platform/android/...assets/fonts/  # Maple Mono (+ no-ligature build)
+│   ├── resources/raw/fonts/       # Maple Mono (+ no-ligature build)
 │   └── platform/                  # per-platform shells
 └── 3dparty/SweetEditor/           # editor core (vendored gitlink)
 ```
 
 ## Building and CI
 
-Desktop, Android, and Termux builds follow the standard HuxerUI flows (`huxerui package <platform>`,
-see the [HuxerUI docs](https://github.com/HuxerUI/HuxerUI/tree/main/docs)). The GitHub Actions
-workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)) builds Windows, Linux,
-macOS, and Android on every push to `main` and publishes the artifacts to a continuous GitHub
-Release; tag pushes (`v*`) publish stable releases.
+Run `huxerui build <platform>` or `huxerui package <platform>` from `examples/preview`.
+Use the same CLI commands on Termux. The [release workflow](.github/workflows/release.yml)
+packages Windows, Linux, macOS, and Android using the pinned public SDK release. Successful
+builds on `main` update the continuous release, and tag pushes (`v*`) publish stable releases.
 
 The Catch2 suite under `tests/` covers options validation, disconnected controller behavior, and
-theme derivation. It builds automatically when `HUXERUI_HOME` points at a source HuxerUI checkout
-on a desktop host (the Catch2 amalgamation ships with the checkout); force it with
-`-DHUXERUI_CODEEDITOR_BUILD_TESTS=ON` and run it through `ctest`.
+theme derivation. It uses the Catch2 amalgamation bundled with SweetEditor and builds by default
+when configuring the library root on a desktop host. Run it through `ctest`.
 
 ## Documentation
 
@@ -144,8 +147,8 @@ on a desktop host (the Catch2 amalgamation ships with the checkout); force it wi
 
 ## Third-party dependencies
 
-- [SweetEditor](3dparty/SweetEditor) — cross-platform editor core (vendored gitlink, never modified)
-- [SweetLine](3dparty/SweetLine) — highlighting engine, used only by the demo (vendored gitlink)
+- [SweetEditor](3dparty/SweetEditor) — cross-platform editor core
+- [SweetLine](3dparty/SweetLine) — highlighting engine used by the demo
 
 ## License
 

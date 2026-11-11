@@ -157,7 +157,7 @@ Composition validates the configuration before any editor state is allocated and
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `font_family` | `std::string` | `""` | Content font family. Empty = platform monospace. A named family resolves against platform-bundled fonts (`assets/fonts/<family>.ttf` on Android) then the system table. Changes apply live without state loss. |
+| `font_family` | `FontFamily` | `FontFamily::Monospace()` | Content font family. Use `FontFamily::Named` for an installed family or `FontFamily::FromResources` for bundled fonts. Changes apply live without state loss. |
 | `font_size` | `float` | `14.0` | Content font size in logical pixels. |
 | `line_spacing_add` | `float` | `0.0` | Extra spacing added to each line height. |
 | `line_spacing_mult` | `float` | `1.2` | Line height multiplier. |
@@ -584,12 +584,12 @@ options.theme = theme;
 
 Or don't set `options.theme` at all — the editor follows the ambient `MaterialTheme` automatically.
 
-### Custom font (Android)
+### Custom font
 
-Ship a TTF at `assets/fonts/<FamilyName>.ttf` and set:
+Load a static TTF from `resources/raw/fonts/` on the application thread.
 
 ```cpp
-options.font_family = "MyFont";   // loads assets/fonts/MyFont.ttf
+options.font_family = FontFamily::FromResources({RawResource("app", "raw/fonts/MyFont.ttf")});
 options.font_size = 15.0F;
 ```
 

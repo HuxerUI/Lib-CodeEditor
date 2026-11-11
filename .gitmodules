@@ -1,0 +1,6 @@
+[submodule "3dparty/SweetEditor"]
+	path = 3dparty/SweetEditor
+	url = https://github.com/FinalScave/SweetEditor.git
+[submodule "3dparty/SweetLine"]
+	path = 3dparty/SweetLine
+	url = https://github.com/FinalScave/SweetLine.git

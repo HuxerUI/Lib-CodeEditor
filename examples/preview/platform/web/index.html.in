@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>sweetedit_huxer</title>
+  <link rel="icon" type="image/svg+xml" href="./@HUXERUI_WEB_FAVICON_FILE@">
+  <link rel="apple-touch-icon" href="./@HUXERUI_WEB_APPLE_TOUCH_ICON_FILE@">
+  <title>CodeEditor Preview</title>
   <style>
     html, body {
       width: 100%;

@@ -8,7 +8,13 @@
 #define CODEEDITOR_TRACE(...) std::fprintf(stderr, __VA_ARGS__)
 #endif
 
-#include <huxerui/huxerui.h>
+#include <huxerui/environment.h>
+#include <huxerui/layout.h>
+#include <huxerui/modifier.h>
+#include <huxerui/paint.h>
+#include <huxerui/semantics.h>
+#include <huxerui/text.h>
+#include <huxerui/text_input.h>
 
 #include <sweeteditor/decoration.h>
 #include <sweeteditor/document.h>
@@ -326,7 +332,6 @@ void RegisterSyntaxStyles(se::EditorCore& core, const EditorTheme& theme) {
             ToArgb(theme.syntax_annotation),
             0,
             se::FONT_STYLE_BOLD,
-            1.0f,
         }
     );
   }
@@ -405,15 +410,14 @@ TextStyle MakeTextStyle(int32_t font_style, int32_t argb_color, float font_size)
 // ---- SweetEditor TextMeasurer bridge ---------------------------------------
 class HuxeruiTextMeasurer final : public se::TextMeasurer {
 public:
-  explicit HuxeruiTextMeasurer(huxerui::TextMeasurer& measurer, float font_size, std::string font_family)
+  explicit HuxeruiTextMeasurer(huxerui::TextMeasurer& measurer, float font_size, FontFamily font_family)
       : measurer_(&measurer), font_size_(font_size), font_family_(std::move(font_family)) {}
 
   [[nodiscard]] huxerui::Font ContentFont() const {
-    return font_family_.empty() ? huxerui::Font::Monospace(font_size_)
-                                : huxerui::Font::Named(font_family_, font_size_);
+    return Font::FromFamily(font_family_, font_size_);
   }
 
-  void SetFont(std::string font_family, float font_size) {
+  void SetFont(FontFamily font_family, float font_size) {
     font_family_ = std::move(font_family);
     font_size_ = font_size;
   }
@@ -453,7 +457,7 @@ public:
   }
 
 private:
-  std::string font_family_;
+  FontFamily font_family_;
   huxerui::TextMeasurer* measurer_;
   float font_size_;
 };
@@ -1574,9 +1578,6 @@ public:
   }
 
   bool HandlePointer(const PointerEvent& event) {
-    if (event.type == PointerEventType::Down) {
-      suppress_focus_on_up_ = false;
-    }
     // Scrollbar thumb dragging takes priority over the editor gestures.
     if (scrollbar_dragging_) {
       if (event.type == PointerEventType::Move) {
@@ -1686,13 +1687,10 @@ public:
         RefreshDecorations(true);
         FireCaretEvents();
       }
-      // Decoration hits (reference fireGestureEvents): fold toggles are
-      // handled inline; the rest dispatch to host callbacks. Taps on command
-      // areas (gutter icons, code lens, links, inlay hints, fold controls)
-      // must not focus the editor or raise the keyboard.
+      // Fold toggles refresh the editor inline. Other decoration taps dispatch
+      // to application callbacks.
       if (result.gesture_type == se::GestureType::TAP && result.hit_target.type != se::HitTargetType::NONE) {
         const se::HitTarget& target = result.hit_target;
-        suppress_focus_on_up_ = true;
         switch (target.type) {
         case se::HitTargetType::FOLD_GUTTER:
         case se::HitTargetType::FOLD_PLACEHOLDER:
@@ -1931,14 +1929,10 @@ public:
     return font_size_;
   }
 
-  [[nodiscard]] const std::string& FontFamily() const noexcept {
-    return font_family_;
-  }
-
   // Applies a content font change without resetting the editor: the measurer
   // bridge retargets and the core's onFontMetricsChanged recomputes layout
   // while preserving the caret, scroll anchor, undo stack, and folds.
-  void ApplyFont(std::string font_family, float font_size) {
+  void ApplyFont(FontFamily font_family, float font_size) {
     if (font_family == font_family_ && font_size == font_size_) {
       return;
     }
@@ -1966,8 +1960,7 @@ public:
 
   // The content font: the platform monospace default or the configured family.
   [[nodiscard]] Font ContentFont() const {
-    return font_family_.empty() ? Font::Monospace(EffectiveFontSize())
-                                : Font::Named(font_family_, EffectiveFontSize());
+    return Font::FromFamily(font_family_, EffectiveFontSize());
   }
 
   // Applies the core's current display scale (reported through scale_changed
@@ -2154,16 +2147,6 @@ public:
       folds_dirty_ = false;
     }
     model_dirty_ = true;
-  }
-
-  // Whether the latest tap hit a command area (gutter icon, code lens, link,
-  // inlay hint, fold control) that must not focus the editor.
-  bool SuppressFocusOnPointerUp() const noexcept {
-    return suppress_focus_on_up_;
-  }
-
-  void SetSuppressFocusOnUp(bool suppress) {
-    suppress_focus_on_up_ = suppress;
   }
 
   bool AdvanceFrame(double timestamp) {
@@ -3446,7 +3429,7 @@ private:
   std::shared_ptr<HuxeruiTextMeasurer> text_measurer_;
   huxerui::TextMeasurer* measurer_ = nullptr;
   EditorTheme theme_;
-  std::string font_family_;
+  FontFamily font_family_;
   float display_scale_{1.0F};
   // Set when document content changed since the last fold publication; the
   // next settled refresh re-applies fold regions (possibly empty to clear).
@@ -3516,7 +3499,6 @@ private:
   bool model_dirty_{true};
   bool decorations_pending_{false};
   bool highlight_published_{false};
-  bool suppress_focus_on_up_{false};
   static constexpr unsigned kHighlightBootstrapFrames = 16;
   unsigned highlight_bootstrap_attempts_{0};
   // Scrollbar thumb dragging state.
@@ -3821,23 +3803,6 @@ struct EditorBehavior {
           static_cast<int>(event.type), event.position.x, event.position.y,
           static_cast<int>(event.device_kind)
       );
-      // A press that turns into a drag scrolls the document; it must not
-      // commit editor focus (which would raise the soft keyboard) on release.
-      if (event.type == PointerEventType::Down) {
-        pointer_down_ = event.position;
-        pointer_dragging_ = false;
-        holder_->SetSuppressFocusOnUp(false);
-      } else if (event.type == PointerEventType::Move && pointer_down_.has_value() && !pointer_dragging_) {
-        const float dx = event.position.x - pointer_down_->x;
-        const float dy = event.position.y - pointer_down_->y;
-        if (dx * dx + dy * dy >= 100.0F) {  // 10px slop
-          pointer_dragging_ = true;
-          holder_->SetSuppressFocusOnUp(true);
-        }
-      } else if (event.type == PointerEventType::Up || event.type == PointerEventType::Cancel) {
-        pointer_down_.reset();
-        pointer_dragging_ = false;
-      }
       const bool changed = holder_->HandlePointer(event);
       if (changed) {
         InvalidatePaint();
@@ -3863,12 +3828,6 @@ struct EditorBehavior {
       holder_->SetFocused(focused);
       InvalidatePaint();
     }
-
-#if defined(CODEEDITOR_HAS_SHOULD_COMMIT_FOCUS_ON_POINTER_UP)
-    bool ShouldCommitFocusOnPointerUp() const noexcept override {
-      return !holder_->SuppressFocusOnPointerUp();
-    }
-#endif
 
     FrameResult OnFrame(ViewNode& node, const FrameInfo& frame) override {
       static_cast<void>(node);
@@ -3913,9 +3872,6 @@ struct EditorBehavior {
       // them in host coordinates without clipping and bleed onto other views.
       return nullptr;
     }
-
-    std::optional<Point> pointer_down_;
-    bool pointer_dragging_ = false;
 
     bool HitTest(ViewNode& node, Point position) const override {
       const Rect bounds = node.Bounds();

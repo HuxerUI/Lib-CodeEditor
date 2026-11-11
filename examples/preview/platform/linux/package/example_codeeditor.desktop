@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=CodeEditor Preview
+Exec=example_codeeditor
+Icon=example_codeeditor
+Categories=Utility;
+Terminal=false
