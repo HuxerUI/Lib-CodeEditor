@@ -2,11 +2,18 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdio>
+#include <functional>
+#include <iterator>
 #include <map>
 #include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include <huxerui/codeeditor.h>
+#include <sweeteditor/utility.h>
 
 #include <app_resources.h>
 
@@ -16,172 +23,123 @@ using namespace huxerui;
 
 namespace {
 
+namespace ce = huxerui::codeeditor;
+
 using huxerui::codeeditor::CompletionContext;
 using huxerui::codeeditor::CompletionItem;
 using huxerui::codeeditor::CompletionItemKind;
 
-CompletionItem MakeItem(
-    std::string label,
-    std::string detail,
-    std::string insert_text,
-    CompletionItemKind kind,
-    std::string sort_key,
-    bool snippet = false
-) {
-  CompletionItem item;
-  item.label = std::move(label);
-  item.detail = std::move(detail);
-  item.insert_text = std::move(insert_text);
-  item.kind = kind;
-  item.sort_key = std::move(sort_key);
-  item.insert_text_is_snippet = snippet;
-  return item;
+constexpr char kForSnippet[] = "for (int ${1:i} = 0; ${1:i} < ${2:n}; ++${1:i}) {\n\t$0\n}";
+
+bool IsDemoIdentifierCharacter(char16_t character) {
+  return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+         (character >= '0' && character <= '9') || character == '_';
 }
 
-// Mirrors the SweetEditor demo completion provider: '.' triggers member
-// completion synchronously; any other request filters keyword/identifier
-// candidates by the identifier prefix at the caret and replaces that range.
-std::vector<CompletionItem> ProvideCompletions(const CompletionContext& context) {
-  if (context.trigger_kind == CompletionContext::TriggerKind::Character &&
-      context.trigger_character == ".") {
-    return {
-        MakeItem("length", "size_t", "length()", CompletionItemKind::Property, "a_length"),
-        MakeItem("push_back", "void push_back(T)", "push_back()", CompletionItemKind::Function, "b_push_back"),
-        MakeItem("begin", "iterator", "begin()", CompletionItemKind::Function, "c_begin"),
-        MakeItem("end", "iterator", "end()", CompletionItemKind::Function, "d_end"),
-        MakeItem("size", "size_t", "size()", CompletionItemKind::Function, "e_size"),
-    };
-  }
-
+std::vector<CompletionItem> CollectDemoCompletions(const CompletionContext& context) {
   struct Candidate {
     const char* label;
     const char* detail;
     const char* insert_text;
-    bool snippet;
     CompletionItemKind kind;
     const char* sort_key;
+    bool snippet = false;
   };
   static constexpr Candidate kCandidates[] = {
-      {"std::string", "class", "std::string", false, CompletionItemKind::Class, "a_string"},
-      {"std::vector", "template class", "std::vector<>", false, CompletionItemKind::Class, "b_vector"},
-      {"std::cout", "ostream", "std::cout", false, CompletionItemKind::Variable, "c_cout"},
-      {"if", "snippet", "if (${1:condition}) {\n\t$0\n}", true, CompletionItemKind::Snippet, "d_if"},
-      {"for", "snippet",
-       "for (int ${1:i} = 0; ${1:i} < ${2:n}; ++${1:i}) {\n\t$0\n}", true, CompletionItemKind::Snippet, "e_for"},
+      {"std::string", "class", "std::string", CompletionItemKind::Class, "a_string"},
+      {"std::vector", "template class", "std::vector<>", CompletionItemKind::Class, "b_vector"},
+      {"std::cout", "ostream", "std::cout", CompletionItemKind::Variable, "c_cout"},
+      {"if", "snippet", "if (${1:condition}) {\n\t$0\n}", CompletionItemKind::Snippet, "d_if", true},
+      {"for", "snippet", kForSnippet, CompletionItemKind::Snippet, "e_for", true},
       {"class", "snippet - class definition",
-       "class ${1:ClassName} {\npublic:\n\t${1:ClassName}() {$2}\n\t~${1:ClassName}() {$3}\n$0\n};", true,
-       CompletionItemKind::Snippet, "f_class"},
-      {"return", "keyword", "return ", false, CompletionItemKind::Keyword, "g_return"},
+       "class ${1:ClassName} {\npublic:\n\t${1:ClassName}() {$2}\n\t~${1:ClassName}() {$3}\n$0\n};",
+       CompletionItemKind::Snippet, "f_class", true},
+      {"return", "keyword", "return ", CompletionItemKind::Keyword, "g_return"},
+  };
+  static constexpr Candidate kMemberCandidates[] = {
+      {"length", "size_t", "length()", CompletionItemKind::Property, "a_length"},
+      {"push_back", "void push_back(T)", "push_back()", CompletionItemKind::Function, "b_push_back"},
+      {"begin", "iterator", "begin()", CompletionItemKind::Function, "c_begin"},
+      {"end", "iterator", "end()", CompletionItemKind::Function, "d_end"},
+      {"size", "size_t", "size()", CompletionItemKind::Function, "e_size"},
   };
 
-  const uint32_t start = context.word_start;
-  const uint32_t end = context.word_end;
-  if (start >= end || context.cursor_column < start || context.cursor_column > end ||
-      end > context.line_text.size()) {
-    return {};
+  sweeteditor::U16String line;
+  sweeteditor::StrUtil::convertUTF8ToUTF16(context.line_text, line);
+  const auto caret = context.cursor_position;
+  if (caret.column > line.size()) return {};
+  ce::TextRange replacement = context.word_range;
+  if (replacement.start.column >= line.size() || !IsDemoIdentifierCharacter(line[replacement.start.column])) {
+    replacement = {caret, caret};
   }
-  const std::string pattern = context.line_text.substr(start, context.cursor_column - start);
-  if (pattern.empty()) {
-    return {};
-  }
+  const auto start = replacement.start.column;
+  if (start > caret.column || replacement.end.column > line.size() || replacement.end.column < caret.column) return {};
+
+  const bool member_access = start > 0 && line[start - 1] == '.';
+  std::string prefix;
+  sweeteditor::StrUtil::convertUTF16ToUTF8(line.substr(start, caret.column - start), prefix);
+  if (!member_access && prefix.empty() && context.trigger_kind != ce::CompletionTriggerKind::Invoked) return {};
+
+  const auto candidates = member_access ? std::span<const Candidate>(kMemberCandidates)
+                                        : std::span<const Candidate>(kCandidates);
   std::vector<CompletionItem> items;
-  for (const Candidate& candidate : kCandidates) {
-    const std::string insert_text = candidate.insert_text;
-    if (insert_text.rfind(pattern, 0) != 0 && std::string(candidate.label).rfind(pattern, 0) != 0) {
-      continue;
-    }
-    CompletionItem item = MakeItem(
-        candidate.label, candidate.detail, candidate.insert_text, candidate.kind, candidate.sort_key, candidate.snippet);
-    item.has_text_edit = true;
-    item.text_edit_start = start;
-    item.text_edit_end = end;
-    item.text_edit_text = candidate.insert_text;
-    items.push_back(std::move(item));
+  for (const Candidate& candidate : candidates) {
+    if (!std::string_view(candidate.label).starts_with(prefix)) continue;
+    items.push_back({
+        .label = candidate.label,
+        .detail = candidate.detail,
+        .insert_text_format = candidate.snippet ? ce::InsertTextFormat::Snippet : ce::InsertTextFormat::PlainText,
+        .text_edit = ce::TextEdit{replacement, candidate.insert_text},
+        .sort_key = candidate.sort_key,
+        .kind = candidate.kind,
+    });
   }
   return items;
 }
 
-}  // namespace
+class DemoCompletionProvider final : public ce::CompletionProvider {
+ public:
+  bool IsTriggerCharacter(std::string_view character) const override {
+    return character == "." || (character.size() == 1 && IsDemoIdentifierCharacter(character.front()));
+  }
 
-// Dark showcase theme: starts from the light reference and overrides every
-// major surface, demonstrating partial theming on top of EditorTheme.
-huxerui::codeeditor::EditorTheme MakeDarkTheme() {
-  auto theme = huxerui::codeeditor::EditorTheme::Default();
-  theme.background = Color::Rgb(30, 30, 46);
-  theme.gutter_background = Color::Rgb(24, 24, 37);
-  theme.current_line_background = Color::Rgb(255, 255, 255, 0.06F);
-  theme.separator_color = Color::Rgb(88, 91, 112);
-  theme.text_foreground = Color::Rgb(205, 214, 244);
-  theme.line_number_color = Color::Rgb(108, 112, 152);
-  theme.caret_color = Color::Rgb(245, 224, 220);
-  theme.link_color = Color::Rgb(137, 180, 250);
-  theme.active_link_color = Color::Rgb(137, 220, 235);
-  theme.codelens_color = Color::Rgb(166, 173, 200, 0.69F);
-  theme.active_codelens_color = Color::Rgb(137, 180, 250);
-  theme.selection_background = Color::Rgb(137, 180, 250, 0.33F);
-  theme.bracket_match_background = Color::Rgb(137, 220, 235, 0.16F);
-  theme.document_highlight_text = Color::Rgb(137, 180, 250, 0.10F);
-  theme.document_highlight_read = Color::Rgb(137, 180, 250, 0.14F);
-  theme.document_highlight_write = Color::Rgb(137, 180, 250, 0.20F);
-  theme.indent_guide_color = Color::Rgb(88, 91, 112);
-  theme.inlay_hint_background = Color::Rgb(137, 180, 250, 0.12F);
-  theme.inlay_hint_text = Color::Rgb(166, 173, 200);
-  theme.fold_placeholder_background = Color::Rgb(88, 91, 112, 0.30F);
-  theme.fold_placeholder_text = Color::Rgb(205, 214, 244);
-  theme.gutter_icon_color = Color::Rgb(137, 220, 235);
-  theme.syntax_keyword = Color::Rgb(203, 166, 247);
-  theme.syntax_type = Color::Rgb(239, 213, 128);
-  theme.syntax_class = Color::Rgb(239, 213, 128);
-  theme.syntax_function = Color::Rgb(137, 180, 250);
-  theme.syntax_variable = Color::Rgb(205, 214, 244);
-  theme.syntax_string = Color::Rgb(166, 218, 179);
-  theme.syntax_number = Color::Rgb(250, 179, 135);
-  theme.syntax_comment = Color::Rgb(108, 112, 152);
-  theme.syntax_preprocessor = Color::Rgb(245, 139, 168);
-  theme.syntax_builtin = Color::Rgb(137, 220, 235);
-  theme.syntax_punctuation = Color::Rgb(148, 156, 188);
-  theme.syntax_annotation = Color::Rgb(235, 160, 172);
-  theme.syntax_url = Color::Rgb(137, 220, 235);
-  theme.syntax_rainbow = {
-      Color::Rgb(243, 139, 168), Color::Rgb(250, 179, 135), Color::Rgb(239, 213, 128),
-      Color::Rgb(166, 218, 179), Color::Rgb(137, 220, 235), Color::Rgb(137, 180, 250),
-      Color::Rgb(203, 166, 247), Color::Rgb(245, 194, 231),
+  Task<ce::CompletionResult> ProvideCompletions(CompletionContext context) override {
+    co_return ce::CompletionResult{CollectDemoCompletions(context), true};
+  }
+};
+
+ce::CompletionItemRenderer DemoCompletionRows(const ce::EditorTheme& theme) {
+  return [label = theme.completion_label_color, detail = theme.completion_detail_color, accent = theme.cursor_color](
+      const CompletionItem& item, bool selected) {
+    return Column {
+      Text(item.label).Style({Font::Monospace(12.0F), selected ? accent : label}),
+      item.detail.empty() ? View{} : Text(item.detail).Style({Font::System(10.0F), detail}),
+    }.With(Padding(EdgeInsets::Symmetric(12.0F, 0.0F)), Spacing(1.0F), ClipChildren());
   };
-  theme.completion_background = Color::Rgb(24, 24, 37, 0.96F);
-  theme.completion_border = Color::Rgb(88, 91, 112, 0.40F);
-  theme.completion_selected_background = Color::Rgb(137, 180, 250, 0.28F);
-  theme.completion_label = Color::Rgb(205, 214, 244);
-  theme.completion_detail = Color::Rgb(108, 112, 152);
-  return theme;
 }
 
-// Demo documents: each entry pairs a label with its source text and SweetLine
-// syntax definition, mirroring the SweetEditor demo's file picker.
 struct DemoFile {
-  const char* key;
   const char* label;
-  const char* text_resource;
-  const char* syntax_resource;
+  const char* language;
 };
 
 constexpr DemoFile kDemoFiles[] = {
-    {"demo.cpp", "C++", nullptr, "raw/syntaxes/cpp.json"},
-    {"gc.cpp", "GC (1.9MB)", "raw/files/gc.cpp", "raw/syntaxes/cpp.json"},
-    {"example.java", "Java", "raw/files/example.java", "raw/syntaxes/java.json"},
-    {"example.kt", "Kotlin", "raw/files/example.kt", "raw/syntaxes/kotlin.json"},
-    {"example.lua", "Lua", "raw/files/example.lua", "raw/syntaxes/lua.json"},
+    {"demo.cpp", "C++"},
+    {"gc.cpp", "C++"},
+    {"example.java", "Java"},
+    {"example.kt", "Kotlin"},
+    {"example.lua", "Lua"},
+    {"diff: example.java", "Java"},
 };
 
-constexpr size_t kDemoFileCount = sizeof(kDemoFiles) / sizeof(kDemoFiles[0]);
-
 const char* kCppDemoText =
-    "// HuxerUI SweetEditor demo\n"
+    "// CodeEditor Preview\n"
     "// TODO: explore completion, folds, and diagnostics\n"
     "#include <cstdint>\n"
     "#include <string>\n"
     "#include <vector>\n"
     "\n"
-    "// https://example.com/sweeteditor\n"
+    "// https://example.com/codeeditor\n"
     "\n"
     "namespace geometry {\n"
     "\n"
@@ -288,159 +246,501 @@ const char* kCppDemoText =
 
 struct DemoDocument {
   const char* key;
-  const char* label;
   std::string text;
   std::string syntax;
+  std::optional<std::string> diff_original = std::nullopt;
+
+  bool operator==(const DemoDocument&) const = default;
 };
 
-struct DemoFileSelected : Event<void(std::size_t)> {};
-struct DiffToggleRequested : Event<void()> {};
-struct ThemeToggleRequested : Event<void()> {};
-struct FontToggleRequested : Event<void()> {};
-struct LigatureToggleRequested : Event<void()> {};
-struct WrapToggleRequested : Event<void()> {};
-struct StickyGutterToggleRequested : Event<void()> {};
-struct DiffClosed : Event<void()> {};
+using DemoDocuments = std::array<DemoDocument, std::size(kDemoFiles)>;
 
-std::array<DemoDocument, kDemoFileCount> LoadDemoDocuments(
-    const RawAsset& cpp_syntax,
-    const RawAsset& java_syntax,
-    const RawAsset& kotlin_syntax,
-    const RawAsset& lua_syntax,
-    const RawAsset& java_file,
-    const RawAsset& kotlin_file,
-    const RawAsset& lua_file,
-    const RawAsset& gc_file
-) {
+std::string MakeJavaDiffSample(std::string text) {
+  const std::string newline = text.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+  const auto replace = [&text](std::string_view from, std::string_view to) {
+    if (const auto position = text.find(from); position != std::string::npos) {
+      text.replace(position, from.size(), to);
+    }
+  };
+  replace("import java.util.Map;", "import java.util.Map;" + newline + "import java.util.Set;");
+  replace("import java.io.*;" + newline, "");
+  replace("private static final int MAX_SIZE = 100;", "private static final int MAX_SIZE = 256;");
+  return text;
+}
+
+DemoDocuments LoadDemoDocuments(const Resources& resources) {
+  const std::string cpp = resources.GetRawResource(app::raw::syntaxes_cpp_json).ReadString();
+  const std::string java = resources.GetRawResource(app::raw::files_example_java).ReadString();
+  const std::string java_syntax = resources.GetRawResource(app::raw::syntaxes_java_json).ReadString();
   return {{
-      {kDemoFiles[0].key, kDemoFiles[0].label, kCppDemoText, cpp_syntax.ReadString()},
-      {kDemoFiles[1].key, kDemoFiles[1].label, gc_file.ReadString(), cpp_syntax.ReadString()},
-      {kDemoFiles[2].key, kDemoFiles[2].label, java_file.ReadString(), java_syntax.ReadString()},
-      {kDemoFiles[3].key, kDemoFiles[3].label, kotlin_file.ReadString(), kotlin_syntax.ReadString()},
-      {kDemoFiles[4].key, kDemoFiles[4].label, lua_file.ReadString(), lua_syntax.ReadString()},
+      {kDemoFiles[0].label, kCppDemoText, cpp},
+      {kDemoFiles[1].label, resources.GetRawResource(app::raw::files_gc_cpp).ReadString(), cpp},
+      {kDemoFiles[2].label, java, java_syntax},
+      {kDemoFiles[3].label, resources.GetRawResource(app::raw::files_example_kt).ReadString(),
+       resources.GetRawResource(app::raw::syntaxes_kotlin_json).ReadString()},
+      {kDemoFiles[4].label, resources.GetRawResource(app::raw::files_example_lua).ReadString(),
+       resources.GetRawResource(app::raw::syntaxes_lua_json).ReadString()},
+      {kDemoFiles[2].label, MakeJavaDiffSample(java), java_syntax, java},
   }};
 }
 
-[[huxerui::composable]]
-View DemoFileSelector(const std::array<DemoDocument, kDemoFileCount>& documents, std::size_t selected) {
-  const EventEmitter events = UseEvents();
-  const std::array<std::string_view, kDemoFileCount> labels = {
-      documents[0].label, documents[1].label, documents[2].label, documents[3].label, documents[4].label,
-  };
-  // A compact dropdown keeps the header one row tall as the demo grows.
-  return Select(labels, selected, [](std::string_view label) {
-           return Text(std::string(label)).Key(label);
-         })
-      .Label("Demo file")
-      .OnChanged([events](std::size_t index) { events.Emit<DemoFileSelected>(index); })
-      .With(Padding(8.0F));
+Color WithOpacity(Color color, float alpha) {
+  color.alpha = alpha;
+  return color;
 }
+
+ThemeDefinition PreviewTheme(bool dark) {
+  auto theme = dark ? FlatDarkThemeSpec() : FlatLightThemeSpec();
+  auto& colors = theme.colors;
+  if (dark) {
+    colors.primary = Color::Rgb(137, 180, 250);
+    colors.primary_container = Color::Rgb(49, 64, 96);
+    colors.on_primary_container = Color::Rgb(221, 233, 255);
+    colors.background = colors.surface_container = Color::Rgb(24, 24, 37);
+    colors.surface = Color::Rgb(30, 30, 46);
+    colors.surface_container_high = Color::Rgb(37, 38, 54);
+    colors.surface_container_highest = Color::Rgb(49, 50, 68);
+    colors.on_surface = Color::Rgb(205, 214, 244);
+    colors.on_surface_variant = Color::Rgb(166, 173, 200);
+    colors.outline = Color::Rgb(63, 65, 86);
+    colors.error = Color::Rgb(243, 139, 168);
+  } else {
+    colors.surface_container = Color::Rgb(246, 248, 252);
+    colors.surface_container_high = Color::Rgb(238, 242, 248);
+    colors.outline = Color::Rgb(211, 219, 231);
+  }
+  theme.typography.body_medium = 13.0F;
+  theme.typography.label_large = 12.0F;
+  theme.interactions.focus_ring.color = colors.primary;
+  auto definition = FlatThemeDefinition(theme);
+  definition.Set(DividerStyle{.color = colors.outline});
+  definition.Set(ButtonStyle{
+      .background = colors.surface_container_high,
+      .label_style = TextStyle{Font::System(12.0F).WithWeight(FontWeight::Medium), colors.on_surface},
+      .disabled_background = colors.surface_container,
+      .disabled_label = WithOpacity(colors.on_surface_variant, 0.45F),
+      .padding = EdgeInsets::Symmetric(10.0F, 5.0F),
+      .minimum_height = 30.0F,
+      .corner_radii = CornerRadii{5.0F},
+      .indication = theme.interactions.indication,
+  });
+  definition.Set(IconButtonStyle{
+      .foreground = colors.on_surface_variant,
+      .disabled_foreground = WithOpacity(colors.on_surface_variant, 0.4F),
+      .icon_size = 16.0F,
+      .minimum_interactive_size = 32.0F,
+      .state_layer_size = 30.0F,
+      .corner_radius = 5.0F,
+      .indication = theme.interactions.indication,
+  });
+  definition.Set(ChipStyle{
+      .background = colors.surface_container_high,
+      .selected_background = colors.primary_container,
+      .label_style = TextStyle{Font::System(12.0F), colors.on_surface},
+      .selected_label = colors.on_primary_container,
+      .border = {Color::Transparent(), 0.0F},
+      .padding = EdgeInsets::Symmetric(9.0F, 5.0F),
+      .minimum_height = 30.0F,
+      .corner_radii = CornerRadii{5.0F},
+      .indication = theme.interactions.indication,
+      .selected_indication = theme.interactions.indication,
+  });
+  definition.Set(SelectStyle{
+      .background = colors.surface,
+      .foreground = colors.on_surface,
+      .border = {colors.outline, 1.0F},
+      .indicator = colors.on_surface_variant,
+      .popup_background = colors.surface,
+      .active_item_background = colors.surface_container_high,
+      .selected_item_background = colors.primary_container,
+      .trigger_padding = EdgeInsets::Symmetric(10.0F, 5.0F),
+      .minimum_width = 96.0F,
+      .minimum_height = 32.0F,
+      .minimum_item_height = 32.0F,
+      .indicator_size = 14.0F,
+      .corner_radii = CornerRadii{5.0F},
+  });
+  definition.Set(MenuStyle{
+      .background = colors.surface_container_high,
+      .foreground = colors.on_surface,
+      .icon_tint = colors.on_surface_variant,
+      .item_indication = theme.interactions.indication,
+      .separator_color = colors.outline,
+      .separator_mode = MenuSeparatorMode::BetweenSections,
+      .item_padding = EdgeInsets::Symmetric(10.0F, 5.0F),
+      .minimum_item_height = 30.0F,
+  });
+  auto fields = TextFieldStyle::Default();
+  fields.show_label = false;
+  fields.standard = {
+      .background = colors.surface,
+      .border = colors.outline,
+      .hovered_border = colors.on_surface_variant,
+      .focused_border = colors.primary,
+      .corner_radii = CornerRadii{5.0F},
+      .minimum_height = 32.0F,
+  };
+  fields.text_style = TextStyle{Font::System(13.0F), colors.on_surface};
+  fields.placeholder_style = TextStyle{Font::System(13.0F), colors.on_surface_variant};
+  fields.padding = EdgeInsets::Symmetric(9.0F, 5.0F);
+  fields.caret = colors.primary;
+  fields.selection = WithOpacity(colors.primary, 0.3F);
+  fields.composition = colors.primary;
+  definition.Set(fields);
+  return definition;
+}
+
+VectorAsset OutlineIcon(Path path) {
+  return VectorAsset::Create({16.0F, 16.0F}, [path = std::move(path)](VectorBuilder& builder) {
+    builder.StrokePath(path, Color::White(), StrokeStyle{.width = 1.5F, .cap = StrokeCap::Round, .join = StrokeJoin::Round});
+  });
+}
+
+const auto kUndoIcon = OutlineIcon(Path().MoveTo({6, 3}).LineTo({2, 7}).LineTo({6, 11})
+    .MoveTo({2, 7}).LineTo({10, 7}).CubicTo({15, 7}, {15, 13}, {11, 13}));
+const auto kRedoIcon = OutlineIcon(Path().MoveTo({10, 3}).LineTo({14, 7}).LineTo({10, 11})
+    .MoveTo({14, 7}).LineTo({6, 7}).CubicTo({1, 7}, {1, 13}, {5, 13}));
+const auto kFindIcon = OutlineIcon(Path().MoveTo({11, 6.5F})
+    .ArcTo({4.5F, 4.5F}, 0, ArcSize::Small, ArcDirection::Clockwise, {2, 6.5F})
+    .ArcTo({4.5F, 4.5F}, 0, ArcSize::Small, ArcDirection::Clockwise, {11, 6.5F})
+    .MoveTo({10, 10}).LineTo({14, 14}));
+const auto kPreviousIcon = OutlineIcon(Path().MoveTo({4, 10}).LineTo({8, 6}).LineTo({12, 10}));
+const auto kNextIcon = OutlineIcon(Path().MoveTo({4, 6}).LineTo({8, 10}).LineTo({12, 6}));
+const auto kCloseIcon = OutlineIcon(Path().MoveTo({4, 4}).LineTo({12, 12}).MoveTo({12, 4}).LineTo({4, 12}));
+const auto kSettingsIcon = OutlineIcon(Path().MoveTo({2, 4}).LineTo({6, 4}).MoveTo({9, 4}).LineTo({14, 4})
+    .MoveTo({6, 2}).LineTo({6, 6}).MoveTo({2, 8}).LineTo({10, 8}).MoveTo({13, 8}).LineTo({14, 8})
+    .MoveTo({10, 6}).LineTo({10, 10}).MoveTo({2, 12}).LineTo({5, 12}).MoveTo({8, 12}).LineTo({14, 12})
+    .MoveTo({5, 10}).LineTo({5, 14}));
+const auto kActionsIcon = VectorAsset::Create({16.0F, 16.0F}, [](VectorBuilder& builder) {
+  for (const float x : {3.0F, 7.0F, 11.0F}) {
+    builder.FillPath(Path::RoundedRect({x, 7.0F, 2.0F, 2.0F}, CornerRadii{1.0F}), Color::White());
+  }
+});
+
+View ToolIcon(const VectorAsset& icon, const char* label, std::function<void()> action, bool enabled = true) {
+  return IconButton(icon, label).OnClick(std::move(action)).With(Enabled(enabled), Tooltip(label));
+}
+
+enum class SearchMode { Closed, Find, Replace };
+
+struct SearchFilters {
+  bool match_case = false;
+  bool whole_word = false;
+  bool regex = false;
+  bool operator==(const SearchFilters&) const = default;
+};
+
+struct DemoSearch {
+  ce::EditorController editor;
+  ViewHandle find_button;
+  ViewHandle field_focus;
+  State<SearchMode> mode;
+  State<TextEditingValue> query;
+  State<TextEditingValue> replacement;
+  State<SearchFilters> filters;
+  State<std::optional<ce::SearchState>> result;
+  State<std::string> status;
+
+  SearchMode Mode() const { return mode; }
+
+  void Open(SearchMode next) const {
+    const bool visible = Mode() != SearchMode::Closed;
+    mode = next;
+    if (visible) field_focus.RequestFocus();
+  }
+
+  void Close() const {
+    mode = SearchMode::Closed;
+    editor.ClearSearch();
+    result = std::nullopt;
+    find_button.RequestFocus();
+  }
+
+  void Refresh() const {
+    if (Mode() == SearchMode::Closed || query->composition) return;
+    if (query->text.empty()) {
+      editor.ClearSearch();
+    } else {
+      editor.Search({.pattern = query->text,
+                     .options = {.case_sensitive = filters->match_case, .whole_word = filters->whole_word,
+                                 .use_regex = filters->regex}});
+    }
+    result = editor.GetSearchState();
+  }
+
+  void Navigate(bool forward) const {
+    if (query->composition) return;
+    if (forward) {
+      editor.FindNextSearchMatch();
+    } else {
+      editor.FindPreviousSearchMatch();
+    }
+    result = editor.GetSearchState();
+  }
+
+  void Replace(bool all) const {
+    if (query->composition || replacement->composition) return;
+    const auto matches = editor.GetSearchState();
+    if (!matches || matches->pattern != query->text || matches->match_count == 0) return;
+    if (all) {
+      if (editor.ReplaceAllSearchMatches(replacement->text)) {
+        status = "Replaced " + std::to_string(matches->match_count) +
+            (matches->match_count == 1 ? " match" : " matches");
+      }
+    } else if (editor.ReplaceCurrentSearchMatch(replacement->text)) {
+      status = "Replaced current match";
+    }
+  }
+};
+
+View SearchFilter(const DemoSearch& search, const char* label, const char* tooltip, bool SearchFilters::*filter) {
+  const SearchFilters& filters = search.filters;
+  return Chip(label, filters.*filter)
+      .OnChanged([filters = search.filters, filter](bool enabled) {
+        filters.Update([filter, enabled](SearchFilters& next) { next.*filter = enabled; });
+      })
+      .With(Tooltip(tooltip));
+}
+
+[[huxerui::composable]]
+View SearchPanel(DemoSearch search, State<std::size_t> document_revision) {
+  Lifecycle([focus = search.field_focus] { focus.RequestFocus(); });
+  const SearchFilters& options = search.filters;
+  Lifecycle([search] { search.Refresh(); }, search.query->text, search.query->composition.has_value(),
+            options, document_revision);
+
+  const auto& colors = UseTheme().colors;
+  const bool compact = UseViewportClass() == ViewportClass::Compact;
+  const bool replacing = search.Mode() == SearchMode::Replace;
+  const std::optional<ce::SearchState>& matches = search.result;
+  const bool can_navigate = matches && matches->pattern == search.query->text && matches->match_count > 0 &&
+      !search.query->composition;
+  const bool can_replace = can_navigate && !search.replacement->composition;
+  std::string count;
+  std::string error;
+  if (matches && !search.query->text.empty()) {
+    if (!matches->error_message.empty()) {
+      error = matches->error_message;
+    } else if (matches->has_current_match) {
+      count = std::to_string(matches->current_index + 1) + " / " + std::to_string(matches->match_count);
+    } else if (matches->match_count == 0) {
+      count = "No matches";
+    } else {
+      count = std::to_string(matches->match_count) + " matches";
+    }
+  }
+
+  const auto query = TextField(search.query)
+      .Label("Find in document")
+      .Placeholder("Find in document")
+      .InputConfiguration({.action = TextInputAction::Search, .autocorrect = false})
+      .OnChanged([value = search.query](const TextEditingValue& next) { value = next; })
+      .OnSubmitted([search] { search.Navigate(true); })
+      .On<ViewEvents::KeyIntercept>([search](const KeyEvent& event) {
+        if (event.type != KeyEventType::Down || event.key != Key::Enter || !event.modifiers.shift ||
+            search.query->composition) {
+          return false;
+        }
+        search.Navigate(false);
+        return true;
+      })
+      .With(search.field_focus, Grow(), Semantics{.role = SemanticRole::SearchField});
+  const View filters = Row {
+    SearchFilter(search, "Aa", "Match case", &SearchFilters::match_case),
+    SearchFilter(search, "Word", "Match whole word", &SearchFilters::whole_word),
+    SearchFilter(search, ".*", "Use regular expression", &SearchFilters::regex),
+  }.With(Spacing(4.0F), CrossAlign(CrossAxisAlignment::Center));
+  const auto match_count = Text(count)
+      .With(FontSize(11.0F), Foreground(colors.on_surface_variant), Frame{.min_width = 70.0F},
+            Semantics{.live_region = SemanticLiveRegion::Polite});
+  const View replace_toggle = Chip("Replace", replacing).OnChanged([mode = search.mode](bool enabled) {
+    mode = enabled ? SearchMode::Replace : SearchMode::Find;
+  }).With(Tooltip("Show or hide the replacement field"));
+  const auto close = ToolIcon(kCloseIcon, "Close find (Esc)", [search] { search.Close(); });
+
+  return Column {
+    Row {
+      query,
+      compact ? View{} : filters,
+      compact ? View{} : match_count,
+      ToolIcon(kPreviousIcon, "Previous match (Shift+Enter)", [search] { search.Navigate(false); }, can_navigate),
+      ToolIcon(kNextIcon, "Next match (Enter)", [search] { search.Navigate(true); }, can_navigate),
+      compact ? View{} : replace_toggle,
+      close,
+    }.With(Spacing(5.0F), CrossAlign(CrossAxisAlignment::Center)),
+    compact ? Row {
+      filters, Spacer().With(Grow()), match_count, replace_toggle,
+    }.With(Spacing(5.0F), CrossAlign(CrossAxisAlignment::Center)) : View{},
+    replacing ? Row {
+      TextField(search.replacement)
+          .Label("Replace with")
+          .Placeholder("Replace with")
+          .InputConfiguration({.autocorrect = false})
+          .OnChanged([value = search.replacement](const TextEditingValue& next) { value = next; })
+          .OnSubmitted([search] { search.Replace(false); })
+          .With(Grow()),
+      Button("Replace").OnClick([search] { search.Replace(false); })
+          .With(Enabled(can_replace && matches->has_current_match)),
+      Button("Replace all").OnClick([search] { search.Replace(true); }).With(Enabled(can_replace)),
+    }.With(Spacing(5.0F), CrossAlign(CrossAxisAlignment::Center)) : View{},
+    error.empty() ? View{} : Text(error).With(FontSize(12.0F), Foreground(colors.error)),
+  }.With(Padding(EdgeInsets::Symmetric(12.0F, 6.0F)), Spacing(5.0F),
+         CrossAlign(CrossAxisAlignment::Stretch), Background(colors.surface_container));
+}
+
+[[huxerui::composable]]
+View EditorStatusBar(const char* language, State<std::string> status, State<ce::TextPosition> cursor,
+                     State<std::optional<ce::TextRange>> selection) {
+  const auto& colors = UseTheme().colors;
+  const bool compact = UseViewportClass() == ViewportClass::Compact;
+  std::string selected;
+  if (const std::optional<ce::TextRange>& range = selection; range) {
+    if (range->start.line == range->end.line) {
+      selected = std::to_string(range->end.column - range->start.column) + " selected";
+    } else {
+      selected = std::to_string(range->end.line - range->start.line + 1) + " lines selected";
+    }
+  }
+  return Row {
+    Text(status).With(Grow(), ClipChildren(), Semantics{.live_region = SemanticLiveRegion::Polite}),
+    Text(language).With(Foreground(colors.on_surface)),
+    Text::Format("Ln {}, Col {}", cursor->line + 1, cursor->column + 1),
+    compact || selected.empty() ? View{} : Text(std::move(selected)),
+  }.With(Spacing(14.0F), Padding(EdgeInsets::Symmetric(12.0F, 5.0F)),
+         Frame{.height = 29.0F}, FontSize(11.0F), Foreground(colors.on_surface_variant),
+         CrossAlign(CrossAxisAlignment::Center), Background(colors.surface_container));
+}
+
+struct DemoSettings {
+  bool dark = true;
+  bool maple = false;
+  bool ligatures = true;
+  bool wrap = false;
+  bool sticky = ce::EditorSettings{}.gutter_sticky;
+  bool custom_completion_rows = false;
+
+  bool operator==(const DemoSettings&) const = default;
+};
+
+struct EditHistory {
+  bool can_undo = false;
+  bool can_redo = false;
+
+  bool operator==(const EditHistory&) const = default;
+};
 
 [[huxerui::composable]]
 View DemoToolbar(
-    bool diff_enabled, bool wrap_enabled, bool sticky_enabled, bool dark_theme, bool maple_font, bool ligature
+    DemoSearch search, State<DemoSettings> settings, State<EditHistory> history, std::size_t selected,
+    std::function<void(std::size_t)> select
 ) {
-  const EventEmitter events = UseEvents();
-  return Flow {
-    Button(diff_enabled ? "Diff: On" : "Diff: Off")
-        .OnClick([events] { events.Emit<DiffToggleRequested>(); }),
-    Button(dark_theme ? "Theme: Dark" : "Theme: Light")
-        .OnClick([events] { events.Emit<ThemeToggleRequested>(); }),
-    Button(maple_font ? "Font: Maple" : "Font: System")
-        .OnClick([events] { events.Emit<FontToggleRequested>(); }),
-    Button(ligature ? "Ligature: On" : "Ligature: Off")
-        .OnClick([events] { events.Emit<LigatureToggleRequested>(); }),
-    Button(wrap_enabled ? "Wrap: On" : "Wrap: Off")
-        .OnClick([events] { events.Emit<WrapToggleRequested>(); }),
-    Button(sticky_enabled ? "Sticky: On" : "Sticky: Off")
-        .OnClick([events] { events.Emit<StickyGutterToggleRequested>(); }),
-  }.With(Spacing(8.0F), Padding(8.0F));
-}
-
-[[huxerui::composable]]
-View DemoDiffPanel(bool visible, State<std::string> original_text) {
-  if (!visible) {
-    // An empty View contributes no children and no layout space, so the
-    // collapsed diff panel cannot push a gap between the toolbar and editor.
-    return View{};
-  }
-  const EventEmitter events = UseEvents();
-  return Column {
-    Row {
-      Text("Compare against:")
-          .Style(TextStyle{Font::System(12.0F), Color::Rgb(90, 96, 105), TextDecoration::None}),
-      Button("Close").OnClick([events] { events.Emit<DiffClosed>(); }),
-    }.With(Spacing(8.0F), Padding(4.0F)),
-    TextField(TextEditingValue::FromText(original_text.Get()))
-        .LineLimits(TextFieldLineLimits::MultiLine(3, 4))
-        .Placeholder("Type the original text to diff against...")
-        .OnChanged([original_text](const TextEditingValue& value) { original_text = value.text; })
-        .With(Padding(4.0F)),
-  }.With(CrossAlign(CrossAxisAlignment::Stretch));
-}
-
-View EditorStatusBar(State<std::string> cursor_status, State<std::string> selection_status) {
-  return Row {
-    Text(cursor_status).Style(TextStyle{Font::Monospace(12.0F), Color::Rgb(31, 35, 40), TextDecoration::None}),
-    Text(selection_status).Style(TextStyle{Font::Monospace(12.0F), Color::Rgb(31, 35, 40), TextDecoration::None}),
-  }.With(Spacing(16.0F), Padding(8.0F));
-}
-
-// Ordinary helper: called during composition, so UseRawResource inside it
-// attaches to the caller's active scope. No composable attribute — it returns
-// an options value, not a View.
-huxerui::codeeditor::EditorOptions MakeEditorOptions(
-    const DemoDocument& document,
-    bool diff_enabled,
-    const std::string& diff_original,
-    bool wrap_enabled,
-    bool sticky_enabled,
-    bool dark_theme,
-    const FontFamily& font_family,
-    State<std::vector<uint32_t>> breakpoints
-) {
-  huxerui::codeeditor::EditorOptions options;
-  options.initial_text = document.text;
-  options.document_key = document.key;
-  options.completion_provider = ProvideCompletions;
-  options.completion_trigger_characters = [](const std::string& character) {
-    return character == "." || character == ":";
+  const auto menu = UseMenu();
+  const auto tasks = UseTaskScope();
+  const auto actions_anchor = UseViewHandle();
+  const auto settings_anchor = UseViewHandle();
+  const bool compact = UseViewportClass() == ViewportClass::Compact;
+  const auto editor = search.editor;
+  const auto undo = [editor] { editor.Undo(); };
+  const auto redo = [editor] { editor.Redo(); };
+  const auto show_actions = [menu, actions_anchor, search, editor, tasks, history, compact, undo, redo] {
+    std::vector<MenuEntry> items;
+    if (compact) {
+      items.emplace_back(MenuItem("Undo", undo).Enabled(history->can_undo));
+      items.emplace_back(MenuItem("Redo", redo).Enabled(history->can_redo));
+      items.emplace_back(MenuSection{});
+    }
+    items.emplace_back(MenuItem("Find and replace", [search] { search.Open(SearchMode::Replace); }));
+    items.emplace_back(MenuSection{});
+    items.emplace_back(MenuItem("Show completions", [editor, tasks] {
+      tasks.Post([editor] { editor.TriggerCompletion(); });
+    }));
+    items.emplace_back(MenuItem("Insert for-loop snippet", [editor] { editor.InsertSnippet(kForSnippet); }));
+    items.emplace_back(MenuSection{});
+    items.emplace_back(MenuItem("Fold all", [editor] { editor.FoldAll(); }));
+    items.emplace_back(MenuItem("Unfold all", [editor] { editor.UnfoldAll(); }));
+    menu.Show(actions_anchor, std::move(items), {.placement = {.alignment = AnchorAlignment::End}});
   };
-  // Syntax highlighting plugs in through the decoration interface: the demo
-  // wires SweetLine (plus its breakpoints and phantom suggestion) as one
-  // optional provider instead of the editor shipping an engine. Providers are
-  // memoized per document key: building one compiles the grammar and creates
-  // a fresh analyzer, which must not repeat on every recomposition.
-  static std::map<std::string, std::shared_ptr<demo::SweetLineDecorationProvider>> provider_cache;
+  const auto show_settings = [menu, settings_anchor, settings] {
+    const auto toggle = [settings](const char* label, bool DemoSettings::*field) {
+      const DemoSettings& current = settings;
+      return MenuItem(label, [settings, field] {
+        settings.Update([field](DemoSettings& next) { next.*field = !(next.*field); });
+      }).Checked(current.*field);
+    };
+    menu.Show(settings_anchor, {
+      toggle("Dark theme", &DemoSettings::dark),
+      MenuSection{},
+      toggle("Maple Mono", &DemoSettings::maple),
+      toggle("Font ligatures", &DemoSettings::ligatures).Enabled(settings->maple),
+      MenuSection{},
+      toggle("Word wrap", &DemoSettings::wrap),
+      toggle("Sticky gutter", &DemoSettings::sticky),
+      MenuSection{},
+      toggle("Custom completion rows", &DemoSettings::custom_completion_rows),
+    }, {.placement = {.alignment = AnchorAlignment::End}});
+  };
+  const auto find = [search] {
+    search.Open(search.Mode() == SearchMode::Replace ? SearchMode::Replace : SearchMode::Find);
+  };
+  const auto separator = Divider(Axis::Vertical).With(Frame{.height = 18.0F});
+  const auto& colors = UseTheme().colors;
+  auto picker = Select(kDemoFiles, selected, [](const DemoFile& file) {
+    return Text(file.label).With(FontSize(13.0F)).Key(file.label);
+  }).Label("Sample file").OnChanged(std::move(select));
+  return Row {
+    compact ? std::move(picker).With(Grow()) : std::move(picker).With(Frame{.width = 176.0F}),
+    compact ? View{} : Spacer().With(Grow()),
+    compact ? View{} : Row {
+      ToolIcon(kUndoIcon, "Undo (Ctrl+Z)", undo, history->can_undo),
+      ToolIcon(kRedoIcon, "Redo (Ctrl+Y)", redo, history->can_redo),
+      separator,
+    }.With(Spacing(3.0F), CrossAlign(CrossAxisAlignment::Center)),
+    ToolIcon(kFindIcon, "Find (Ctrl+F)", find).With(
+        search.find_button,
+        Background(search.Mode() == SearchMode::Closed ? Color::Transparent() : colors.primary_container),
+        CornerRadius(5.0F)),
+    separator,
+    ToolIcon(kActionsIcon, "Editor actions", show_actions).With(actions_anchor),
+    ToolIcon(kSettingsIcon, "Editor settings", show_settings).With(settings_anchor),
+  }.With(Spacing(5.0F), Padding(EdgeInsets::Symmetric(12.0F, 8.0F)),
+         CrossAlign(CrossAxisAlignment::Center), Background(colors.surface_container));
+}
+
+ce::EditorOptions MakeEditorOptions(
+    const DemoDocument& document,
+    const DemoSettings& settings,
+    const FontFamily& font_family,
+    State<std::vector<std::size_t>> breakpoints,
+    std::map<std::string, std::shared_ptr<demo::SweetLineDecorationProvider>>& provider_cache,
+    const std::shared_ptr<DemoCompletionProvider>& completion
+) {
+  ce::EditorOptions options;
+  options.completion_providers.push_back(completion);
   auto provider = provider_cache.find(document.key);
   if (provider == provider_cache.end()) {
     auto created = std::make_shared<demo::SweetLineDecorationProvider>(
         document.syntax,
-        document.text,
         document.key,
         [breakpoints](size_t start_line, size_t end_line) {
           std::vector<std::pair<size_t, int32_t>> icons;
-          for (uint32_t line : breakpoints.Get()) {
+          const std::vector<std::size_t>& lines = breakpoints;
+          for (std::size_t line : lines) {
             if (line >= start_line && line <= end_line) {
-              icons.emplace_back(line, 2);
+              icons.emplace_back(line, demo::kBreakpointGutterIcon);
             }
           }
           return icons;
-        },
-        [](uint32_t line) { return line == 0 ? std::string(" // TODO: implement") : std::string(); }
+        }
     );
     provider = provider_cache.emplace(document.key, std::move(created)).first;
   }
   options.decoration_providers.push_back(provider->second);
-  // Explicit theme override demonstrates live restyling; empty follows the
-  // ambient HuxerUI theme.
-  if (dark_theme) {
-    options.theme = MakeDarkTheme();
-  }
-  options.font_family = font_family;
-  options.original_text = diff_enabled ? diff_original : std::string();
-  options.wrap_mode = wrap_enabled ? 2 : 0;
-  options.sticky_gutter = sticky_enabled;
+  options.theme = settings.dark ? ce::EditorTheme::Dark() : ce::EditorTheme::Light();
+  options.settings.font_family = font_family;
+  options.settings.wrap_mode = settings.wrap ? ce::WrapMode::WORD_BREAK : ce::WrapMode::NONE;
+  options.settings.gutter_sticky = settings.sticky;
+  options.settings.current_line_render_mode = ce::CurrentLineRenderMode::BORDER;
+  options.settings.max_gutter_icons = 1;
   return options;
 }
 
@@ -451,117 +751,135 @@ FontFamily LoadMapleFamily(bool ligature) {
 }
 
 [[huxerui::composable]]
-View EditorDemo() {
-  auto current_file = UseState<std::size_t>(0);
-  auto diff_enabled = UseState(false);
-  auto diff_original = UseState(std::string());
-  auto wrap_enabled = UseState(false);
-  auto sticky_enabled = UseState(false);
-  auto dark_theme = UseState(false);
-  auto font_family = UseState(FontFamily::Monospace());
-  auto ligature = UseState(true);
-  auto breakpoints = UseState(std::vector<uint32_t>());
-  auto cursor_status = UseState(std::string("Ln 1, Col 1"));
-  auto selection_status = UseState(std::string());
+View EditorDemo(State<DemoSettings> settings, DemoSearch search) {
+  const auto current_file = UseState<std::size_t>(0);
+  const auto current_document = UseState(std::optional<ce::Document>{});
+  const auto breakpoints = UseState(std::vector<std::size_t>{});
+  using ProvidersByDocument = std::map<std::string, std::shared_ptr<demo::SweetLineDecorationProvider>>;
+  const std::shared_ptr<ProvidersByDocument> providers = UseState(std::make_shared<ProvidersByDocument>());
+  const std::shared_ptr<DemoCompletionProvider> completion = UseState(std::make_shared<DemoCompletionProvider>());
+  const auto documents = UseState(std::optional<DemoDocuments>{});
+  const auto history = UseState(EditHistory{});
+  const auto status = search.status;
+  const auto cursor = UseState(ce::TextPosition{});
+  const auto selection = UseState(std::optional<ce::TextRange>{});
+  const auto document_revision = UseState<std::size_t>(0);
+  const auto editor = search.editor;
 
-  const RawAsset cpp_syntax = UseRawResource(app::raw::syntaxes_cpp_json);
-  const RawAsset java_syntax = UseRawResource(app::raw::syntaxes_java_json);
-  const RawAsset kotlin_syntax = UseRawResource(app::raw::syntaxes_kotlin_json);
-  const RawAsset lua_syntax = UseRawResource(app::raw::syntaxes_lua_json);
-  const RawAsset java_file = UseRawResource(app::raw::files_example_java);
-  const RawAsset kotlin_file = UseRawResource(app::raw::files_example_kt);
-  const RawAsset lua_file = UseRawResource(app::raw::files_example_lua);
-  const RawAsset gc_file = UseRawResource(app::raw::files_gc_cpp);
-  const bool maple_font = font_family.Get().Kind() == FontFamilyKind::Custom;
-  const auto documents = LoadDemoDocuments(
-      cpp_syntax, java_syntax, kotlin_syntax, lua_syntax, java_file, kotlin_file, lua_file, gc_file);
-  const ToastHandle toast = UseToast();
-  const huxerui::codeeditor::EditorController controller = huxerui::codeeditor::UseEditorController();
-  const DemoDocument& document = documents[current_file.Get()];
-  const auto options = MakeEditorOptions(
-      document, diff_enabled.Get(), diff_original.Get(), wrap_enabled.Get(), sticky_enabled.Get(), dark_theme.Get(),
-      font_family.Get(), breakpoints);
+  const auto resources = UseService<Resources>();
+  const auto type_icon = UseImage(app::images::ic_gutter_down);
+  const auto annotation_icon = UseImage(app::images::ic_gutter_at);
+  if (!documents->has_value()) documents = LoadDemoDocuments(*resources);
+  const DemoDocument& file = documents->value()[current_file];
+  if (!current_document->has_value()) {
+    current_document = ce::Document(file.text);
+  }
+  const FontFamily font_family = settings->maple ? LoadMapleFamily(settings->ligatures) : FontFamily::Monospace();
+  auto options = MakeEditorOptions(file, settings, font_family, breakpoints, *providers, completion);
+  options.document = current_document->value();
+  const auto renderer = settings->custom_completion_rows ? DemoCompletionRows(*options.theme)
+                                                         : ce::CompletionItemRenderer{};
+  Lifecycle([editor, renderer] { editor.SetCompletionItemRenderer(renderer); },
+            settings->custom_completion_rows, settings->dark);
+  const bool search_open = search.Mode() != SearchMode::Closed;
+
+  const auto select = [current_file, current_document, documents, status, editor](std::size_t index) {
+    if (index == current_file) return;
+    ce::Document document(documents->value()[index].text);
+    editor.SetDiffOriginal(std::nullopt);
+    current_document = std::move(document);
+    current_file = index;
+    status = "Opened " + std::string(kDemoFiles[index].label);
+  };
+  const auto text_changed = [editor, history, document_revision] {
+    history = EditHistory{editor.CanUndo(), editor.CanRedo()};
+    ++document_revision;
+  };
 
   return Column {
-    DemoFileSelector(documents, current_file.Get())
-        .On<DemoFileSelected>([current_file, diff_enabled, diff_original, documents](std::size_t index) {
-          current_file = index;
-          if (diff_enabled.Get()) {
-            diff_original = documents[index].text;
-          }
-        }),
-    DemoToolbar(
-        diff_enabled.Get(), wrap_enabled.Get(), sticky_enabled.Get(), dark_theme.Get(), maple_font,
-        ligature.Get())
-        .On<DiffToggleRequested>([current_file, diff_enabled, diff_original, documents] {
-          const bool enabled = !diff_enabled.Get();
-          diff_enabled = enabled;
-          diff_original = enabled ? documents[current_file.Get()].text : std::string();
+    DemoToolbar(search, settings, history, current_file, select),
+    Divider(),
+    search_open ? Column {SearchPanel(search, document_revision), Divider()}
+        .With(CrossAlign(CrossAxisAlignment::Stretch)) : View{},
+    ce::CodeEditor(editor, options)
+        .On<ce::EditorEvents::DocumentLoaded>([documents, current_file, editor, cursor, selection, text_changed,
+                                              type_icon, annotation_icon] {
+          editor.SetEditorIconProvider([type_icon, annotation_icon](std::int32_t icon) -> std::optional<ImageAsset> {
+            if (icon == demo::kTypeGutterIcon) return type_icon;
+            if (icon == demo::kAnnotationGutterIcon) return annotation_icon;
+            return std::nullopt;
+          });
+          editor.SetDiffOriginal(documents->value()[current_file].diff_original);
+          cursor = editor.GetCursorPosition().value_or(ce::TextPosition{});
+          selection = editor.GetSelection();
+          text_changed();
         })
-        .On<WrapToggleRequested>([wrap_enabled] { wrap_enabled = !wrap_enabled.Get(); })
-        .On<ThemeToggleRequested>([dark_theme] { dark_theme = !dark_theme.Get(); })
-        .On<FontToggleRequested>([font_family, ligature] {
-          font_family = font_family.Get().Kind() == FontFamilyKind::Custom
-              ? FontFamily::Monospace()
-              : LoadMapleFamily(ligature.Get());
+        .On<ce::EditorEvents::TextChanged>([text_changed](const ce::TextChangedEvent&) { text_changed(); })
+        .On<ce::EditorEvents::LinkClicked>([status](const ce::LinkClickEvent& event) {
+          status = "Link: " + event.target;
         })
-        .On<LigatureToggleRequested>([font_family, ligature] {
-          const bool enabled = !ligature.Get();
-          if (font_family.Get().Kind() == FontFamilyKind::Custom) {
-            font_family = LoadMapleFamily(enabled);
-          }
-          ligature = enabled;
+        .On<ce::EditorEvents::CodeLensClicked>([status](const ce::CodeLensClickEvent& event) {
+          status = "CodeLens command at line " + std::to_string(event.line + 1);
         })
-        .On<StickyGutterToggleRequested>([sticky_enabled] { sticky_enabled = !sticky_enabled.Get(); }),
-    DemoDiffPanel(diff_enabled.Get(), diff_original)
-        .On<DiffClosed>([diff_enabled, diff_original] {
-          diff_enabled = false;
-          diff_original = std::string();
-        }),
-    huxerui::codeeditor::CodeEditor(options, controller)
-        .On<huxerui::codeeditor::EditorEvents::LinkClicked>([toast](const std::string& url) {
-          toast.Show("Link: " + url);
-        })
-        .On<huxerui::codeeditor::EditorEvents::CodeLensClicked>([toast](int32_t command_id) {
-          toast.Show("CodeLens: " + std::to_string(command_id));
-        })
-        .On<huxerui::codeeditor::EditorEvents::GutterIconClicked>([toast, breakpoints](uint32_t line, int32_t) {
-          std::vector<uint32_t> lines = breakpoints.Get();
-          const auto found = std::find(lines.begin(), lines.end(), line);
+        .On<ce::EditorEvents::GutterIconClicked>([status, breakpoints, editor](const ce::GutterIconClickEvent& event) {
+          std::vector<std::size_t> lines = breakpoints;
+          const auto found = std::find(lines.begin(), lines.end(), event.line);
           if (found == lines.end()) {
-            lines.push_back(line);
-            toast.Show("Breakpoint set at line " + std::to_string(line + 1));
+            lines.push_back(event.line);
+            status = "Breakpoint set at line " + std::to_string(event.line + 1);
           } else {
             lines.erase(found);
-            toast.Show("Breakpoint removed at line " + std::to_string(line + 1));
+            status = "Breakpoint removed at line " + std::to_string(event.line + 1);
           }
           breakpoints = std::move(lines);
+          editor.RequestDecorationRefresh();
         })
-        .On<huxerui::codeeditor::EditorEvents::InlayClicked>([toast](uint32_t line, uint32_t column) {
-          toast.Show("Inlay: " + std::to_string(line + 1) + ":" + std::to_string(column + 1));
+        .On<ce::EditorEvents::InlayHintClicked>([status](const ce::InlayHintClickEvent& event) {
+          status = "Inlay hint at " + std::to_string(event.line + 1) + ":" + std::to_string(event.column + 1);
         })
-        .On<huxerui::codeeditor::EditorEvents::CursorChanged>([cursor_status](uint32_t line, uint32_t column) {
-          cursor_status = "Ln " + std::to_string(line + 1) + ", Col " + std::to_string(column + 1);
+        .On<ce::EditorEvents::CursorChanged>([cursor](const ce::CursorChangedEvent& event) {
+          cursor = event.cursor_position;
         })
-        .On<huxerui::codeeditor::EditorEvents::SelectionChanged>(
-            [selection_status](uint32_t, uint32_t, uint32_t line, uint32_t column) {
-              selection_status = "Selection Ln " + std::to_string(line + 1) + ", Col " +
-                                 std::to_string(column + 1);
-            }
-        )
-        .With(Grow{}),
-    EditorStatusBar(cursor_status, selection_status),
+        .On<ce::EditorEvents::SelectionChanged>([selection](const ce::SelectionChangedEvent& event) {
+          selection = event.selection;
+        })
+        .With(Grow()).Key("preview-editor"),
+    Divider(),
+    EditorStatusBar(kDemoFiles[current_file].language, status, cursor, selection),
   }.With(CrossAlign(CrossAxisAlignment::Stretch));
 }
 
 View App() {
-  return EditorDemo();
+  const auto settings = UseState(DemoSettings{});
+  const DemoSearch search{
+      ce::UseCodeEditor(), UseViewHandle(), UseViewHandle(), UseState(SearchMode::Closed), UseState(TextEditingValue{}),
+      UseState(TextEditingValue{}), UseState(SearchFilters{}), UseState(std::optional<ce::SearchState>{}),
+      UseState(std::string("Ready")),
+  };
+  return Stack {
+    Theme(PreviewTheme(settings->dark), EditorDemo(settings, search)),
+  }.On<ViewEvents::KeyIntercept>([search](const KeyEvent& event) {
+    if (event.type != KeyEventType::Down) return false;
+    const auto& keys = event.modifiers;
+    if ((keys.control || keys.meta) && !keys.shift && !keys.alt && (event.key == Key::F || event.key == Key::H)) {
+      search.Open(event.key == Key::H ? SearchMode::Replace : SearchMode::Find);
+      return true;
+    }
+    if (event.key == Key::Escape && search.Mode() != SearchMode::Closed &&
+        !search.query->composition && !search.replacement->composition) {
+      search.Close();
+      return true;
+    }
+    return false;
+  });
 }
 
 const Application application{
     App,
     {
-        .window = {.title = "CodeEditor Preview"},
-        .show_debug_overlay = true,
+        .window = {.title = "CodeEditor Preview", .initial_size = {1080.0F, 720.0F}, .minimum_size = Size{640.0F, 420.0F}},
+        .show_debug_overlay = false,
     },
 };
+
+}  // namespace

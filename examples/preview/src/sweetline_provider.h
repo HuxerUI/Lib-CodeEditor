@@ -1,48 +1,32 @@
 #pragma once
 
+#include <cstdint>
+
 #include <huxerui/codeeditor.h>
-
-#include <sweetline/highlight.h>
-
-#include <functional>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
 
 namespace demo {
 
-// Optional SweetLine-backed decoration provider for the CodeEditor demo,
-// demonstrating the receiver pattern through the unified
-// EditorDecorationProvider interface.
-class SweetLineDecorationProvider final : public huxerui::codeeditor::EditorDecorationProvider {
+inline constexpr std::int32_t kTypeGutterIcon = 1;
+inline constexpr std::int32_t kBreakpointGutterIcon = 2;
+inline constexpr std::int32_t kAnnotationGutterIcon = 3;
+
+// SweetLine supplies syntax and adornments for the preview.
+class SweetLineDecorationProvider final : public huxerui::codeeditor::DecorationProvider {
  public:
   using GutterIconSource =
-      std::function<std::vector<std::pair<size_t, int32_t>>(size_t start_line, size_t end_line)>;
-  using PhantomSource = std::function<std::string(size_t line)>;
+      std::function<std::vector<std::pair<std::size_t, std::int32_t>>(std::size_t start_line, std::size_t end_line)>;
 
-  SweetLineDecorationProvider(
-      std::string syntax_json, std::string initial_text, std::string document_key, GutterIconSource gutter_icons,
-      PhantomSource phantom
-  );
+  SweetLineDecorationProvider(std::string syntax_json, std::string document_key, GutterIconSource gutter_icons);
 
-  void ProvideDecorations(
-      const huxerui::codeeditor::EditorDecorationContext& context,
-      huxerui::codeeditor::EditorDecorationReceiver& receiver
-  ) override;
+  std::set<huxerui::codeeditor::DecorationType> GetCapabilities() const override;
+  huxerui::Task<void> ProvideDecorations(huxerui::codeeditor::DecorationContext context,
+                                        huxerui::codeeditor::DecorationReceiver receiver) override;
 
  private:
-  void RebuildDocument(const std::string& text);
-
-  std::string syntax_json_;
-  std::string document_key_;
-  std::string synced_text_;
-  sweetline::SharedPtr<sweetline::HighlightEngine> engine_;
-  sweetline::SharedPtr<sweetline::Document> document_;
-  sweetline::SharedPtr<sweetline::DocumentAnalyzer> analyzer_;
-  bool fold_regions_published_{false};
+  struct Analysis;
+  std::shared_ptr<Analysis> analysis_;
+  huxerui::WorkerSequence worker_;
   GutterIconSource gutter_icons_;
-  PhantomSource phantom_;
 };
 
 }  // namespace demo

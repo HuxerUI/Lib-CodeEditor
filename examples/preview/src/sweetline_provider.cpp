@@ -1,16 +1,10 @@
 #include "sweetline_provider.h"
 
 #include <algorithm>
-#include <cstdio>
-#include <map>
 #include <string_view>
 
-#if defined(__ANDROID__)
-#include <android/log.h>
-#define CE_TRACE(...) __android_log_print(ANDROID_LOG_INFO, "CodeEditor", __VA_ARGS__)
-#else
-#define CE_TRACE(...) std::fprintf(stderr, __VA_ARGS__)
-#endif
+#include <sweeteditor/utility.h>
+#include <sweetline/highlight.h>
 
 namespace demo {
 namespace {
@@ -124,88 +118,74 @@ bool ParseHexColor(std::string_view literal, int32_t& value) {
   return false;
 }
 
-sl::LineRange OverscanRange(const sl::LineRange& range, size_t total_lines) {
-  constexpr size_t kOverscanLines = 32;
-  const size_t start = range.start_line > kOverscanLines ? range.start_line - kOverscanLines : 0;
-  const size_t end = std::min(total_lines - 1, range.start_line + range.line_count + kOverscanLines - 1);
-  return {start, end >= start ? end - start + 1 : 1};
-}
-
 }  // namespace
 
-SweetLineDecorationProvider::SweetLineDecorationProvider(
-    std::string syntax_json, std::string initial_text, std::string document_key, GutterIconSource gutter_icons,
-    PhantomSource phantom
-)
-    : syntax_json_(std::move(syntax_json)),
-      document_key_(document_key.empty() ? "demo.cpp" : std::move(document_key)),
-      gutter_icons_(std::move(gutter_icons)),
-      phantom_(std::move(phantom)) {
-  engine_ = std::make_shared<sl::HighlightEngine>();
-  RegisterEngineStyles(engine_);
-  engine_->compileSyntaxFromJson(syntax_json_);
-  RebuildDocument(initial_text);
+struct SweetLineDecorationProvider::Analysis {
+  std::string syntax_json;
+  std::string document_key;
+  sl::SharedPtr<sl::HighlightEngine> engine;
+  sl::SharedPtr<sl::Document> document;
+  sl::SharedPtr<sl::DocumentAnalyzer> analyzer;
+  std::uint64_t document_generation = 0;
+  std::optional<std::uint64_t> revision;
+  std::optional<std::vector<ce::FoldRegion>> folds;
+
+  ce::DecorationResult Analyze(const ce::DecorationContext& context, std::stop_token stop = {});
+};
+
+SweetLineDecorationProvider::SweetLineDecorationProvider(std::string syntax_json, std::string document_key,
+                                                         GutterIconSource gutter_icons)
+    : analysis_(std::make_shared<Analysis>()), gutter_icons_(std::move(gutter_icons)) {
+  analysis_->syntax_json = std::move(syntax_json);
+  analysis_->document_key = std::move(document_key);
 }
 
-void SweetLineDecorationProvider::RebuildDocument(const std::string& text) {
-  document_ = std::make_shared<sl::Document>(document_key_, text);
-  analyzer_ = engine_->loadDocument(document_);
-  synced_text_ = text;
-  fold_regions_published_ = false;
+std::set<ce::DecorationType> SweetLineDecorationProvider::GetCapabilities() const {
+  using Type = ce::DecorationType;
+  return {Type::SyntaxHighlight, Type::OverlayHighlight, Type::IndentGuide, Type::FoldRegion, Type::DocumentHighlight,
+          Type::Diagnostic, Type::InlayHint, Type::CodeLens, Type::Link, Type::GutterIcon};
 }
 
-void SweetLineDecorationProvider::ProvideDecorations(
-    const ce::EditorDecorationContext& context, ce::EditorDecorationReceiver& receiver
-) {
-  ce::EditorDecorationResult result;
-  if (analyzer_ == nullptr || document_ == nullptr) {
-    return;
+ce::DecorationResult SweetLineDecorationProvider::Analysis::Analyze(const ce::DecorationContext& context,
+                                                                    std::stop_token stop) {
+  ce::DecorationResult result;
+  if (stop.stop_requested() || !context.document_text || context.visible_line_range.isEmpty()) return result;
+  if (!engine) {
+    auto next = std::make_shared<sl::HighlightEngine>();
+    RegisterEngineStyles(next);
+    next->compileSyntaxFromJson(syntax_json);
+    engine = std::move(next);
   }
-  if (context.visible_end_line < context.visible_start_line) {
-    return;
-  }
-
-  const sl::LineRange viewport{
-      context.visible_start_line,
-      context.visible_end_line > context.visible_start_line ? context.visible_end_line - context.visible_start_line + 1 : 1,
-  };
-
-  // Keep the analyzer document in sync with the editor document: incremental
-  // analysis for edits, full rebuild only when the text diverges with no
-  // reported changes (first load, reload, or an external reset).
-  // Slice produced by the incremental pass; the analyzer returns it directly
-  // (the proven path — getHighlightSlice serves the last full-analysis cache,
-  // which the incremental patch does not refresh).
-  const char* analysis_path = "full";
-  sl::SharedPtr<sl::DocumentHighlightSlice> incremental_slice;
-  if (analyzer_ != nullptr && !context.text_changes.empty()) {
-    for (const ce::TextChange& change : context.text_changes) {
-      incremental_slice = analyzer_->analyzeIncrementalInLineRange(
-          sl::TextRange{
-              sl::TextPosition{change.range.start.line, change.range.start.column},
-              sl::TextPosition{change.range.end.line, change.range.end.column},
-          },
-          sl::U8String(change.new_text), viewport
-      );
-    }
-    if (context.document_text != nullptr) {
-      synced_text_ = *context.document_text;
-    }
-    analysis_path = "incr";
-    CE_TRACE("provider: incremental changes=%zu", context.text_changes.size());
-  } else if (context.document_text != nullptr && *context.document_text != synced_text_) {
-    RebuildDocument(*context.document_text);
-    analysis_path = "rebuild";
-    CE_TRACE("provider: rebuilt document");
-  }
-  const size_t total_lines = document_->getLineCount();
+  const auto visible = context.visible_line_range;
+  const sl::LineRange viewport{static_cast<std::size_t>(visible.start), static_cast<std::size_t>(visible.length())};
+  const auto requested = context.requested_line_range;
+  const sl::LineRange overscan{static_cast<std::size_t>(requested.start), static_cast<std::size_t>(requested.length())};
   sl::SharedPtr<sl::DocumentHighlightSlice> slice;
-  if (incremental_slice) {
-    slice = std::move(incremental_slice);
-  } else {
-    analyzer_->analyzeLineRange(OverscanRange(viewport, total_lines));
-    slice = analyzer_->getHighlightSlice(viewport);
+  if (!revision || context.document_generation != document_generation || *revision != context.text_revision) {
+    const bool incremental = analyzer && context.document_generation == document_generation &&
+        revision == context.previous_text_revision && !context.text_changes.empty();
+    revision.reset();
+    folds.reset();
+    if (incremental) {
+      for (const auto& change : context.text_changes) {
+        if (stop.stop_requested()) return result;
+        slice = analyzer->analyzeIncrementalInLineRange(
+            {{change.range.start.line, change.range.start.column}, {change.range.end.line, change.range.end.column}},
+            change.new_text, overscan);
+      }
+    } else {
+      engine->removeDocument(document_key);
+      document = std::make_shared<sl::Document>(document_key, *context.document_text);
+      analyzer = engine->loadDocument(document);
+    }
+    document_generation = context.document_generation;
+    revision = context.text_revision;
   }
+  if (!analyzer || stop.stop_requested()) return result;
+  if (!slice) slice = analyzer->analyzeLineRange(overscan);
+  const std::size_t total_lines = document->getLineCount();
+  result.syntax_spans.mode = ce::ApplyMode::ReplaceRange;
+  result.indent_guides.mode = ce::ApplyMode::ReplaceAll;
 
   // Syntax spans (fast path, kept up to date while scrolling).
   if (slice) {
@@ -224,72 +204,50 @@ void SweetLineDecorationProvider::ProvideDecorations(
         spans.push_back({column, length, static_cast<uint32_t>(token.style_id)});
       }
       if (!spans.empty()) {
-        result.syntax_spans.emplace_back(static_cast<uint32_t>(line), std::move(spans));
+        result.syntax_spans.values.emplace(line, std::move(spans));
       }
       ++line;
     }
   }
 
   // Indent guides follow the viewport immediately.
-  if (const sl::SharedPtr<sl::IndentGuideResult> guides = analyzer_->analyzeIndentGuidesInLineRange(viewport)) {
+  if (const sl::SharedPtr<sl::IndentGuideResult> guides = analyzer->analyzeIndentGuidesInLineRange(viewport)) {
     for (const sl::IndentGuideLine& guide : guides->guide_lines) {
-      if (guide.end_line < guide.start_line) {
+      if (guide.start_line < 0 || guide.end_line < guide.start_line) {
         continue;
       }
-      result.indent_guides.push_back(
-          {static_cast<uint32_t>(guide.start_line), static_cast<uint32_t>(guide.end_line), static_cast<uint32_t>(std::max(0, guide.column))}
-      );
+      const auto column = static_cast<std::size_t>(std::max(0, guide.column));
+      result.indent_guides.values.push_back({{static_cast<std::size_t>(guide.start_line), column},
+                                            {static_cast<std::size_t>(guide.end_line), column}});
     }
   }
 
-  // Fold regions cover the whole document; publish once (the editor owns the
-  // interactive fold state afterwards).
-  if (!fold_regions_published_ && context.viewport_settled && total_lines > 0) {
-    if (const sl::SharedPtr<sl::IndentGuideResult> full = analyzer_->analyzeIndentGuidesInLineRange({0, total_lines})) {
-      for (const sl::IndentGuideLine& guide : full->guide_lines) {
-        if (guide.end_line > guide.start_line) {
-          result.fold_regions.push_back({static_cast<uint32_t>(guide.start_line), static_cast<uint32_t>(guide.end_line)});
+  if (stop.stop_requested()) return {};
+  if (context.viewport_settled) {
+    if (!folds) {
+      folds.emplace();
+      if (const auto full = analyzer->analyzeIndentGuidesInLineRange({0, total_lines})) {
+        for (const auto& guide : full->guide_lines) {
+          if (guide.start_line >= 0 && guide.end_line > guide.start_line) {
+            folds->push_back({static_cast<std::size_t>(guide.start_line), static_cast<std::size_t>(guide.end_line)});
+          }
         }
-      }
-      // Only mark published when folds were actually found: an early attempt
-      // with a not-yet-populated analyzer or an empty document must retry.
-      if (!result.fold_regions.empty()) {
-        fold_regions_published_ = true;
       }
     }
-  }
-
-  // Bracket pair under the cursor.
-  if (const sl::SharedPtr<sl::BracketPairResult> brackets = analyzer_->analyzeBracketPairsInLineRange(viewport)) {
-    for (const sl::LineBracketPairs& line_pairs : brackets->lines) {
-      for (const sl::BracketToken& token : line_pairs.tokens) {
-        if (token.match_state != sl::BracketMatchState::MATCHED) {
-          continue;
-        }
-        const bool at_start = token.range.start.line == context.cursor_line &&
-            token.range.start.column == context.cursor_column;
-        const bool at_end =
-            token.range.end.line == context.cursor_line && token.range.end.column == context.cursor_column;
-        if (!at_start && !at_end) {
-          continue;
-        }
-        result.matched_bracket_open = sweeteditor::TextPosition{
-            token.range.start.line, token.range.start.column,
-        };
-        result.matched_bracket_close = sweeteditor::TextPosition{
-            token.partner_range.start.line, token.partner_range.start.column,
-        };
-      }
-      if (result.matched_bracket_open) {
-        break;
-      }
-    }
+    result.fold_regions = {*folds, ce::ApplyMode::ReplaceAll};
   }
 
   // Heavy decorations wait for the settled viewport.
   if (context.viewport_settled && slice) {
+    result.overlay_spans.mode = ce::ApplyMode::ReplaceRange;
+    result.document_highlights.mode = ce::ApplyMode::ReplaceRange;
+    result.inlay_hints.mode = ce::ApplyMode::ReplaceRange;
+    result.diagnostics.mode = ce::ApplyMode::ReplaceRange;
+    result.code_lens_items.mode = ce::ApplyMode::ReplaceRange;
+    result.links.mode = ce::ApplyMode::ReplaceRange;
+    result.gutter_icons.mode = ce::ApplyMode::ReplaceRange;
     // Rainbow brackets over the viewport.
-    if (const sl::SharedPtr<sl::BracketPairResult> brackets = analyzer_->analyzeBracketPairsInLineRange(viewport)) {
+    if (const sl::SharedPtr<sl::BracketPairResult> brackets = analyzer->analyzeBracketPairsInLineRange(viewport)) {
       size_t line = brackets->start_line;
       for (const sl::LineBracketPairs& line_pairs : brackets->lines) {
         std::vector<sweeteditor::StyleSpan> rainbow;
@@ -306,7 +264,7 @@ void SweetLineDecorationProvider::ProvideDecorations(
           rainbow.push_back({column, length, static_cast<uint32_t>(ce::EditorStyle::RainbowFirst) + depth});
         }
         if (!rainbow.empty()) {
-          result.overlay_spans.emplace_back(static_cast<uint32_t>(line), std::move(rainbow));
+          result.overlay_spans.values.emplace(line, std::move(rainbow));
         }
         ++line;
       }
@@ -322,9 +280,9 @@ void SweetLineDecorationProvider::ProvideDecorations(
           if (!IsSingleLine(token)) {
             continue;
           }
-          if (token.range.start.line == context.cursor_line && token.range.start.column <= context.cursor_column &&
-              context.cursor_column <= token.range.end.column) {
-            const std::string_view literal = TokenLiteral(*document_, token);
+          if (token.range.start.line == context.cursor_position.line && token.range.start.column <= context.cursor_position.column &&
+              context.cursor_position.column <= token.range.end.column) {
+            const std::string_view literal = TokenLiteral(*document, token);
             const bool identifier = !literal.empty() &&
                 ((literal.front() >= 'A' && literal.front() <= 'Z') ||
                  (literal.front() >= 'a' && literal.front() <= 'z') || literal.front() == '_');
@@ -341,7 +299,7 @@ void SweetLineDecorationProvider::ProvideDecorations(
       for (const sl::LineHighlight& line_highlight : slice->lines) {
         std::vector<sweeteditor::DocumentHighlight> highlights;
         for (const sl::TokenSpan& token : line_highlight.spans) {
-          if (!IsSingleLine(token) || TokenLiteral(*document_, token) != word) {
+          if (!IsSingleLine(token) || TokenLiteral(*document, token) != word) {
             continue;
           }
           const uint32_t column = static_cast<uint32_t>(token.range.start.column);
@@ -351,7 +309,7 @@ void SweetLineDecorationProvider::ProvideDecorations(
           }
         }
         if (!highlights.empty()) {
-          result.document_highlights.emplace_back(static_cast<uint32_t>(line), std::move(highlights));
+          result.document_highlights.values.emplace(line, std::move(highlights));
         }
         ++line;
       }
@@ -373,7 +331,7 @@ void SweetLineDecorationProvider::ProvideDecorations(
           }
           const uint32_t column = static_cast<uint32_t>(token.range.start.column);
           const uint32_t length = static_cast<uint32_t>(token.range.end.column - token.range.start.column);
-          const std::string_view literal = TokenLiteral(*document_, token);
+          const std::string_view literal = TokenLiteral(*document, token);
 
           if (token.style_id == static_cast<int32_t>(ce::EditorStyle::Comment)) {
             const size_t fixme = FindIgnoreCase(literal, "FIXME");
@@ -390,9 +348,7 @@ void SweetLineDecorationProvider::ProvideDecorations(
           } else if (token.style_id == static_cast<int32_t>(ce::EditorStyle::String)) {
             int32_t color = 0;
             if (ParseHexColor(literal, color)) {
-              // COLOR inlays are not exposed through the decoration interface
-              // yet; skip until the editor adds color-swatch support.
-              static_cast<void>(color);
+              inlays.push_back({ce::InlayType::COLOR, column, color, {}});
             }
           } else if (token.style_id == static_cast<int32_t>(ce::EditorStyle::Url)) {
             if (!literal.empty()) {
@@ -400,50 +356,52 @@ void SweetLineDecorationProvider::ProvideDecorations(
             }
           } else if (token.style_id == static_cast<int32_t>(ce::EditorStyle::Class) && length > 0) {
             lenses.push_back({static_cast<int32_t>(column), 1, "Run"});
-            icons.push_back({1});
+            icons.push_back({kTypeGutterIcon});
+          } else if (token.style_id == static_cast<int32_t>(ce::EditorStyle::Annotation) && length > 0) {
+            icons.push_back({kAnnotationGutterIcon});
           }
         }
         if (!inlays.empty()) {
-          result.inlay_hints.emplace_back(static_cast<uint32_t>(line), std::move(inlays));
+          result.inlay_hints.values.emplace(line, std::move(inlays));
         }
         if (!diagnostics.empty()) {
-          result.diagnostics.emplace_back(static_cast<uint32_t>(line), std::move(diagnostics));
+          result.diagnostics.values.emplace(line, std::move(diagnostics));
         }
         if (!lenses.empty()) {
-          result.code_lens.emplace_back(static_cast<uint32_t>(line), std::move(lenses));
+          result.code_lens_items.values.emplace(line, std::move(lenses));
         }
         if (!links.empty()) {
-          result.links.emplace_back(static_cast<uint32_t>(line), std::move(links));
+          result.links.values.emplace(line, std::move(links));
         }
         if (!icons.empty()) {
-          result.gutter_icons.emplace_back(static_cast<uint32_t>(line), std::move(icons));
+          result.gutter_icons.values.emplace(line, std::move(icons));
         }
         ++line;
       }
     }
   }
 
-  // Host gutter icons (breakpoints) and the demo phantom suggestion.
-  if (gutter_icons_) {
-    const auto icons = gutter_icons_(context.visible_start_line, context.visible_end_line);
-    for (const auto& [line, icon_id] : icons) {
-      result.gutter_icons.emplace_back(line, std::vector<sweeteditor::GutterIcon>{{icon_id}});
+  return result;
+}
+
+huxerui::Task<void> SweetLineDecorationProvider::ProvideDecorations(ce::DecorationContext context,
+                                                                   ce::DecorationReceiver receiver) {
+  const auto visible = context.visible_line_range;
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+  auto result = analysis_->Analyze(context);
+#else
+  auto result = co_await worker_.Run([](std::stop_token stop, std::shared_ptr<Analysis> analysis,
+                                       ce::DecorationContext request) {
+    return analysis->Analyze(request, stop);
+  }, analysis_, std::move(context));
+#endif
+  if (receiver.IsCancelled()) co_return;
+  if (gutter_icons_ && result.gutter_icons.mode == ce::ApplyMode::ReplaceRange) {
+    for (const auto& [line, icon] : gutter_icons_(visible.start, visible.end)) {
+      auto& icons = result.gutter_icons.values[line];
+      icons.insert(icons.begin(), ce::GutterIcon{icon});
     }
   }
-  if (phantom_) {
-    const std::string text = phantom_(0);
-    if (!text.empty()) {
-      result.phantom_texts.emplace_back(0U, std::vector<sweeteditor::PhantomText>{{0, text}});
-    }
-  }
-  CE_TRACE(
-      "provider: spans=%zu lines guides=%zu folds=%zu settled=%d", result.syntax_spans.size(),
-      result.indent_guides.size(), result.fold_regions.size(), context.viewport_settled ? 1 : 0
-  );
-  CE_TRACE(
-      "provider: path=%s lines=%zu guides=%zu folds=%zu ch=%zu", analysis_path, result.syntax_spans.size(),
-      result.indent_guides.size(), result.fold_regions.size(), context.text_changes.size()
-  );
   receiver.Accept(std::move(result));
 }
 

@@ -67,6 +67,9 @@ if (NOT CMAKE_CROSSCOMPILING AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_
 endif ()
 option(HUXERUI_CODEEDITOR_BUILD_TESTS "Build CodeEditor component tests" ${HUXERUI_CODEEDITOR_DEFAULT_TESTS})
 if (HUXERUI_CODEEDITOR_BUILD_TESTS)
+    if (NOT TARGET HuxerUI::testing)
+        find_package(HuxerUI 0.4 CONFIG REQUIRED COMPONENTS testing)
+    endif ()
     enable_testing()
     add_executable(codeeditor_tests
             tests/test_main.cpp
@@ -77,7 +80,7 @@ if (HUXERUI_CODEEDITOR_BUILD_TESTS)
     target_link_libraries(codeeditor_tests
             PRIVATE
                 codeeditor
-                HuxerUI::huxerui_static
+                HuxerUI::testing
                 SweetEditor3p::Catch2
     )
     add_test(NAME codeeditor_tests COMMAND codeeditor_tests)

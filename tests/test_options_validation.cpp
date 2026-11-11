@@ -2,60 +2,22 @@
 
 #include <huxerui/codeeditor.h>
 
-#include <stdexcept>
+namespace ce = huxerui::codeeditor;
 
-// The validator lives in the component implementation and is intentionally
-// not part of the public header; tests bind it through its linkage name.
-namespace huxerui::codeeditor {
-void ValidateEditorOptions(const EditorOptions& options);
+TEST_CASE("CodeEditor rejects invalid declarative settings before mounting") {
+  ce::EditorOptions options;
+  SECTION("text size") { options.settings.editor_text_size = 0; }
+  SECTION("tab stop") { options.settings.tab_size = 0; }
+  SECTION("line spacing") { options.settings.line_spacing_mult = -1; }
+  SECTION("decoration interval") { options.settings.decoration_scroll_refresh_min_interval_ms = -1; }
+  REQUIRE_THROWS_AS(ce::CodeEditor(ce::EditorController{}, options), std::invalid_argument);
 }
 
-TEST_CASE("TestOptionsValidationAcceptsDefaultConfiguration") {
-  huxerui::codeeditor::EditorOptions options;
-  REQUIRE_NOTHROW(huxerui::codeeditor::ValidateEditorOptions(options));
-}
-
-TEST_CASE("TestOptionsValidationRejectsNonPositiveFontSizes") {
-  huxerui::codeeditor::EditorOptions zero_size;
-  zero_size.font_size = 0.0F;
-  REQUIRE_THROWS_AS(huxerui::codeeditor::ValidateEditorOptions(zero_size), std::invalid_argument);
-
-  huxerui::codeeditor::EditorOptions negative_size;
-  negative_size.font_size = -1.0F;
-  REQUIRE_THROWS_AS(huxerui::codeeditor::ValidateEditorOptions(negative_size), std::invalid_argument);
-}
-
-TEST_CASE("TestOptionsValidationRejectsNonPositiveTabSize") {
-  huxerui::codeeditor::EditorOptions options;
-  options.tab_size = 0;
-  REQUIRE_THROWS_AS(huxerui::codeeditor::ValidateEditorOptions(options), std::invalid_argument);
-}
-
-TEST_CASE("TestOptionsValidationRejectsNegativeLineSpacing") {
-  huxerui::codeeditor::EditorOptions options;
-  options.line_spacing_mult = -0.5F;
-  REQUIRE_THROWS_AS(huxerui::codeeditor::ValidateEditorOptions(options), std::invalid_argument);
-}
-
-TEST_CASE("TestOptionsValidationRejectsOutOfRangeDisplayModes") {
-  huxerui::codeeditor::EditorOptions bad_wrap;
-  bad_wrap.wrap_mode = 3;
-  REQUIRE_THROWS_AS(huxerui::codeeditor::ValidateEditorOptions(bad_wrap), std::invalid_argument);
-
-  huxerui::codeeditor::EditorOptions negative_wrap;
-  negative_wrap.wrap_mode = -1;
-  REQUIRE_THROWS_AS(huxerui::codeeditor::ValidateEditorOptions(negative_wrap), std::invalid_argument);
-
-  huxerui::codeeditor::EditorOptions bad_scrollbar;
-  bad_scrollbar.scrollbar_mode = 3;
-  REQUIRE_THROWS_AS(huxerui::codeeditor::ValidateEditorOptions(bad_scrollbar), std::invalid_argument);
-}
-
-TEST_CASE("TestOptionsValidationKeepsBoundaryDisplayModesValid") {
-  for (int wrap_mode = 0; wrap_mode <= 2; ++wrap_mode) {
-    huxerui::codeeditor::EditorOptions options;
-    options.wrap_mode = wrap_mode;
-    options.scrollbar_mode = wrap_mode;
-    REQUIRE_NOTHROW(huxerui::codeeditor::ValidateEditorOptions(options));
-  }
+TEST_CASE("CodeEditor documents preserve UTF-8 content and line boundaries") {
+  const ce::Document document("A\xf0\x9f\x99\x82\nsecond\n");
+  REQUIRE(document.GetLineCount() == 3);
+  REQUIRE(document.GetLineText(0) == "A\xf0\x9f\x99\x82");
+  REQUIRE(document.GetLineText(1) == "second");
+  REQUIRE(document.GetLineText(2).empty());
+  REQUIRE(document.GetText() == "A\xf0\x9f\x99\x82\nsecond\n");
 }

@@ -1,30 +1,38 @@
 #include <huxerui/codeeditor.h>
 
-#if defined(__ANDROID__)
-#include <android/log.h>
-#define CODEEDITOR_TRACE(...) __android_log_print(ANDROID_LOG_INFO, "CodeEditor", __VA_ARGS__)
-#else
-#include <cstdio>
-#define CODEEDITOR_TRACE(...) std::fprintf(stderr, __VA_ARGS__)
-#endif
 
+#include "decoration_pipeline.h"
+#include "text_input_bridge.h"
+
+#include <huxerui/app.h>
+#include <huxerui/clipboard.h>
 #include <huxerui/environment.h>
+#include <huxerui/indication.h>
+#include <huxerui/presentation.h>
 #include <huxerui/layout.h>
 #include <huxerui/modifier.h>
 #include <huxerui/paint.h>
+#include <huxerui/scroll.h>
 #include <huxerui/semantics.h>
+#include <huxerui/state.h>
 #include <huxerui/text.h>
 #include <huxerui/text_input.h>
 
 #include <sweeteditor/decoration.h>
 #include <sweeteditor/document.h>
 #include <sweeteditor/editor_core.h>
+#include <sweeteditor/utility.h>
 #include <sweeteditor/visual.h>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <limits>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -36,215 +44,28 @@
 #include <vector>
 
 namespace huxerui::codeeditor {
+namespace detail {
 
-EditorTheme EditorTheme::Default() {
-  EditorTheme theme;
-  theme.background = Color::Rgb(255, 255, 255);
-  theme.gutter_background = Color::Rgb(242, 243, 245);
-  theme.current_line_background = Color::Rgb(0, 0, 0, 0.06F);
-  theme.separator_color = Color::Rgb(176, 183, 195);
-  theme.text_foreground = Color::Rgb(31, 31, 31);
-  theme.line_number_color = Color::Rgb(154, 160, 166);
-  theme.caret_color = Color::Rgb(31, 31, 31);
-  theme.link_color = Color::Rgb(76, 157, 255);
-  theme.active_link_color = Color::Rgb(76, 157, 255);
-  theme.codelens_color = Color::Rgb(52, 74, 115, 0.69F);
-  theme.active_codelens_color = Color::Rgb(58, 95, 160);
-  theme.selection_background = Color::Rgb(74, 144, 226, 0.33F);
-  theme.search_match_background = Color::Rgb(245, 158, 11, 0.2F);
-  theme.search_current_background = Color::Rgb(245, 158, 11, 0.33F);
-  theme.bracket_match_background = Color::Rgb(15, 118, 110, 0.15F);
-  theme.document_highlight_text = Color::Rgb(37, 99, 235, 0.08F);
-  theme.document_highlight_read = Color::Rgb(37, 99, 235, 0.11F);
-  theme.document_highlight_write = Color::Rgb(37, 99, 235, 0.16F);
-  theme.ime_composition_underline = Color::Rgb(37, 99, 235);
-  theme.diagnostic_error_underline = Color::Rgb(220, 38, 38);
-  theme.diagnostic_warning_underline = Color::Rgb(217, 119, 6);
-  theme.diagnostic_info_underline = Color::Rgb(14, 165, 233);
-  theme.diagnostic_hint_underline = Color::Rgb(100, 116, 139);
-  theme.diff_added_background = Color::Rgb(166, 226, 46, 0.12F);
-  theme.diff_removed_background = Color::Rgb(249, 38, 114, 0.12F);
-  theme.diff_added_gutter = Color::Rgb(166, 226, 46, 0.18F);
-  theme.diff_removed_gutter = Color::Rgb(249, 38, 114, 0.18F);
-  theme.indent_guide_color = Color::Rgb(200, 200, 200);
-  theme.inlay_hint_background = Color::Rgb(59, 130, 246, 0.08F);
-  theme.inlay_hint_text = Color::Rgb(52, 74, 115, 0.69F);
-  theme.fold_placeholder_background = Color::Rgb(116, 141, 176, 0.18F);
-  theme.fold_placeholder_text = Color::Rgb(40, 74, 112);
-  theme.gutter_icon_color = Color::Rgb(38, 127, 153);
-  theme.syntax_keyword = Color::Rgb(0, 0, 255);
-  theme.syntax_type = Color::Rgb(38, 127, 153);
-  theme.syntax_class = Color::Rgb(38, 127, 153);
-  theme.syntax_function = Color::Rgb(121, 94, 38);
-  theme.syntax_variable = Color::Rgb(0, 16, 128);
-  theme.syntax_string = Color::Rgb(163, 21, 21);
-  theme.syntax_number = Color::Rgb(9, 134, 88);
-  theme.syntax_comment = Color::Rgb(0, 128, 0);
-  theme.syntax_preprocessor = Color::Rgb(155, 79, 150);
-  theme.syntax_builtin = Color::Rgb(0, 0, 255);
-  theme.syntax_punctuation = Color::Rgb(119, 119, 119);
-  theme.syntax_annotation = Color::Rgb(179, 92, 0);
-  theme.syntax_url = Color::Rgb(11, 92, 173);
-  theme.syntax_rainbow = {
-      Color::Rgb(220, 50, 47),  Color::Rgb(38, 139, 210), Color::Rgb(133, 153, 0),
-      Color::Rgb(181, 137, 0),  Color::Rgb(203, 75, 22),  Color::Rgb(108, 113, 196),
-      Color::Rgb(42, 161, 152), Color::Rgb(211, 54, 130),
-  };
-  theme.completion_background = Color::Rgb(250, 251, 253, 0.94F);
-  theme.completion_border = Color::Rgb(160, 168, 184, 0.19F);
-  theme.completion_selected_background = Color::Rgb(59, 130, 246, 0.24F);
-  theme.completion_label = Color::Rgb(31, 41, 55);
-  theme.completion_detail = Color::Rgb(138, 148, 166);
-  return theme;
-}
+struct DocumentAccess {
+  static const std::shared_ptr<sweeteditor::Document>& Core(const Document& document) { return document.core_; }
+};
 
-EditorTheme EditorTheme::FromThemeSpec(const ThemeSpec& spec) {
-  const ColorScheme& colors = spec.colors;
-  const auto with_alpha = [](Color color, float alpha) {
-    color.alpha = alpha;
-    return color;
-  };
-  EditorTheme theme;
-  theme.background = colors.surface;
-  theme.gutter_background = colors.surface_container_highest;
-  theme.current_line_background = with_alpha(colors.on_surface, 0.06F);
-  theme.separator_color = colors.outline;
-  theme.text_foreground = colors.on_surface;
-  theme.line_number_color = colors.on_surface_variant;
-  theme.caret_color = colors.primary;
-  theme.link_color = colors.primary;
-  theme.active_link_color = colors.primary;
-  theme.codelens_color = with_alpha(colors.on_surface_variant, 0.69F);
-  theme.active_codelens_color = colors.primary;
-  theme.selection_background = with_alpha(colors.primary, 0.33F);
-  theme.search_match_background = with_alpha(colors.secondary, 0.30F);
-  theme.search_current_background = with_alpha(colors.secondary, 0.45F);
-  theme.bracket_match_background = with_alpha(colors.secondary, 0.18F);
-  theme.document_highlight_text = with_alpha(colors.primary, 0.08F);
-  theme.document_highlight_read = with_alpha(colors.primary, 0.11F);
-  theme.document_highlight_write = with_alpha(colors.primary, 0.16F);
-  theme.ime_composition_underline = colors.primary;
-  theme.diagnostic_error_underline = colors.error;
-  theme.diagnostic_warning_underline = with_alpha(colors.error, 0.75F);
-  theme.diagnostic_info_underline = colors.primary;
-  theme.diagnostic_hint_underline = colors.on_surface_variant;
-  theme.diff_added_background = with_alpha(colors.primary, 0.10F);
-  theme.diff_removed_background = with_alpha(colors.error, 0.10F);
-  theme.diff_added_gutter = with_alpha(colors.primary, 0.16F);
-  theme.diff_removed_gutter = with_alpha(colors.error, 0.16F);
-  theme.indent_guide_color = with_alpha(colors.outline, 0.55F);
-  theme.inlay_hint_background = with_alpha(colors.primary, 0.08F);
-  theme.inlay_hint_text = with_alpha(colors.on_surface_variant, 0.85F);
-  theme.fold_placeholder_background = with_alpha(colors.outline, 0.25F);
-  theme.fold_placeholder_text = colors.on_surface;
-  theme.gutter_icon_color = colors.secondary;
-  theme.syntax_keyword = colors.primary;
-  theme.syntax_type = colors.primary;
-  theme.syntax_class = colors.secondary;
-  theme.syntax_function = colors.primary;
-  theme.syntax_variable = colors.on_surface;
-  theme.syntax_string = colors.secondary;
-  theme.syntax_number = colors.error;
-  theme.syntax_comment = colors.on_surface_variant;
-  theme.syntax_preprocessor = colors.error;
-  theme.syntax_builtin = colors.primary;
-  theme.syntax_punctuation = colors.on_surface_variant;
-  theme.syntax_annotation = colors.secondary;
-  theme.syntax_url = colors.primary;
-  theme.syntax_rainbow = {
-      colors.primary,   colors.secondary, colors.error,
-      colors.primary,   colors.secondary, colors.error,
-      colors.primary,   colors.secondary,
-  };
-  theme.completion_background = with_alpha(colors.surface, 0.94F);
-  theme.completion_border = with_alpha(colors.outline, 0.25F);
-  theme.completion_selected_background = with_alpha(colors.primary, 0.24F);
-  theme.completion_label = colors.on_surface;
-  theme.completion_detail = colors.on_surface_variant;
-  return theme;
-}
-
-// Everforest Dark — a warm, low-contrast forest palette tuned for long
-// editing sessions. Values follow the canonical Everforest Dark scheme.
-EditorTheme EditorTheme::Everforest() {
-  EditorTheme theme;
-  constexpr auto Rgb = [](int red, int green, int blue, float alpha = 1.0F) {
-    return Color::Rgb(red, green, blue, alpha);
-  };
-  // Surfaces: bg0 / bg0_h / bg1 / bg2 / bg3
-  theme.background = Rgb(30, 35, 38);
-  theme.gutter_background = Rgb(35, 42, 46);
-  theme.current_line_background = Rgb(46, 56, 60, 0.6F);
-  theme.separator_color = Rgb(133, 146, 137);
-  // Text
-  theme.text_foreground = Rgb(211, 198, 170);   // fg
-  theme.line_number_color = Rgb(133, 146, 137); // grey
-  theme.caret_color = Rgb(211, 198, 170);
-  // Links and code lens
-  theme.link_color = Rgb(127, 187, 179);        // blue
-  theme.active_link_color = Rgb(131, 192, 146); // aqua
-  theme.codelens_color = Rgb(133, 146, 137, 0.9F);
-  theme.active_codelens_color = Rgb(127, 187, 179);
-  // Selection and highlights
-  theme.selection_background = Rgb(61, 72, 77, 0.55F);        // bg_visual
-  theme.search_match_background = Rgb(219, 188, 127, 0.22F);  // yellow
-  theme.search_current_background = Rgb(219, 188, 127, 0.38F);
-  theme.bracket_match_background = Rgb(131, 192, 146, 0.22F);  // aqua
-  theme.document_highlight_text = Rgb(127, 187, 179, 0.10F);
-  theme.document_highlight_read = Rgb(127, 187, 179, 0.14F);
-  theme.document_highlight_write = Rgb(127, 187, 179, 0.20F);
-  theme.ime_composition_underline = Rgb(131, 192, 146);
-  // Diagnostics
-  theme.diagnostic_error_underline = Rgb(230, 126, 128);  // red
-  theme.diagnostic_warning_underline = Rgb(219, 188, 127);  // yellow
-  theme.diagnostic_info_underline = Rgb(127, 187, 179);  // blue
-  theme.diagnostic_hint_underline = Rgb(133, 146, 137);  // grey
-  // Diff
-  theme.diff_added_background = Rgb(167, 192, 128, 0.16F);   // green
-  theme.diff_removed_background = Rgb(230, 126, 128, 0.16F); // red
-  theme.diff_added_gutter = Rgb(167, 192, 128, 0.24F);
-  theme.diff_removed_gutter = Rgb(230, 126, 128, 0.24F);
-  // Decorations
-  theme.indent_guide_color = Rgb(69, 79, 84);  // bg3
-  theme.inlay_hint_background = Rgb(69, 79, 84, 0.6F);
-  theme.inlay_hint_text = Rgb(157, 169, 160);
-  theme.fold_placeholder_background = Rgb(69, 79, 84, 0.6F);
-  theme.fold_placeholder_text = Rgb(157, 169, 160);
-  theme.gutter_icon_color = Rgb(131, 192, 146);  // aqua
-  // Syntax palette
-  theme.syntax_keyword = Rgb(230, 126, 128);     // red
-  theme.syntax_type = Rgb(131, 192, 146);        // aqua
-  theme.syntax_class = Rgb(127, 187, 179);       // blue
-  theme.syntax_function = Rgb(219, 188, 127);    // yellow
-  theme.syntax_variable = Rgb(211, 198, 170);    // fg
-  theme.syntax_string = Rgb(167, 192, 128);      // green
-  theme.syntax_number = Rgb(230, 152, 117);      // orange
-  theme.syntax_comment = Rgb(133, 146, 137);     // grey
-  theme.syntax_preprocessor = Rgb(230, 152, 117);  // orange
-  theme.syntax_builtin = Rgb(127, 187, 179);     // blue
-  theme.syntax_punctuation = Rgb(157, 169, 160); // grey1
-  theme.syntax_annotation = Rgb(214, 153, 182);  // purple
-  theme.syntax_url = Rgb(127, 187, 179);         // blue
-  theme.syntax_rainbow = {
-      Rgb(230, 126, 128), Rgb(230, 152, 117), Rgb(219, 188, 127), Rgb(167, 192, 128),
-      Rgb(131, 192, 146), Rgb(127, 187, 179), Rgb(214, 153, 182), Rgb(133, 146, 137),
-  };
-  // Completion panel
-  theme.completion_background = Rgb(35, 42, 46, 0.96F);
-  theme.completion_border = Rgb(157, 169, 160, 0.25F);
-  theme.completion_selected_background = Rgb(127, 187, 179, 0.26F);
-  theme.completion_label = Rgb(211, 198, 170);
-  theme.completion_detail = Rgb(157, 169, 160);
-  return theme;
-}
-
+}  // namespace detail
 
 namespace {
 
 namespace se = sweeteditor;
 using namespace huxerui;
 
-// ---- UTF-16 code units <-> UTF-8 -------------------------------------------
+#if defined(_WIN32) || (defined(__APPLE__) && TARGET_OS_OSX) || (defined(__linux__) && !defined(__ANDROID__))
+constexpr bool kSelectionHandlesEnabled = false;
+#else
+constexpr bool kSelectionHandlesEnabled = true;
+#endif
+
+constexpr float kSelectionMenuHeight = 36.0F;
+constexpr float kSelectionMenuHandleClearance = 32.0F;
+
 std::string Utf16ToUtf8(std::u16string_view input) {
   std::string out;
   out.reserve(input.size());
@@ -298,91 +119,19 @@ int32_t ToArgb(const Color& color) {
   return (channel(color.alpha) << 24) | (channel(color.red) << 16) | (channel(color.green) << 8) | channel(color.blue);
 }
 
-// Registers the syntax token palette so EditorStyle ids resolve to the
-// theme's colors; safe to call again on theme changes (registerTextStyle
-// replaces the previous style).
-void RegisterSyntaxStyles(se::EditorCore& core, const EditorTheme& theme) {
-  const auto style = [](const Color& color) {
-    return se::TextStyle{ToArgb(color), 0, se::FONT_STYLE_NORMAL};
-  };
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Keyword), style(theme.syntax_keyword));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Type), style(theme.syntax_type));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Class), style(theme.syntax_class));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Function), style(theme.syntax_function));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Variable), style(theme.syntax_variable));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::String), style(theme.syntax_string));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Number), style(theme.syntax_number));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Comment), style(theme.syntax_comment));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Preprocessor), style(theme.syntax_preprocessor));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Builtin), style(theme.syntax_builtin));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Punctuation), style(theme.syntax_punctuation));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Annotation), style(theme.syntax_annotation));
-  core.registerTextStyle(static_cast<uint32_t>(EditorStyle::Url), style(theme.syntax_url));
-  for (std::size_t index = 0; index < theme.syntax_rainbow.size(); ++index) {
-    core.registerTextStyle(
-        static_cast<uint32_t>(EditorStyle::RainbowFirst) + index, style(theme.syntax_rainbow[index])
-    );
-  }
-  // Markdown heading grades are visually bold (uniform size for now); graded
-  // font sizes are deferred until per-line measurement/line-height support.
-  for (std::size_t index = 0; index < 6; ++index) {
-    core.registerTextStyle(
-        markdown_heading_style_base + static_cast<uint32_t>(index),
-        se::TextStyle{
-            ToArgb(theme.syntax_annotation),
-            0,
-            se::FONT_STYLE_BOLD,
-        }
-    );
-  }
+se::TextStyle ToCoreStyle(const EditorTextStyle& style) {
+  return {ToArgb(style.foreground), ToArgb(style.background), style.font_style};
 }
 
-
-void ApplyDecorations(
-    se::EditorCore& core, EditorDecorationResult decorations, bool settled, bool refresh_folds
-) {
-  // Takes by value: core setters consume non-const vectors, and callers have
-  // already released ownership of the merged result.
-  // Clearing the syntax layer marks every line layout-dirty and leaves the
-  // document blanked until the next model rebuild, which painted unhighlighted
-  // frames while scrolling. A mid-scroll refresh therefore only overwrites the
-  // lines the provider returned; the settled refresh stays authoritative and
-  // clears spans the provider dropped.
-  if (settled) {
-    core.clearHighlights(se::SpanLayer::SYNTAX);
+std::vector<std::pair<std::uint32_t, se::TextStyle>> CoreTextStyles(const EditorTheme& theme) {
+  std::vector<std::pair<std::uint32_t, se::TextStyle>> styles;
+  styles.reserve(theme.text_styles.size());
+  for (const auto& [id, style] : theme.text_styles) {
+    styles.emplace_back(id, ToCoreStyle(style));
   }
-  core.setBatchLineSpans(se::SpanLayer::SYNTAX, std::move(decorations.syntax_spans));
-  if (!settled) {
-    core.setIndentGuides(std::move(decorations.indent_guides));
-    return;
-  }
-  core.clearHighlights(se::SpanLayer::OVERLAY);
-  core.setBatchLineSpans(se::SpanLayer::OVERLAY, std::move(decorations.overlay_spans));
-  if (decorations.document_highlights.empty()) {
-    core.clearDocumentHighlights();
-  } else {
-    core.setBatchLineDocumentHighlights(std::move(decorations.document_highlights));
-  }
-  core.setBatchLineInlayHints(std::move(decorations.inlay_hints));
-  core.setBatchLineDiagnostics(std::move(decorations.diagnostics));
-  core.setBatchLineCodeLens(std::move(decorations.code_lens));
-  core.setBatchLineLinks(std::move(decorations.links));
-  core.setBatchLineGutterIcons(std::move(decorations.gutter_icons));
-  core.setIndentGuides(std::move(decorations.indent_guides));
-  // Fold regions are applied only when the provider republished them after a
-  // content change; an empty list then clears the core's fold state so the
-  // gutter's fold-arrow area (and width) is released once blocks disappear.
-  if (refresh_folds) {
-    core.setFoldRegions(std::move(decorations.fold_regions));
-  }
-  if (decorations.matched_bracket_open && decorations.matched_bracket_close) {
-    core.setMatchedBrackets(*decorations.matched_bracket_open, *decorations.matched_bracket_close);
-  } else {
-    core.clearMatchedBrackets();
-  }
+  return styles;
 }
 
-// ---- ARGB color ------------------------------------------------------------
 Color Argb(int32_t argb) {
   const int a = (argb >> 24) & 0xFF;
   const int r = (argb >> 16) & 0xFF;
@@ -391,9 +140,7 @@ Color Argb(int32_t argb) {
   return Color::Rgb(r, g, b, static_cast<float>(a) / 255.0F);
 }
 
-// ---- Font / style mapping (shared by the measurer and the renderer) --------
-TextStyle MakeTextStyle(int32_t font_style, int32_t argb_color, float font_size) {
-  Font font = Font::Monospace(font_size);
+TextStyle MakeTextStyle(int32_t font_style, int32_t argb_color, Font font) {
   if ((font_style & se::FONT_STYLE_BOLD) != 0) {
     font = font.WithWeight(FontWeight::Bold);
   }
@@ -407,7 +154,10 @@ TextStyle MakeTextStyle(int32_t font_style, int32_t argb_color, float font_size)
   return TextStyle{font, Argb(argb_color), decoration};
 }
 
-// ---- SweetEditor TextMeasurer bridge ---------------------------------------
+}  // namespace
+
+namespace detail {
+
 class HuxeruiTextMeasurer final : public se::TextMeasurer {
 public:
   explicit HuxeruiTextMeasurer(huxerui::TextMeasurer& measurer, float font_size, FontFamily font_family)
@@ -415,6 +165,10 @@ public:
 
   [[nodiscard]] huxerui::Font ContentFont() const {
     return Font::FromFamily(font_family_, font_size_);
+  }
+
+  [[nodiscard]] huxerui::Font InlayHintFont() const {
+    return Font::System(font_size_ * 0.86F);
   }
 
   void SetFont(FontFamily font_family, float font_size) {
@@ -426,27 +180,21 @@ public:
     if (!measurer_) {
       return 0.0F;
     }
-    huxerui::TextStyle style = MakeTextStyle(font_style, 0, font_size_);
-    style.font = ContentFont();
-    return measurer_->MeasureRun(Utf16ToUtf8(text), style).advance;
+    return measurer_->MeasureRun(Utf16ToUtf8(text), MakeTextStyle(font_style, 0, ContentFont())).advance;
   }
 
   float measureInlayHintWidth(const se::U16String& text) override {
     if (!measurer_) {
       return 0.0F;
     }
-    // SweetEditor's reference renderer draws inlay hints in a sans-serif face at 90% of the text size.
-    const huxerui::Font hint_font = huxerui::Font::System(font_size_ * 0.9F);
     return measurer_
         ->MeasureRun(
-            Utf16ToUtf8(text), huxerui::TextStyle{hint_font, huxerui::Color::Black(), huxerui::TextDecoration::None}
+            Utf16ToUtf8(text), huxerui::TextStyle{InlayHintFont(), huxerui::Color::Black(), huxerui::TextDecoration::None}
         )
         .advance;
   }
 
-  float measureIconWidth(int32_t) override {
-    return 0.0F;
-  }
+  float measureIconWidth(int32_t) override { return font_size_; }
 
   se::FontMetrics getFontMetrics() override {
     if (!measurer_) {
@@ -462,7 +210,10 @@ private:
   float font_size_;
 };
 
-// ---- Input mapping ---------------------------------------------------------
+}  // namespace detail
+
+namespace {
+
 se::KeyModifier ToModifiers(const KeyModifiers& modifiers) {
   int value = 0;
   if (modifiers.shift) {
@@ -481,6 +232,9 @@ se::KeyModifier ToModifiers(const KeyModifiers& modifiers) {
 }
 
 se::KeyCode ToKeyCode(Key key) {
+  if (key >= Key::A && key <= Key::Z) {
+    return static_cast<se::KeyCode>(static_cast<int>(se::KeyCode::A) + (static_cast<int>(key) - static_cast<int>(Key::A)));
+  }
   switch (key) {
   case Key::Backspace:
     return se::KeyCode::BACKSPACE;
@@ -510,41 +264,19 @@ se::KeyCode ToKeyCode(Key key) {
     return se::KeyCode::PAGE_UP;
   case Key::PageDown:
     return se::KeyCode::PAGE_DOWN;
-  case Key::A:
-    return se::KeyCode::A;
-  case Key::C:
-    return se::KeyCode::C;
-  case Key::V:
-    return se::KeyCode::V;
-  case Key::X:
-    return se::KeyCode::X;
-  case Key::Y:
-    return se::KeyCode::Y;
-  case Key::Z:
-    return se::KeyCode::Z;
   default:
     return se::KeyCode::NONE;
   }
 }
 
 se::KeyEvent ToKeyEvent(const KeyEvent& event) {
-  se::KeyEvent out;
-  out.modifiers = ToModifiers(event.modifiers);
-  // The web adapter only fills `text` for unmodified single-character input,
-  // so a non-empty `text` always means a printable character.
-  if (!event.text.empty()) {
-    out.key_code = se::KeyCode::NONE;
-    out.text = event.text;
-  } else {
-    out.key_code = ToKeyCode(event.key);
-  }
-  return out;
+  return {ToKeyCode(event.key), event.text, ToModifiers(event.modifiers)};
 }
 
 se::GestureEvent ToGestureEvent(const PointerEvent& event) {
   se::GestureEvent out;
   out.points.push_back(se::PointF{event.position.x, event.position.y});
-  out.modifiers = se::KeyModifier::NONE;
+  out.modifiers = ToModifiers(event.modifiers);
   const bool mouse = event.device_kind == PointerDeviceKind::Mouse || event.device_kind == PointerDeviceKind::Pen;
   switch (event.type) {
   case PointerEventType::Down:
@@ -566,40 +298,33 @@ se::GestureEvent ToGestureEvent(const PointerEvent& event) {
 se::GestureEvent ToWheelGestureEvent(const ScrollInputEvent& event) {
   se::GestureEvent out;
   out.type = se::EventType::MOUSE_WHEEL;
-  out.wheel_delta_x = event.delta_x;
-  out.wheel_delta_y = event.delta_y;
+  out.wheel_delta_x = -event.delta_x;
+  out.wheel_delta_y = -event.delta_y;
   return out;
 }
 
-// ---- Theme defaults --------------------------------------------------------
 
-// Auto-closing bracket pairs enabled by default (reference platform ships
-// with these); hosts may override via EditorOptions.auto_closing_pairs.
 const std::vector<std::pair<char32_t, char32_t>> kDefaultAutoClosingPairs = {
     {U'(', U')'},
     {U'{', U'}'},
     {U'[', U']'},
 };
 
-// Completion panel, matching the SweetEditor reference light theme and
-// dimensions (Android CompletionPopupController / EditorTheme.java).
+// Completion panel dimensions follow SweetEditor's Android layout.
 constexpr float kCompletionPanelWidth = 300.0F;
-constexpr float kCompletionPanelMinWidth = 120.0F;
 constexpr float kCompletionRowHeight = 32.0F;
 constexpr float kCompletionPanelPaddingH = 4.0F;
 constexpr float kCompletionPanelPaddingV = 6.0F;
 constexpr float kCompletionRowPaddingH = 8.0F;
 constexpr float kCompletionBadgeSize = 18.0F;
-constexpr float kCompletionBadgeGap = 8.0F;
+constexpr float kCompletionColumnGap = 8.0F;
 constexpr float kCompletionGap = 4.0F;
 constexpr float kCompletionFramePadding = 8.0F;
-constexpr size_t kCompletionMaxVisible = 4;
-// A down on the completion panel arms a tap; movement beyond this slop turns
-// the gesture into list scrolling instead of selecting a row.
-constexpr float kCompletionTapSlop = 8.0F;
+constexpr float kCompletionScrollbarSpace = 10.0F;
+constexpr std::size_t kCompletionMaxVisible = 4;
 constexpr float kCompletionLabelSize = 13.0F;
 constexpr float kCompletionDetailSize = 11.0F;
-constexpr float kCompletionBadgeSizePx = 10.0F;
+constexpr float kCompletionBadgeFontSize = 10.0F;
 
 int32_t CompletionKindColor(CompletionItemKind kind) {
   switch (kind) {
@@ -649,10 +374,141 @@ const char* CompletionKindLetter(CompletionItemKind kind) {
   }
 }
 
-// Baseline that centers text (ascent above, descent below) on a row center.
-// DrawTextRun places its origin on the alphabetic baseline.
-float CenterBaseline(float center_y, const FontMetrics& metrics) {
-  return center_y + (metrics.ascent - metrics.descent) * 0.5F;
+struct CompletionPopupColors {
+  Color background;
+  Color border;
+  Color selected;
+  Color label;
+  Color detail;
+  Color scrollbar_track;
+  Color scrollbar_thumb;
+};
+
+struct CompletionText {
+  std::string text;
+  float width = 0.0F;
+};
+
+CompletionText FitCompletionText(TextMeasurer& measurer, std::string_view text, const TextStyle& style, float limit) {
+  text = text.substr(0, text.find_first_of("\r\n"));
+  if (text.empty() || limit <= 0.0F) return {};
+  const auto measure = [&](std::string_view value) { return std::ceil(measurer.MeasureRun(value, style).advance); };
+  const float width = measure(text);
+  if (width <= limit) return {std::string(text), width};
+
+  constexpr std::string_view ellipsis = "\xE2\x80\xA6";
+  const float ellipsis_width = measure(ellipsis);
+  if (ellipsis_width > limit) return {};
+  CompletionText fitted{std::string(ellipsis), ellipsis_width};
+
+  se::U16String source;
+  se::StrUtil::convertUTF8ToUTF16(std::string(text), source);
+  std::vector<std::size_t> boundaries;
+  for (std::size_t column = 0; column < source.size();) {
+    column = se::UnicodeUtil::nextGraphemeBoundaryColumn(source, column);
+    boundaries.push_back(column);
+  }
+  std::size_t first = 0;
+  std::size_t last = boundaries.size();
+  while (first < last) {
+    const std::size_t middle = first + (last - first) / 2;
+    auto candidate = Utf16ToUtf8(source.substr(0, boundaries[middle]));
+    candidate += ellipsis;
+    const float candidate_width = measure(candidate);
+    if (candidate_width <= limit) {
+      fitted = {std::move(candidate), candidate_width};
+      first = middle + 1;
+    } else {
+      last = middle;
+    }
+  }
+  return fitted;
+}
+
+View DefaultCompletionRow(const CompletionItem& item, const CompletionPopupColors& colors,
+                          float row_width, TextMeasurer& measurer) {
+  constexpr float minimum_label_width = 36.0F;
+  const float content_width = row_width - 2.0F * kCompletionRowPaddingH;
+  const float badge_extent = kCompletionBadgeSize + kCompletionColumnGap;
+  const bool show_badge = content_width >= badge_extent + kCompletionLabelSize;
+  const float text_width = content_width - (show_badge ? badge_extent : 0.0F);
+  const TextStyle detail_style{Font::System(kCompletionDetailSize), colors.detail};
+  auto detail = FitCompletionText(measurer, item.detail, detail_style,
+      std::min(text_width * 0.45F, text_width - minimum_label_width - kCompletionColumnGap));
+  const float label_width = text_width - (detail.text.empty() ? 0.0F : detail.width + kCompletionColumnGap);
+  const TextStyle label_style{Font::Monospace(kCompletionLabelSize), colors.label};
+  auto label = FitCompletionText(measurer, item.label, label_style, label_width);
+  return Row {
+    show_badge ? Text(CompletionKindLetter(item.kind))
+        .Style({Font::System(kCompletionBadgeFontSize).WithWeight(FontWeight::Bold), Color::White()})
+        .Align(TextAlign::Center)
+        .VerticalAlign(TextVerticalAlign::Center)
+        .With(Frame{.width = kCompletionBadgeSize, .height = kCompletionBadgeSize},
+              Background(Argb(CompletionKindColor(item.kind))), CornerRadius(4.0F)) : View{},
+    Text(std::move(label.text)).Style(label_style).With(Grow()),
+    detail.text.empty() ? View{} : Text(std::move(detail.text)).Style(detail_style).Align(TextAlign::Trailing)
+        .With(Frame{.width = detail.width}),
+  }.With(Padding(EdgeInsets::Symmetric(kCompletionRowPaddingH, 0.0F)),
+         Spacing(kCompletionColumnGap), CrossAlign(CrossAxisAlignment::Center));
+}
+
+struct CompletionPopupContent {
+  std::shared_ptr<const std::vector<CompletionItem>> items;
+  std::size_t selected;
+  CompletionItemRenderer renderer;
+  CompletionPopupColors colors;
+  Size size;
+  std::function<void(std::size_t)> accept;
+};
+
+[[huxerui::composable]]
+View CompletionPopupView(CompletionPopupContent content) {
+  const auto scroll = UseScrollController();
+  auto* measurer = &UseTextMeasurer();
+  const float list_height = content.size.height - 2.0F * kCompletionPanelPaddingV;
+  const float scrollbar_space = static_cast<float>(content.items->size()) * kCompletionRowHeight > list_height
+      ? kCompletionScrollbarSpace : 0.0F;
+  const float row_width = content.size.width - 2.0F * kCompletionPanelPaddingH - scrollbar_space;
+
+  Lifecycle([scroll, selected = content.selected, list_height] {
+    const auto metrics = scroll.Metrics();
+    const float top = static_cast<float>(selected) * kCompletionRowHeight;
+    const float visible_bottom = metrics.offset + std::min(metrics.viewport_extent, list_height);
+    if (top < metrics.offset) {
+      scroll.ScrollToItem(selected, ScrollAlignment::Start);
+    } else if (top + kCompletionRowHeight > visible_bottom) {
+      scroll.ScrollToItem(selected, ScrollAlignment::End);
+    }
+  }, content.items, content.selected, list_height);
+
+  return Column {
+    VirtualList(content.items->size(), [content, measurer, row_width, scrollbar_space](std::size_t index) {
+      const auto& item = (*content.items)[index];
+      const bool selected = index == content.selected;
+      View row = (content.renderer ? content.renderer(item, selected)
+                                   : DefaultCompletionRow(item, content.colors, row_width, *measurer)).With(Grow());
+      return Row {
+        row,
+      }.OnClick([accept = content.accept, index] { accept(index); })
+       .With(Frame{.width = row_width + scrollbar_space, .height = kCompletionRowHeight},
+             Padding(EdgeInsets{.right = scrollbar_space}),
+             CrossAlign(CrossAxisAlignment::Center), Focusable(false),
+             Background(selected ? content.colors.selected : Color::Transparent()), CornerRadius(6.0F),
+             Semantics{.role = SemanticRole::ListItem, .label = item.label, .value = item.detail,
+                       .selected = selected, .descendants = SemanticDescendantPolicy::Exclude})
+       .Key(index);
+    }).ItemExtent(kCompletionRowHeight)
+      .Controller(scroll)
+      .With(Grow(), ScrollBar{ScrollBarStyle{.thickness = 4.0F, .minimum_thumb_extent = 12.0F,
+                                            .margin = 2.0F, .corner_radius = 2.0F,
+                                            .track_color = content.colors.scrollbar_track,
+                                            .thumb_color = content.colors.scrollbar_thumb}},
+            Semantics{.role = SemanticRole::List}),
+  }.With(Frame{.width = content.size.width, .height = content.size.height},
+         Padding(EdgeInsets::Symmetric(kCompletionPanelPaddingH, kCompletionPanelPaddingV)),
+         CrossAlign(CrossAxisAlignment::Stretch), Background(content.colors.background),
+         Border{content.colors.border}, CornerRadius(12.0F), ClipChildren(),
+         Shadow{.color = Color::Rgb(0, 0, 0, 0.26F), .offset = {0.0F, 4.0F}, .blur_radius = 10.0F});
 }
 
 // Converts "(){}[]" style pair strings into the core's bracket pair list.
@@ -667,11 +523,11 @@ std::vector<se::BracketPair> MakeBracketPairs(const std::vector<std::pair<char32
 
 se::EditorRenderColors MakeRenderColors(const EditorTheme& theme) {
   se::EditorRenderColors colors;
-  colors.text_foreground = ToArgb(theme.text_foreground);
+  colors.text_foreground = ToArgb(theme.text_color);
   colors.link_foreground = ToArgb(theme.link_color);
-  colors.active_link_foreground = ToArgb(theme.active_link_color);
-  colors.codelens_foreground = ToArgb(theme.codelens_color);
-  colors.active_codelens_foreground = ToArgb(theme.active_codelens_color);
+  colors.active_link_foreground = ToArgb(theme.link_active_color);
+  colors.codelens_foreground = ToArgb(theme.code_lens_color);
+  colors.active_codelens_foreground = ToArgb(theme.code_lens_active_color);
   colors.diff_added_line_background = ToArgb(theme.diff_added_background);
   colors.diff_removed_line_background = ToArgb(theme.diff_removed_background);
   colors.diff_added_gutter_background = ToArgb(theme.diff_added_gutter);
@@ -681,1920 +537,1333 @@ se::EditorRenderColors MakeRenderColors(const EditorTheme& theme) {
 
 se::EditorRangeEffectStyles MakeRangeEffectStyles(const EditorTheme& theme) {
   se::EditorRangeEffectStyles styles;
-  styles.selection.background_color = ToArgb(theme.selection_background);
-  styles.search_match.background_color = ToArgb(theme.search_match_background);
-  styles.search_current.background_color = ToArgb(theme.search_current_background);
-  styles.bracket_match.background_color = ToArgb(theme.bracket_match_background);
-  styles.ime_composition.underline_color = ToArgb(theme.ime_composition_underline);
+  styles.selection.foreground_color = ToArgb(theme.selection_text_color);
+  styles.selection.background_color = ToArgb(theme.selection_color);
+  styles.search_match.background_color = ToArgb(theme.search_match_bg_color);
+  styles.search_current.border_color = ToArgb(theme.search_current_border_color);
+  styles.search_current.background_color = ToArgb(theme.search_current_bg_color);
+  styles.bracket_match.border_color = ToArgb(theme.bracket_highlight_border_color);
+  styles.linked_editing_active.border_color = ToArgb(theme.linked_editing_active_color);
+  styles.linked_editing_inactive.border_color = ToArgb(theme.linked_editing_inactive_color);
+  styles.bracket_match.background_color = ToArgb(theme.bracket_highlight_bg_color);
+  styles.ime_composition.underline_color = ToArgb(theme.composition_underline_color);
   styles.ime_composition.underline_style = se::RangeEffectUnderlineStyle::SOLID;
 
-  styles.document_highlight_text.background_color = ToArgb(theme.document_highlight_text);
-  styles.document_highlight_read.background_color = ToArgb(theme.document_highlight_read);
-  styles.document_highlight_write.background_color = ToArgb(theme.document_highlight_write);
-  styles.diagnostic_error.underline_color = ToArgb(theme.diagnostic_error_underline);
+  styles.document_highlight_text.background_color = ToArgb(theme.document_highlight_text_bg_color);
+  styles.document_highlight_read.background_color = ToArgb(theme.document_highlight_read_bg_color);
+  styles.document_highlight_write.background_color = ToArgb(theme.document_highlight_write_bg_color);
+  styles.diagnostic_error.underline_color = ToArgb(theme.diagnostic_error_color);
   styles.diagnostic_error.underline_style = se::RangeEffectUnderlineStyle::WAVY;
-  styles.diagnostic_warning.underline_color = ToArgb(theme.diagnostic_warning_underline);
+  styles.diagnostic_warning.underline_color = ToArgb(theme.diagnostic_warning_color);
   styles.diagnostic_warning.underline_style = se::RangeEffectUnderlineStyle::WAVY;
-  styles.diagnostic_info.underline_color = ToArgb(theme.diagnostic_info_underline);
+  styles.diagnostic_info.underline_color = ToArgb(theme.diagnostic_info_color);
   styles.diagnostic_info.underline_style = se::RangeEffectUnderlineStyle::WAVY;
-  styles.diagnostic_hint.underline_color = ToArgb(theme.diagnostic_hint_underline);
-  styles.diagnostic_hint.underline_style = se::RangeEffectUnderlineStyle::WAVY;
+  styles.diagnostic_hint.underline_color = ToArgb(theme.diagnostic_hint_color);
+  styles.diagnostic_hint.underline_style = se::RangeEffectUnderlineStyle::DASHED;
   return styles;
 }
 
 
-// ---- Text input bridge (HuxerUI IME session -> SweetEditor core) -----------
-class EditorTextInputClient final : public TextInputClient, public TextSelectionClient {
-public:
-  EditorTextInputClient(
-      std::shared_ptr<se::EditorCore> core,
-      std::shared_ptr<se::Document> document,
-      std::function<void(const std::vector<se::TextChange>&)> on_content_changed,
-      std::function<void()> on_change,
-      std::function<void(const std::vector<se::TextChange>&)> on_text_committed,
-      std::function<void()> on_edit,
-      std::function<bool()> on_tab,
-      bool read_only,
-      EditorTheme theme
-  )
-      : theme_(std::move(theme)),
-        core_(std::move(core)),
-        document_(std::move(document)),
-        on_content_changed_(std::move(on_content_changed)),
-        on_change_(std::move(on_change)),
-        on_text_committed_(std::move(on_text_committed)),
-        on_edit_(std::move(on_edit)),
-        on_tab_(std::move(on_tab)),
-        read_only_(read_only) {}
+}  // namespace
 
-  TextInputConfiguration Configuration() const override {
-    TextInputConfiguration configuration;
-    configuration.type = TextInputType::Text;
-    configuration.capitalization = TextCapitalization::None;
-    configuration.action = TextInputAction::Newline;
-    configuration.multiline = true;
-    configuration.secure = false;
-    configuration.autocorrect = false;
-    configuration.read_only = read_only_;
-    return configuration;
+namespace detail {
+
+namespace {
+
+Document ResolveDocument(const EditorOptions& options) {
+  return std::visit([](const auto& value) { return Document(value); }, options.document);
+}
+
+}  // namespace
+
+class EditorSession : public std::enable_shared_from_this<EditorSession> {
+  enum class SelectionMenuPhase { Hidden, Pending, Visible, Suspended };
+
+ public:
+  EditorSession(TextMeasurer& measurer, const EditorOptions& options, TaskScope tasks, MenuHandle menu,
+               PopupHandle popup, ViewHandle editor_anchor,
+               std::shared_ptr<Clipboard> clipboard, EventEmitter events, EditorController controller,
+               std::function<void()> invalidate, std::function<void()> invalidate_semantics,
+               std::function<void(PointerCursorKind)> set_cursor, std::function<void()> show_keyboard,
+               std::function<Point(Point)> local_to_window, std::function<std::optional<Point>(Point)> window_to_local)
+      : text_measurer_(std::make_shared<HuxeruiTextMeasurer>(
+            measurer, options.settings.editor_text_size, options.settings.font_family)),
+        core_(std::make_shared<se::EditorCore>(text_measurer_, options.core_options)),
+        document_handle_(ResolveDocument(options)),
+        document_(detail::DocumentAccess::Core(document_handle_)),
+        measurer_(measurer), tasks_(std::move(tasks)), menu_(std::move(menu)),
+        popup_(std::move(popup)), editor_anchor_(std::move(editor_anchor)),
+        clipboard_(std::move(clipboard)), events_(std::move(events)), controller_(std::move(controller)),
+        invalidate_(std::move(invalidate)), invalidate_semantics_(std::move(invalidate_semantics)),
+        set_cursor_(std::move(set_cursor)), show_keyboard_(std::move(show_keyboard)),
+        local_to_window_(std::move(local_to_window)), window_to_local_(std::move(window_to_local)) {}
+
+  void Initialize(const EditorOptions& options) {
+    text_input_ = CreateTextInput();
+    Dispatch(core_->loadDocument(document_));
+    ApplySettings(options.settings, true);
+    ApplyTheme(*options.theme);
+    SetKeyMap(options.key_map ? *options.key_map : EditorKeyMap::DefaultKeyMap());
+    Dispatch(core_->setAutoClosingPairs(MakeBracketPairs(kDefaultAutoClosingPairs)));
+    SyncOptions(options, nullptr);
+    document_event_pending_ = true;
   }
 
-  TextInputState State() const override {
-    // Self-heal the revision contract: the core can move the caret through
-    // deferred or non-notified actions, and the runtime throws when an
-    // observable change is reported without a revision advance. Comparing the
-    // live core state against the last report and bumping here keeps every
-    // transition valid no matter which path moved the caret.
-    const TextSelection selection = Selection();
-    const std::optional<TextOffset> comp_start = composition_start_ >= 0 ? std::optional(composition_start_) : std::nullopt;
-    const std::optional<TextOffset> comp_end = composition_end_ >= 0 ? std::optional(composition_end_) : std::nullopt;
-    if (!last_reported_selection_valid_ || last_reported_selection_ != selection ||
-        last_reported_composition_start_ != comp_start || last_reported_composition_end_ != comp_end) {
-      ++revision_;
-    }
-    last_reported_selection_ = selection;
-    last_reported_selection_valid_ = true;
-    last_reported_composition_start_ = comp_start;
-    last_reported_composition_end_ = comp_end;
-
-    std::optional<TextRange> composition;
-    if (composition_start_ >= 0 && composition_end_ >= composition_start_) {
-      composition = TextRange{composition_start_, composition_end_};
-    }
-    return {
-        session_id_,
-        revision_,
-        content_revision_,
-        selection,
-        composition,
-    };
-  }
-
-  TextInputState BeginTextInput(TextInputSessionId session_id) override {
-    session_id_ = session_id;
-    return State();
-  }
-
-  // The runtime requires revision_ to advance on every observable selection change
-  // (for example, a click or drag that moves the caret), not only on text edits.
-  void NotifySelectionChanged() {
-    ++revision_;
-    last_reported_selection_ = Selection();
-    last_reported_selection_valid_ = true;
-  }
-
-  void NotifyContentChanged(const std::vector<se::TextChange>& changes) {
-    ++telemetry_notify_calls;
-    ++revision_;
-    ++content_revision_;
-    last_reported_selection_ = Selection();
-    last_reported_selection_valid_ = true;
-    if (on_content_changed_) {
-      on_content_changed_(changes);
-    }
-    // Live diff: re-run the comparison after every edit while a diff original
-    // is active so added/removed rows track typing. computeDiff emits no text
-    // changes, only a redraw request (the hook invalidates the frame).
-    if (on_diff_edit_) {
-      on_diff_edit_();
-    }
-  }
-
-  // Selection/content edits performed outside the normal input pipeline (word
-  // selection, drag-handle extension, clipboard actions) must mark the render
-  // model dirty and schedule a repaint.
-  void NotifyEdit() {
-    on_change_();
-    if (on_edit_) {
-      on_edit_();
-    }
-  }
-
-  // Live pipeline counters surfaced through the component telemetry hint.
-  uint64_t telemetry_apply_calls = 0;
-  uint64_t telemetry_notify_calls = 0;
-  EditorTheme theme_;
-
-  void SetTheme(const EditorTheme& theme) { theme_ = theme; }
-
-  void SetReadOnly(bool read_only) { read_only_ = read_only; }
-
-  TextInputApplyResult ApplyTextInput(const TextInputCommandBatch& batch) override {
-    ++telemetry_apply_calls;
-    CODEEDITOR_TRACE("client: ApplyTextInput commands=%zu session=%s", batch.commands.size(),
-                     batch.session_id == session_id_ ? "ok" : "MISMATCH");
-    if (batch.session_id != session_id_) {
-      return {TextInputResultCode::SessionMismatch, TextInputSyncAction::None};
-    }
-    if (read_only_) {
-      return {TextInputResultCode::ReadOnly, TextInputSyncAction::None};
-    }
-
-    bool changed = false;
-    std::vector<se::TextChange> changes;
-    for (const TextInputCommand& command : batch.commands) {
-      changed = ApplyCommand(command, changes) || changed;
-    }
-    if (changed) {
-      NotifyContentChanged(changes);
-      NotifyEdit();
-      if (on_text_committed_) {
-        on_text_committed_(changes);
+  void SyncOptions(const EditorOptions& options, const EditorOptions* previous) {
+    if (previous) {
+      if (options.settings != previous->settings) ApplySettings(options.settings);
+      if (options.theme != previous->theme) ApplyTheme(*options.theme);
+      if (options.key_map != previous->key_map) {
+        SetKeyMap(options.key_map ? *options.key_map : EditorKeyMap::DefaultKeyMap());
       }
     }
-    return {TextInputResultCode::Ok, TextInputSyncAction::None};
-  }
-
-  TextInputContext QueryTextInputContext(TextInputSessionId session_id, TextOffset, TextOffset) const override {
-    TextInputContext result;
-    result.session_id = session_id;
-    if (session_id != session_id_) {
-      result.result_code = TextInputResultCode::SessionMismatch;
-      return result;
+    if (!previous || options.language_configuration != previous->language_configuration) {
+      SetLanguage(options.language_configuration
+          ? std::optional<LanguageConfiguration>(*options.language_configuration) : std::nullopt);
     }
-    const se::U16String text = document_->getU16Text();
-    result.result_code = TextInputResultCode::Ok;
-    result.slice_start = 0;
-    result.total_length = static_cast<TextOffset>(text.size());
-    result.text = document_->getU8Text();
-    result.selection = Selection();
-    if (composition_start_ >= 0 && composition_end_ >= composition_start_) {
-      result.composition = TextRange{composition_start_, composition_end_};
+    if (!previous || options.metadata != previous->metadata) {
+      SetMetadata(options.metadata ? *options.metadata : EditorMetadata{});
     }
-    return result;
-  }
-
-  TextInputGeometry QueryTextInputGeometry(TextInputSessionId session_id, TextRange) const override {
-    TextInputGeometry result;
-    result.session_id = session_id;
-    if (session_id != session_id_) {
-      result.result_code = TextInputResultCode::SessionMismatch;
-      return result;
-    }
-    const se::CursorRect cursor = core_->getCursorScreenRect();
-    result.result_code = TextInputResultCode::Ok;
-    result.caret = Rect{cursor.x, cursor.y, theme_.caret_width, cursor.height};
-    return result;
-  }
-
-  TextInputPositionResult QueryTextInputPosition(TextInputSessionId session_id, Point point) const override {
-    TextInputPositionResult result;
-    result.session_id = session_id;
-    if (session_id != session_id_ || document_ == nullptr) {
-      result.result_code = TextInputResultCode::SessionMismatch;
-      return result;
-    }
-    // Report the caret's document offset: the platform uses this to anchor
-    // IME candidate windows. A precise screen->position hit test would need
-    // the layout internals; the caret offset is what Android queries between
-    // composition updates.
-    const se::TextPosition cursor = core_->getCursorPosition();
-    result.result_code = TextInputResultCode::Ok;
-    result.position = {
-        static_cast<TextOffset>(document_->getCharIndexFromPosition(cursor)),
-        TextAffinity::Downstream,
-    };
-    return result;
-  }
-
-  TextInputKeyResult HandleTextKey(const KeyEvent& event) override {
-    // Tab reaches the editor only through this hook: the runtime normally
-    // reserves Tab for focus traversal, but gives a focused text input the
-    // first chance. The holder decides between snippet tab-stop jumps,
-    // phantom-text accept, and completion navigation; a plain indent Tab is
-    // left to the core's key handling (which also runs here via on_tab_).
-    if (event.type == KeyEventType::Down && event.key == Key::Tab && !event.repeat) {
-      if (on_tab_ && on_tab_()) {
-        return TextInputKeyResult::Handled;
-      }
-    }
-    return TextInputKeyResult::Unhandled;
-  }
-
-  bool CanPerformTextEditingAction(TextEditingAction action, PlatformClipboard* clipboard) const override {
-    switch (action) {
-    case TextEditingAction::Cut:
-    case TextEditingAction::Copy:
-      return clipboard != nullptr && !core_->getSelection().isCollapsed();
-    case TextEditingAction::Paste:
-      return clipboard != nullptr && !read_only_;
-    case TextEditingAction::SelectAll:
-      return true;
-    }
-    return false;
-  }
-
-  bool PerformTextEditingAction(TextEditingAction action, PlatformClipboard* clipboard) override {
-    if (clipboard != nullptr) {
-      clipboard_ = clipboard;
-    }
-    if (clipboard == nullptr) {
-      return false;
-    }
-    switch (action) {
-    case TextEditingAction::Copy:
-    case TextEditingAction::Cut: {
-      const se::TextRange selection = core_->getSelection().normalized();
-      if (selection.isCollapsed()) {
-        return false;
-      }
-      const std::string text = document_->getU8Text(selection);
-      if (!clipboard->WriteText(text)) {
-        return false;
-      }
-      if (action == TextEditingAction::Cut) {
-        if (read_only_) {
-          return false;
-        }
-        const se::EditorActionResult result = core_->replaceText(selection, "");
-        if (!result.text_changes.empty()) {
-          NotifyContentChanged(result.text_changes);
-          NotifyEdit();
+    if (!previous || options.decoration_providers != previous->decoration_providers) {
+      if (previous) {
+        for (const auto& provider : previous->decoration_providers) {
+          if (std::ranges::find(options.decoration_providers, provider) == options.decoration_providers.end()) {
+            RemoveDecorationProvider(provider);
+          }
         }
       }
-      return true;
+      for (const auto& provider : options.decoration_providers) AddDecorationProvider(provider);
     }
-    case TextEditingAction::Paste: {
-      if (read_only_) {
-        return false;
+    if (!previous || options.completion_providers != previous->completion_providers) {
+      if (previous) {
+        for (const auto& provider : previous->completion_providers) {
+          if (std::ranges::find(options.completion_providers, provider) == options.completion_providers.end()) {
+            RemoveCompletionProvider(provider);
+          }
+        }
       }
-      const std::optional<std::string> text = clipboard->ReadText();
-      if (!text.has_value() || text->empty()) {
-        return false;
-      }
-      const se::EditorActionResult result = core_->replaceText(core_->getSelection().normalized(), *text);
-      if (!result.text_changes.empty()) {
-        NotifyContentChanged(result.text_changes);
-        NotifyEdit();
-      }
-      return true;
+      for (const auto& provider : options.completion_providers) AddCompletionProvider(provider);
     }
-    case TextEditingAction::SelectAll: {
-      const se::EditorActionResult result = core_->selectAll();
-      if (result.selection_changed || result.cursor_changed) {
-        NotifySelectionChanged();
-        NotifyEdit();
+    if (!previous || options.newline_action_providers != previous->newline_action_providers) {
+      if (previous) {
+        for (const auto& provider : previous->newline_action_providers) {
+          if (std::ranges::find(options.newline_action_providers, provider) == options.newline_action_providers.end()) {
+            RemoveProvider(newline_providers_, provider);
+          }
+        }
       }
-      return true;
+      for (const auto& provider : options.newline_action_providers) AddProvider(newline_providers_, provider);
     }
+    if (previous && options.document != previous->document) {
+      LoadDocument(ResolveDocument(options));
     }
-    return false;
   }
 
-  // Context-menu clipboard actions; the clipboard pointer is cached from the
-  // runtime's editing-action calls (the platform adapter outlives the session).
-  bool CopySelection() {
-    if (clipboard_ == nullptr || core_->getSelection().isCollapsed()) {
-      return false;
-    }
-    return clipboard_->WriteText(document_->getU8Text(core_->getSelection().normalized()));
+  void Activate() {
+    if (active_) return;
+    active_ = true;
+    PublishPendingEvents();
   }
 
-  bool PasteFromClipboard() {
-    if (clipboard_ == nullptr || read_only_) {
-      return false;
-    }
-    const std::optional<std::string> text = clipboard_->ReadText();
-    if (!text.has_value() || text->empty()) {
-      return false;
-    }
-    const se::EditorActionResult result = core_->replaceText(core_->getSelection().normalized(), *text);
-    if (!result.text_changes.empty()) {
-      NotifyContentChanged(result.text_changes);
-      NotifyEdit();
-    }
+  void Close() {
+    active_ = false;
+    text_input_->Detach();
+    CancelDecorations();
+    DismissCompletion();
+    HideMenus();
+    invalidate_ = {};
+    invalidate_semantics_ = {};
+    set_cursor_ = {};
+    show_keyboard_ = {};
+    local_to_window_ = {};
+    window_to_local_ = {};
+  }
+
+  se::EditorCore& Core() { return *core_; }
+  const Document& CurrentDocument() const { return document_handle_; }
+  const EditorSettings& Settings() const { return settings_; }
+  const EditorTheme& Theme() const { return theme_; }
+  const EditorKeyMap& KeyMap() const { return key_map_; }
+  const std::optional<LanguageConfiguration>& Language() const { return language_; }
+  const EditorMetadata& Metadata() const { return metadata_; }
+  std::shared_ptr<detail::TextInputBridge> TextInput() const { return text_input_; }
+
+  bool LoadDocument(Document document) {
+    if (!detail::DocumentAccess::Core(document)) return false;
+    text_input_->Detach();
+    DismissCompletion();
+    DismissInlineSuggestion();
+    HideMenus();
+    CancelDecorations();
+    ++document_generation_;
+    previous_requested_revision_ = edit_generation_;
+    pending_changes_.clear();
+    snapshot_.reset();
+    document_handle_ = std::move(document);
+    document_ = detail::DocumentAccess::Core(document_handle_);
+    // A new client gives pending platform callbacks a stale session ID.
+    text_input_ = CreateTextInput();
+    Dispatch(core_->loadDocument(document_));
+    if (invalidate_semantics_) invalidate_semantics_();
+    if (diff_original_) Dispatch(core_->computeDiff(*diff_original_));
+    RequestDecorations();
+    document_event_pending_ = true;
+    if (active_ && !defer_events_) PublishPendingEvents();
     return true;
   }
 
-  void SetDiffEditHook(std::function<void()> hook) {
-    on_diff_edit_ = std::move(hook);
-  }
-
-  void EndTextInput(TextInputSessionId, TextInputEndReason) override {
-    if (ime_session_open_) {
-      core_->endImeSession(ime_session_id_);
-      ime_session_open_ = false;
-      composition_start_ = -1;
-      composition_end_ = -1;
-    }
-  }
-
-  // TextSelectionClient: the editor core owns pointer gestures, double-tap
-  // word selection, and drag-handle extension through its gesture pipeline.
-  // SelectWord, ExtendSelection, and QuerySelectionGeometry return
-  // negative results so the HuxerUI selection overlay (handles + toolbar)
-  // stays hidden — the editor draws its own handles and would otherwise
-  // render duplicates that ghost while dragging. ClearSelection stays
-  // functional: the runtime clears the editor selection on outside taps.
-  bool SelectWord(Point) override {
-    return false;
-  }
-
-  bool ExtendSelection(Point, bool) override {
-    return false;
-  }
-
-  bool ClearSelection() override {
-    if (core_->getSelection().isCollapsed()) {
-      return false;
-    }
-    const se::EditorActionResult result = core_->clearSelection();
-    if (result.selection_changed || result.cursor_changed) {
-      NotifySelectionChanged();
-    }
-    return true;
-  }
-
-  std::optional<TextSelectionGeometry> QuerySelectionGeometry() const override {
-    return std::nullopt;
-  }
-
-  Color SelectionHandleColor() const noexcept override {
-    return Argb(0xFF1F6FEB);
-  }
-
-private:
-  TextSelection Selection() const {
-    const se::TextRange selection = core_->getSelection();
-    return {
-        static_cast<TextOffset>(document_->getCharIndexFromPosition(selection.start)),
-        static_cast<TextOffset>(document_->getCharIndexFromPosition(selection.end)),
-        TextAffinity::Downstream,
-    };
-  }
-
-  // Opens the core IME session on demand (one session per HuxerUI session).
-  bool EnsureImeSession() {
-    if (ime_session_open_) {
-      return true;
-    }
-    const se::ImeState state = core_->beginImeSession(se::ImeMutationModel::COMMAND);
-    if (state.result_code != se::ImeResultCode::OK) {
-      return false;
-    }
-    ime_session_id_ = state.session_id;
-    ime_session_open_ = true;
-    return true;
-  }
-
-  // Maps a UTF-16 document range to the core's IME coordinate space.
-  se::ImeOffsetRange ToImeRange(TextOffset start, TextOffset end) {
-    se::ImeOffsetRange range;
-    range.coordinate_space = se::ImeCoordinateSpace::DOCUMENT;
-    range.start_utf16 = static_cast<int64_t>(std::max<TextOffset>(0, start));
-    range.end_utf16 = static_cast<int64_t>(std::max<TextOffset>(0, end));
-    return range;
-  }
-
-  // Applies a core IME command batch; captures resulting text changes and the
-  // active composition range (rendered with the IME underline style).
-  bool SendImeCommands(std::vector<se::ImeCommand> commands, std::vector<se::TextChange>& changes) {
-    if (!EnsureImeSession()) {
-      return false;
-    }
-    se::ImeCommandBatch batch;
-    batch.session_id = ime_session_id_;
-    batch.commands = std::move(commands);
-    const se::EditorActionResult result = core_->applyImeCommands(batch);
-    if (!result.text_changes.empty()) {
-      changes.insert(changes.end(), result.text_changes.begin(), result.text_changes.end());
-    }
-    TrackComposition(result.ime_state);
-    return result.handled;
-  }
-
-  // Updates the local UTF-16 composition span from the core's IME state so
-  // State() can report it to the platform (inline preview/underline).
-  void TrackComposition(const se::ImeState& state) {
-    const se::ImeOffsetRange& range = state.composition_range;
-    if (range.start_utf16 < 0 || range.end_utf16 < range.start_utf16) {
-      composition_start_ = -1;
-      composition_end_ = -1;
-      return;
-    }
-    composition_start_ = static_cast<TextOffset>(range.start_utf16);
-    composition_end_ = static_cast<TextOffset>(range.end_utf16);
-  }
-
-  bool ApplyCommand(const TextInputCommand& command, std::vector<se::TextChange>& changes) {
-    const auto capture = [&changes](const se::EditorActionResult& result) {
-      changes.insert(changes.end(), result.text_changes.begin(), result.text_changes.end());
-    };
-    switch (command.kind) {
-    case TextInputCommandKind::CommitText:
-      if (!command.text.empty()) {
-        capture(core_->insertText(command.text));
-        return true;
-      }
-      return false;
-    case TextInputCommandKind::SetSelection:
-      if (command.selection_after.has_value()) {
-        const TextSelection& selection = *command.selection_after;
-        const se::TextPosition start =
-            document_->getPositionFromCharIndex(static_cast<size_t>(std::max<TextOffset>(0, selection.anchor)));
-        const se::TextPosition end =
-            document_->getPositionFromCharIndex(static_cast<size_t>(std::max<TextOffset>(0, selection.active)));
-        core_->setSelection({start, end});
-        return true;
-      }
-      return false;
-    case TextInputCommandKind::DeleteSurrounding: {
-      bool changed = false;
-      for (TextOffset index = 0; index < command.delete_before; ++index) {
-        capture(core_->backspace());
-        changed = true;
-      }
-      for (TextOffset index = 0; index < command.delete_after; ++index) {
-        capture(core_->deleteForward());
-        changed = true;
-      }
-      return changed;
-    }
-    case TextInputCommandKind::BeginComposition: {
-      // Replaces the current selection with the composition text and marks the
-      // range as an active composition (rendered with the IME underline style).
-      if (command.text.empty()) {
-        return false;
-      }
-      const TextSelection selection = Selection();
-      const TextRange range = selection.Range();
-      std::vector<se::ImeCommand> ime_commands;
-      se::ImeCommand begin;
-      begin.kind = se::ImeCommandKind::BEGIN_COMPOSITION;
-      begin.target_range = ToImeRange(range.start, range.end);
-      begin.text = command.text;
-      ime_commands.push_back(std::move(begin));
-      return SendImeCommands(std::move(ime_commands), changes);
-    }
-    case TextInputCommandKind::UpdateComposition: {
-      if (command.text.empty()) {
-        return false;
-      }
-      // Chinese/Japanese IMEs replace the whole composition string on each
-      // step, so no target range is needed: the core treats the update as a
-      // full-text replacement of the active composition.
-      std::vector<se::ImeCommand> ime_commands;
-      se::ImeCommand update;
-      update.kind = se::ImeCommandKind::UPDATE_COMPOSITION;
-      update.text = command.text;
-      ime_commands.push_back(std::move(update));
-      return SendImeCommands(std::move(ime_commands), changes);
-    }
-    case TextInputCommandKind::FinishComposition: {
-      std::vector<se::ImeCommand> ime_commands;
-      se::ImeCommand finish;
-      finish.kind = se::ImeCommandKind::FINISH_COMPOSITION;
-      if (!command.text.empty()) {
-        finish.text = command.text;
-      }
-      ime_commands.push_back(std::move(finish));
-      return SendImeCommands(std::move(ime_commands), changes);
-    }
-    case TextInputCommandKind::CancelComposition: {
-      std::vector<se::ImeCommand> ime_commands;
-      se::ImeCommand cancel;
-      cancel.kind = se::ImeCommandKind::CANCEL_COMPOSITION;
-      ime_commands.push_back(std::move(cancel));
-      return SendImeCommands(std::move(ime_commands), changes);
-    }
-    }
-    return false;
-  }
-
-  std::shared_ptr<se::EditorCore> core_;
-  std::shared_ptr<se::Document> document_;
-  std::function<void(const std::vector<se::TextChange>&)> on_content_changed_;
-  std::function<void()> on_change_;
-  std::function<void(const std::vector<se::TextChange>&)> on_text_committed_;
-  std::function<void()> on_edit_;
-  std::function<bool()> on_tab_;
-  std::function<void()> on_diff_edit_;
-  bool read_only_;
-  PlatformClipboard* clipboard_{nullptr};
-  TextInputSessionId session_id_ = 0;
-  mutable std::uint64_t revision_ = 0;
-  mutable std::uint64_t content_revision_ = 0;
-  // Last selection reported through State(); used to self-heal the revision
-  // when the core moves the caret outside the notification paths.
-  mutable TextSelection last_reported_selection_{0, 0, TextAffinity::Downstream};
-  mutable bool last_reported_selection_valid_{false};
-  mutable std::optional<TextOffset> last_reported_composition_start_;
-  mutable std::optional<TextOffset> last_reported_composition_end_;
-  // SweetEditor core IME session id (distinct from the HuxerUI session id).
-  uint64_t ime_session_id_{0};
-  bool ime_session_open_{false};
-  // Active composition span in UTF-16 document offsets (-1 when none).
-  TextOffset composition_start_{-1};
-  TextOffset composition_end_{-1};
-};
-
-// ---- Editor holder ---------------------------------------------------------
-class EditorHolder {
-public:
-  EditorHolder(
-      TextMeasurer& measurer,
-      const EditorOptions& options,
-      std::function<void()> invalidate,
-      huxerui::EventEmitter events,
-      EditorController controller
-  )
-      : theme_(options.theme.value_or(EditorTheme::Default())),
-        font_family_(options.font_family),
-        invalidate_(std::move(invalidate)),
-        font_size_(options.font_size),
-        completion_provider_(options.completion_provider),
-        completion_trigger_characters_(options.completion_trigger_characters),
-        controller_(std::move(controller)),
-        events_(std::move(events)) {
-    const Font content_font = ContentFont();
-    font_metrics_ = measurer.Metrics(content_font);
-    char_width_ = measurer.MeasureRun("0", TextStyle{content_font, Color::Black(), TextDecoration::None})
-                      .advance;
-    completion_label_metrics_ = measurer.Metrics(Font::System(kCompletionLabelSize));
-    completion_detail_metrics_ = measurer.Metrics(Font::System(kCompletionDetailSize));
-    const TextStyle badge_style{Font::System(kCompletionBadgeSizePx).WithWeight(FontWeight::Bold), Color::White(),
-                                TextDecoration::None};
-    completion_badge_metrics_ = measurer.Metrics(Font::System(kCompletionBadgeSizePx));
-    completion_badge_char_advance_ = measurer.MeasureRun("W", badge_style).advance;
-
-    se::EditorOptions core_options;
-    measurer_ = &measurer;
-    text_measurer_ = std::make_shared<HuxeruiTextMeasurer>(measurer, font_size_, font_family_);
-    core_ = std::make_shared<se::EditorCore>(text_measurer_, core_options);
-    theme_ = options.theme.value_or(EditorTheme::Default());
-    core_->setEditorRenderColors(MakeRenderColors(theme_));
-    core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(theme_));
-    core_->setLineSpacing(options.line_spacing_add, options.line_spacing_mult);
-    core_->setReadOnly(options.read_only);
-
-    // Editing feel aligned with the reference platform: keep the previous
-    // line's indent on newline, backspace unindents to the tab stop, Tab
-    // inserts spaces up to the next stop, and typed opening brackets insert
-    // their closing partner (core default bracket pairs () {} []).
-    core_->setTabSize(options.tab_size > 0 ? options.tab_size : 4);
-    core_->setAutoIndentMode(se::AutoIndentMode::KEEP_INDENT);
-    core_->setBackspaceUnindent(options.backspace_unindent);
-    core_->setInsertSpaces(options.insert_spaces);
-    // The core disables auto-closing when the pair list is empty; the reference
-    // platform ships with () {} [] enabled, so apply that default unless the
-    // host explicitly configured a list.
-    const std::vector<std::pair<char32_t, char32_t>>& closing_pairs =
-        options.auto_closing_pairs.empty()
-        ? kDefaultAutoClosingPairs
-        : options.auto_closing_pairs;
-    core_->setAutoClosingPairs(MakeBracketPairs(closing_pairs));
-    core_->setRenderWhitespace(
-        options.render_whitespace ? se::WhitespaceRenderMode::ALL : se::WhitespaceRenderMode::NONE
-    );
-    core_->setRenderLineBreaks(options.render_line_breaks);
-    // Gutter icons share the line-number lane: with max_gutter_icons == 0 the
-    // core reports overlay mode (icon replaces the line number); the reference
-    // demo sets 1 so the icon renders beside the number.
-
-    // Display options: wrap mode (0=NONE/1=CHAR_BREAK/2=WORD_BREAK) and sticky
-    // gutter (line numbers stay fixed during horizontal scroll).
-    current_wrap_mode_ = options.wrap_mode;
-    current_sticky_gutter_ = options.sticky_gutter;
-    if (options.wrap_mode >= 1 && options.wrap_mode <= 2) {
-      core_->setWrapMode(
-          options.wrap_mode == 1 ? se::WrapMode::CHAR_BREAK : se::WrapMode::WORD_BREAK
-      );
-    }
-    core_->setGutterSticky(options.sticky_gutter);
-    // AUTO collapses the fold-arrow lane whenever the visible range has no
-    // fold regions, which resized the gutter while scrolling. A code editor
-    // keeps the lane stable instead.
-    core_->setFoldArrowMode(se::FoldArrowMode::ALWAYS);
-    if (options.content_start_padding > 0.0F) {
-      core_->setContentStartPadding(options.content_start_padding);
-    }
-    // The core exposes no setter for the gutter margin; write it through the
-    // metrics accessor. The vendor never overwrites this field after init, so
-    // the value persists for the editor lifetime.
-    if (options.line_number_margin > 0.0F) {
-      core_->getLayoutMetrics().line_number_margin = options.line_number_margin;
-    }
-    // Scrollbar customization (defaults are sensible; hosts may override).
-    if (options.scrollbar_thickness > 0.0F || options.scrollbar_mode != 0) {
-      se::ScrollbarConfig scrollbar;
-      scrollbar.thickness = options.scrollbar_thickness > 0.0F
-          ? options.scrollbar_thickness
-          : 12.0F;
-      scrollbar.mode = static_cast<se::ScrollbarMode>(std::clamp(options.scrollbar_mode, 0, 2));
-      core_->setScrollbarConfig(scrollbar);
-    }
-
-    document_ = std::make_shared<se::LineArrayDocument>(se::U8String(options.initial_text));
-    core_->loadDocument(document_);
-    // Optional diff presentation against a provided original text (the demo
-    // feeds each file's pristine content so edits light up added/removed rows).
-    // The original is tracked so the component can switch the diff on/off
-    // without rebuilding the holder (which would discard the live edits).
-    current_diff_original_ = options.original_text;
-    if (!current_diff_original_.empty()) {
-      core_->computeDiff(current_diff_original_);
-    }
-
-    RegisterSyntaxStyles(*core_, theme_);
-    providers_ = options.decoration_providers;
-    // Initial decoration pass: publishes whole-document fold regions and
-    // lights the first viewport once providers are attached.
-    RefreshDecorations(true);
-
-    text_input_client_ = std::make_shared<EditorTextInputClient>(
-        core_, document_,
-        [this](const std::vector<se::TextChange>& changes) {
-          RecordPendingChanges(changes);
-          RefreshDecorations(true);
-        },
-        invalidate_,
-        [this](const std::vector<se::TextChange>& changes) { UpdateCompletion(changes); },
-        [this]() {
-          model_dirty_ = true;
-          if (invalidate_) {
-            invalidate_();
-          }
-        },
-        [this]() { return HandleTab(); },
-        options.read_only,
-        theme_);
-    text_input_client_->SetDiffEditHook([this]() {
-      if (current_diff_original_.empty()) {
-        return;
-      }
-      core_->computeDiff(current_diff_original_);
-      model_dirty_ = true;
-      if (invalidate_) {
-        invalidate_();
-      }
-    });
-
-    newline_action_ = options.newline_action;
-    accept_phantom_on_tab_ = options.accept_phantom_on_tab;
-  }
-
-  // Enables/disables the diff presentation against `original` without touching
-  // the live document: recomputes the line-level diff (or clears it) and
-  // repaints. Used by the host toggle so edits survive switching the diff.
-  const std::string& CurrentDiffOriginal() const {
-    return current_diff_original_;
-  }
-
-  // Runtime sync for display options changed after construction (wrap mode,
-  // sticky gutter): the host toggles them without rebuilding the holder.
-  void SyncDisplayOptions(int wrap_mode, bool sticky_gutter) {
-    if (wrap_mode != current_wrap_mode_) {
-      current_wrap_mode_ = wrap_mode;
-      if (wrap_mode >= 1 && wrap_mode <= 2) {
-        core_->setWrapMode(
-            wrap_mode == 1 ? se::WrapMode::CHAR_BREAK : se::WrapMode::WORD_BREAK
-        );
-      } else {
-        core_->setWrapMode(se::WrapMode::NONE);
-      }
-      AfterCoreAction({});
-    }
-    if (sticky_gutter != current_sticky_gutter_) {
-      current_sticky_gutter_ = sticky_gutter;
-      core_->setGutterSticky(sticky_gutter);
-      AfterCoreAction({});
-    }
-  }
-
-  void SetDiffOriginal(std::string original) {
-    if (original == current_diff_original_) {
-      return;
-    }
-    current_diff_original_ = std::move(original);
-    se::EditorActionResult result = current_diff_original_.empty()
-        ? core_->clearDiff()
-        : core_->computeDiff(current_diff_original_);
-    AfterCoreAction(result);
-  }
-
-  // ---- Find & replace (reference search module) ----------------------------
-
-  // Runs a fresh search; empty pattern clears the search state.
-  void RunSearch(const std::string& pattern) {
-    se::SearchRequest request;
-    request.pattern = pattern;
-    if (!pattern.empty()) {
-      se::EditorActionResult result = core_->search(request);
-      AfterCoreAction(result);
-    } else {
-      se::EditorActionResult result = core_->clearSearch();
-      AfterCoreAction(result);
-    }
-  }
-
-  void FindNext() {
-    se::EditorActionResult result = core_->findNextSearchMatch();
-    AfterCoreAction(result);
-  }
-
-  void FindPrevious() {
-    se::EditorActionResult result = core_->findPreviousSearchMatch();
-    AfterCoreAction(result);
-  }
-
-  void ReplaceCurrent(const std::string& replacement) {
-    if (replacement.empty()) {
-      FindNext();
-      return;
-    }
-    se::EditorActionResult result = core_->replaceCurrentSearchMatch(replacement);
-    AfterCoreAction(result);
-  }
-
-  void ReplaceAll(const std::string& replacement) {
-    se::EditorActionResult result = core_->replaceAllSearchMatches(replacement);
-    AfterCoreAction(result);
-  }
-
-  void CloseSearch() {
-    se::EditorActionResult result = core_->clearSearch();
-    AfterCoreAction(result);
-  }
-
-  // Full document text as UTF-8 (controller Text()).
-  std::string Text() const {
-    return document_ ? document_->getU8Text() : std::string();
-  }
-
-  // Moves the caret to a zero-based line/column (controller SetCursor()).
-  bool SetCursor(uint32_t line, uint32_t column) {
-    se::EditorActionResult result = core_->setCursorPosition(se::TextPosition{line, column});
-    AfterCoreAction(result);
-    return result.handled;
-  }
-
-  // Common post-core-action refresh (text/selection/scroll invalidation).
-  void AfterCoreAction(const se::EditorActionResult& result) {
-    if (!result.text_changes.empty()) {
-      text_input_client_->NotifyContentChanged(result.text_changes);
-      RefreshDecorations(true);
-      FireTextChanged();
-    } else if (result.selection_changed || result.cursor_changed || result.scroll_changed) {
-      text_input_client_->NotifySelectionChanged();
-      RefreshDecorations(true);
-    }
-    model_dirty_ = true;
-    if (invalidate_) {
-      invalidate_();
-    }
-  }
-
-  // Clipboard/selection actions used by the application toolbars (the editor
-  // itself no longer draws a built-in menu).
-  bool CutSelectionAction() {
-    const se::EditorActionResult result = core_->deleteText(core_->getSelection().normalized());
-    AfterCoreAction(result);
-    return result.handled;
-  }
-  bool CopySelectionAction() {
-    text_input_client_->CopySelection();
-    return true;
-  }
-  bool PasteSelectionAction() {
-    text_input_client_->PasteFromClipboard();
-    return true;
-  }
-  bool SelectAllAction() {
-    const se::EditorActionResult result = core_->selectAll();
-    AfterCoreAction(result);
-    return result.handled;
-  }
-
-  // Builds the multi-touch GestureEvent for the current pointer event. Touch
-  // pointers are aggregated in press order so a two-finger move reaches the
-  // core as a two-point TOUCH_MOVE and is recognized as SCALE (pinch zoom).
-  se::GestureEvent BuildTouchGestureEvent(const PointerEvent& event) {
-    se::GestureEvent out;
-    out.modifiers = se::KeyModifier::NONE;
-    const se::PointF point{event.position.x, event.position.y};
-    switch (event.type) {
-    case PointerEventType::Down: {
-      const bool first_pointer = active_pointers_.empty();
-      auto found = std::find_if(active_pointers_.begin(), active_pointers_.end(),
-                                [&](const auto& entry) { return entry.first == event.pointer_id; });
-      if (found == active_pointers_.end()) {
-        active_pointers_.emplace_back(event.pointer_id, point);
-      } else {
-        found->second = point;
-      }
-      out.type = first_pointer ? se::EventType::TOUCH_DOWN : se::EventType::TOUCH_POINTER_DOWN;
-      if (active_pointers_.size() >= 2) {
-        pinch_last_distance_ = active_pointers_[0].second.distance(active_pointers_[1].second);
-      }
-      CODEEDITOR_TRACE(
-          "pinch down id=%lld count=%zu type=%d dist=%.1f", static_cast<long long>(event.pointer_id),
-          active_pointers_.size(), static_cast<int>(out.type), pinch_last_distance_
-      );
-      break;
-    }
-    case PointerEventType::Move: {
-      for (auto& entry : active_pointers_) {
-        if (entry.first == event.pointer_id) {
-          entry.second = point;
-          break;
-        }
-      }
-      if (active_pointers_.size() >= 2) {
-        // Two fingers: report the distance ratio directly. DIRECT_SCALE skips
-        // the core's touch state machine and applies the scale immediately.
-        const float distance = active_pointers_[0].second.distance(active_pointers_[1].second);
-        if (pinch_last_distance_ > 0.0F && distance > 0.0F) {
-          out.type = se::EventType::DIRECT_SCALE;
-          out.direct_scale = distance / pinch_last_distance_;
-          CODEEDITOR_TRACE(
-              "pinch scale ratio=%.3f last=%.1f dist=%.1f", out.direct_scale, pinch_last_distance_, distance
-          );
-        } else {
-          CODEEDITOR_TRACE("pinch move skipped last=%.1f dist=%.1f", pinch_last_distance_, distance);
-        }
-        pinch_last_distance_ = distance;
-        break;
-      }
-      out.type = se::EventType::TOUCH_MOVE;
-      break;
-    }
-    case PointerEventType::Up:
-    case PointerEventType::Cancel: {
-      active_pointers_.erase(std::remove_if(active_pointers_.begin(), active_pointers_.end(),
-                                            [&](const auto& entry) { return entry.first == event.pointer_id; }),
-                             active_pointers_.end());
-      pinch_last_distance_ = 0.0F;
-      out.type = active_pointers_.empty() ? se::EventType::TOUCH_UP : se::EventType::TOUCH_POINTER_UP;
-      break;
-    }
-    }
-    for (const auto& entry : active_pointers_) {
-      out.points.push_back(entry.second);
-    }
-    if (out.points.empty()) {
-      out.points.push_back(point);
-    }
-    return out;
-  }
-
-  bool HandlePointer(const PointerEvent& event) {
-    // Scrollbar thumb dragging takes priority over the editor gestures.
-    if (scrollbar_dragging_) {
-      if (event.type == PointerEventType::Move) {
-        DragScrollbar(event.position);
-        return true;
-      }
-      if (event.type == PointerEventType::Up || event.type == PointerEventType::Cancel) {
-        scrollbar_dragging_ = false;
-        return true;
-      }
-    } else if (event.type == PointerEventType::Down) {
-      bool vertical = false;
-      if (HitScrollbarThumb(event.position, vertical)) {
-        scrollbar_dragging_ = true;
-        scrollbar_drag_vertical_ = vertical;
-        const Rect thumb = ToRect(vertical ? cached_scrollbar_v_.thumb : cached_scrollbar_h_.thumb);
-        scrollbar_drag_offset_ = vertical ? event.position.y - thumb.y : event.position.x - thumb.x;
-        return true;
-      }
-    }
-    if (completion_.visible && !completion_.items.empty()) {
-      const bool in_rect = CompletionPanelHitRect(event.position);
-      switch (event.type) {
-      case PointerEventType::Down:
-        if (in_rect) {
-          if (CompletionThumbHeight() > 0.0F && CompletionThumbHit(event.position)) {
-            completion_.thumb_dragging = true;
-            completion_.panel_tap_armed = false;
-            completion_.panel_scrolling = false;
-            completion_.panel_down = event.position;
-            completion_.panel_last_y = event.position.y;
-            return true;
-          }
-          // Arm a tap candidate; a drag beyond slop becomes list scrolling.
-          completion_.thumb_dragging = false;
-          completion_.panel_tap_armed = true;
-          completion_.panel_scrolling = false;
-          completion_.panel_down = event.position;
-          completion_.panel_last_y = event.position.y;
-          return true;
-        }
-        // A tap outside the panel dismisses it, then falls through to the editor.
-        DismissCompletion();
-        break;
-      case PointerEventType::Move:
-        if (completion_.panel_tap_armed || completion_.panel_scrolling || completion_.thumb_dragging) {
-          const float dy = event.position.y - completion_.panel_last_y;
-          completion_.panel_last_y = event.position.y;
-          const float distance = std::hypot(
-              event.position.x - completion_.panel_down.x, event.position.y - completion_.panel_down.y
-          );
-          if (completion_.thumb_dragging) {
-            // Direct thumb manipulation: map track pixels to list pixels.
-            const float track_height = completion_.panel_rect.height - kCompletionPanelPaddingV * 2.0F;
-            const float thumb_height = CompletionThumbHeight();
-            const float ratio = (track_height - thumb_height) > 1.0F
-                ? CompletionMaxScroll() / (track_height - thumb_height)
-                : 0.0F;
-            ScrollCompletionBy(dy * ratio);
-            return true;
-          }
-          if (!completion_.panel_scrolling && distance > kCompletionTapSlop) {
-            completion_.panel_scrolling = true;
-            completion_.panel_tap_armed = false;
-          }
-          if (completion_.panel_scrolling) {
-            // Dragging upward reveals later items; pixel-smooth.
-            ScrollCompletionBy(-dy);
-          }
-          return true;
-        }
-        break;
-      case PointerEventType::Up:
-      case PointerEventType::Cancel:
-        completion_.thumb_dragging = false;
-        if (completion_.panel_scrolling) {
-          completion_.panel_scrolling = false;
-          completion_.panel_tap_armed = false;
-          return true;
-        }
-        if (completion_.panel_tap_armed) {
-          completion_.panel_tap_armed = false;
-          // Only a clean tap inside a row confirms; a finger that drifted off
-          // the list (long-press then slide) selects nothing. HitCompletionPanel
-          // already returns the absolute item index for the scroll position.
-          size_t row = 0;
-          if (HitCompletionPanel(event.position, row)) {
-            completion_.selected = row;
-            ConfirmCompletion();
-          }
-          return true;
-        }
-        break;
-      default:
-        break;
-      }
-    }
-    try {
-      const bool touch = event.device_kind == PointerDeviceKind::Touch;
-      const se::GestureEvent gesture = touch ? BuildTouchGestureEvent(event) : ToGestureEvent(event);
-      const se::EditorActionResult result = core_->handleGestureEvent(gesture);
-      if (result.scale_changed) {
-        ApplyDisplayScale();
-      }
-      if (result.selection_changed || result.cursor_changed) {
-        text_input_client_->NotifySelectionChanged();
-        RefreshDecorations(true);
-        FireCaretEvents();
-      }
-      // Fold toggles refresh the editor inline. Other decoration taps dispatch
-      // to application callbacks.
-      if (result.gesture_type == se::GestureType::TAP && result.hit_target.type != se::HitTargetType::NONE) {
-        const se::HitTarget& target = result.hit_target;
-        switch (target.type) {
-        case se::HitTargetType::FOLD_GUTTER:
-        case se::HitTargetType::FOLD_PLACEHOLDER:
-          // The core's gesture pipeline already folded the line
-          // (intent.toggle_fold -> toggleFoldAtInternal); do NOT toggle again
-          // here or the double toggle cancels out. Just refresh and notify.
-          RefreshDecorations(false);
-          FireFoldToggle(target.line);
-          // Folding changes the visible line set, so the cached render model
-          // must be rebuilt on the next frame.
-          model_dirty_ = true;
-          return true;
-        case se::HitTargetType::LINK:
-          events_.Emit<EditorEvents::LinkClicked>(LinkTextAt(target.line, target.column));
-          return true;
-        case se::HitTargetType::CODELENS:
-          events_.Emit<EditorEvents::CodeLensClicked>(target.icon_id);
-          return true;
-        case se::HitTargetType::GUTTER_ICON:
-          events_.Emit<EditorEvents::GutterIconClicked>(static_cast<uint32_t>(target.line), target.icon_id);
-          return true;
-        case se::HitTargetType::INLAY_HINT_TEXT:
-        case se::HitTargetType::INLAY_HINT_ICON:
-        case se::HitTargetType::INLAY_HINT_COLOR:
-          events_.Emit<EditorEvents::InlayClicked>(
-              static_cast<uint32_t>(target.line), static_cast<uint32_t>(target.column)
-          );
-          return true;
-        default:
-          break;
-        }
-      }
-      FirePointerEvents(result);
-      if (result.needs_redraw) {
-        model_dirty_ = true;
-      }
-      if (result.needsAnimation()) {
-        animation_pending_ = true;
-        if (invalidate_) {
-          invalidate_();
-        }
-      }
-      return result.needs_redraw;
-    } catch (const std::exception&) {
-      return false;
-    }
-  }
-
-  bool HandleKey(const KeyEvent& event) {
-    if (event.type == KeyEventType::Down) {
-      // Line operations (reference keymap): Alt+Up/Down move the line,
-      // Shift+Alt+Up/Down copy it, Ctrl+Shift+K deletes it. The huxerui Key
-      // enum lacks K, so Ctrl+Shift+K is matched through the text payload.
-      if (event.modifiers.alt && !event.modifiers.control && !event.modifiers.meta) {
-        if (event.key == Key::ArrowUp || event.key == Key::ArrowDown) {
-          const bool copy = event.modifiers.shift;
-          const se::EditorActionResult result = event.key == Key::ArrowUp
-              ? (copy ? core_->copyLineUp() : core_->moveLineUp())
-              : (copy ? core_->copyLineDown() : core_->moveLineDown());
-          AfterCoreAction(result);
-          return result.handled;
-        }
-      }
-      if (!event.modifiers.alt && event.modifiers.control && event.modifiers.shift &&
-          (event.text == "k" || event.text == "K")) {
-        const se::EditorActionResult result = core_->deleteLine();
-        AfterCoreAction(result);
-        return result.handled;
-      }
-      // Tab reaches the editor through the text-input key hook (runtime gives a
-      // focused text input first chance before focus traversal); it handles
-      // linked-editing jumps, phantom accept, completion navigation, and plain
-      // indentation in one place. Keep the direct path for platforms that do
-      // deliver Tab to the component (e.g. desktop textareas).
-      if (event.key == Key::Tab && !event.repeat && HandleTab()) {
-        return true;
-      }
-      // Panel navigation takes priority over the core (reference
-      // handleAndroidKeyCode: Enter confirms, Escape dismisses, arrows move).
-      // Enter may arrive as a key or as '\r'/'\n' text depending on platform.
-      const bool is_enter = event.key == Key::Enter || event.text == "\r" || event.text == "\n";
-      if (completion_.visible && !completion_.items.empty()) {
-        if (is_enter) {
-          ConfirmCompletion();
-          return true;
-        }
-        switch (event.key) {
-        case Key::Escape:
-          DismissCompletion();
-          return true;
-        case Key::ArrowUp:
-          MoveCompletionSelection(-1);
-          return true;
-        case Key::ArrowDown:
-          MoveCompletionSelection(1);
-          return true;
-        default:
-          break;
-        }
-      }
-      // Host newline action overrides the core's newline insertion
-      // (reference NewLineActionProvider).
-      if (is_enter && newline_action_) {
-        const se::TextPosition cursor = core_->getCursorPosition();
-        const std::string replacement = newline_action_(
-            static_cast<uint32_t>(cursor.line), static_cast<uint32_t>(cursor.column)
-        );
-        if (!replacement.empty()) {
-          const se::EditorActionResult result =
-              core_->replaceText(core_->getSelection().normalized(), replacement);
-          if (!result.text_changes.empty()) {
-            text_input_client_->NotifyContentChanged(result.text_changes);
-            RefreshDecorations(true);
-            FireTextChanged();
-          }
-          model_dirty_ = true;
-          if (invalidate_) {
-            invalidate_();
-          }
-          return true;
-        }
-      }
-      if (event.modifiers.control && event.key == Key::Space && completion_provider_) {
-        TriggerCompletion(CompletionContext::TriggerKind::Invoked, "");
-        return true;
-      }
-      // Ctrl+F (the web adapter delivers printable characters through
-      // `text`; the key enum has no letter keys beyond the edit shortcuts).
-      if (event.modifiers.control && event.text == "f") {
-        controller_.ToggleSearch();
-        return true;
-      }
-    }
-
-    // The SweetEditor core resolves key chords without a down/up distinction, so
-    // a KeyUp would repeat the same edit (double newline / double delete).
-    if (event.type != KeyEventType::Down) {
-      return false;
-    }
-    try {
-      const se::EditorActionResult result = core_->handleKeyEvent(ToKeyEvent(event));
-      if (!result.text_changes.empty()) {
-        text_input_client_->NotifyContentChanged(result.text_changes);
-        RefreshDecorations(true);
-        FireTextChanged();
-        UpdateCompletion(result.text_changes);
-      } else if (result.selection_changed || result.cursor_changed) {
-        // Caret moves without text changes dismiss the panel (reference manager
-        // dismisses whenever the edit result carries no text changes).
-        if (completion_.visible || completion_.request_active) {
-          DismissCompletion();
-        }
-        text_input_client_->NotifySelectionChanged();
-        RefreshDecorations(true);
-        FireCaretEvents();
-      }
-      if (result.needs_redraw) {
-        model_dirty_ = true;
-      }
-      return result.needs_redraw;
-    } catch (const std::exception&) {
-      return false;
-    }
-  }
-
-  bool HandleScroll(const ScrollInputEvent& event) {
-    const se::EditorActionResult result = core_->handleGestureEvent(ToWheelGestureEvent(event));
-    if (result.selection_changed || result.cursor_changed) {
-      text_input_client_->NotifySelectionChanged();
-    }
-    if (result.scroll_changed) {
-      const se::ViewState view = core_->getViewState();
-      events_.Emit<EditorEvents::ScrollChanged>(view.scroll_x, view.scroll_y);
-    }
-    if (result.needs_redraw) {
-      model_dirty_ = true;
-    }
-    if (result.needsAnimation()) {
-      animation_pending_ = true;
-      if (invalidate_) {
-        invalidate_();
-      }
-    }
-    return result.needs_redraw;
-  }
-
-  // Toggled by the legacy host path; retained frame scheduling now owns blinking.
-  void TickBlink() {
-    if (!focused_) {
-      blink_on_ = true;
-      return;
-    }
-    blink_on_ = !blink_on_;
-    if (invalidate_) {
-      invalidate_();
-    }
-  }
-
-  std::shared_ptr<EditorTextInputClient> TextInputClient() const {
-    return text_input_client_;
-  }
-
-  bool IsFocused() const noexcept {
-    return focused_;
-  }
-
-  bool HasActiveAnimation() const noexcept {
-    return animation_pending_;
-  }
-
-  bool HasPendingPaintWork() const noexcept {
-    return model_dirty_ || decorations_pending_;
-  }
-
-  // Whether the first non-empty viewport highlight slice has been published.
-  bool HighlightPublished() const noexcept {
-    return highlight_published_;
-  }
-
-  // The first frames after mount keep flowing until the initial highlight slice
-  // is published (an unfocused editor schedules no follow-up frame otherwise).
-  // Bounded so a permanently empty viewport cannot spin frames forever.
-  bool ShouldBootstrapHighlight() noexcept {
-    if (highlight_published_ || highlight_bootstrap_attempts_ >= kHighlightBootstrapFrames) {
-      return false;
-    }
-    ++highlight_bootstrap_attempts_;
-    return true;
-  }
-
-  [[nodiscard]] const EditorTheme& Theme() const noexcept {
-    return theme_;
-  }
-
-  [[nodiscard]] float FontSize() const noexcept {
-    return font_size_;
-  }
-
-  // Applies a content font change without resetting the editor: the measurer
-  // bridge retargets and the core's onFontMetricsChanged recomputes layout
-  // while preserving the caret, scroll anchor, undo stack, and folds.
-  void ApplyFont(FontFamily font_family, float font_size) {
-    if (font_family == font_family_ && font_size == font_size_) {
-      return;
-    }
-    font_family_ = std::move(font_family);
-    font_size_ = font_size;
-    const Font content_font = ContentFont();
-    font_metrics_ = measurer_->Metrics(content_font);
-    char_width_ = measurer_->MeasureRun("0", TextStyle{content_font, Color::Black(), TextDecoration::None}).advance;
-    if (text_measurer_) {
-      text_measurer_->SetFont(font_family_, EffectiveFontSize());
-      core_->onFontMetricsChanged();
-    }
-    model_dirty_ = true;
-    if (invalidate_) {
-      invalidate_();
-    }
-  }
-
-  // The base content size scaled by the display scale (pinch zoom). The core
-  // tracks the scale in its view state; the platform applies it to rendering
-  // by feeding the scaled size back through the measurer and paint fonts.
-  [[nodiscard]] float EffectiveFontSize() const {
-    return font_size_ * display_scale_;
-  }
-
-  // The content font: the platform monospace default or the configured family.
-  [[nodiscard]] Font ContentFont() const {
-    return Font::FromFamily(font_family_, EffectiveFontSize());
-  }
-
-  // Applies the core's current display scale (reported through scale_changed
-  // after pinch gestures) without touching the configured base font size.
-  void ApplyDisplayScale() {
-    const float next = core_->getViewState().scale;
-    if (std::abs(next - display_scale_) < 1e-4F) {
-      return;
-    }
-    display_scale_ = next;
-    const Font content_font = ContentFont();
-    font_metrics_ = measurer_->Metrics(content_font);
-    char_width_ = measurer_->MeasureRun("0", TextStyle{content_font, Color::Black(), TextDecoration::None}).advance;
-    if (text_measurer_) {
-      text_measurer_->SetFont(font_family_, EffectiveFontSize());
-      core_->onFontMetricsChanged();
-    }
-    model_dirty_ = true;
-    if (invalidate_) {
-      invalidate_();
-    }
-  }
-
-  // Re-applies editing and presentation options that map directly to core
-  // setters, so declarative changes take effect without a holder rebuild.
-  void SyncEditingOptions(const EditorOptions& options) {
-    core_->setLineSpacing(options.line_spacing_add, options.line_spacing_mult);
-    core_->setReadOnly(options.read_only);
-    if (text_input_client_) {
-      text_input_client_->SetReadOnly(options.read_only);
-    }
-    core_->setTabSize(options.tab_size > 0 ? options.tab_size : 4);
-    core_->setBackspaceUnindent(options.backspace_unindent);
-    core_->setInsertSpaces(options.insert_spaces);
-    const auto& closing_pairs =
-        options.auto_closing_pairs.empty() ? kDefaultAutoClosingPairs : options.auto_closing_pairs;
-    core_->setAutoClosingPairs(MakeBracketPairs(closing_pairs));
-    core_->setRenderWhitespace(
-        options.render_whitespace ? se::WhitespaceRenderMode::ALL : se::WhitespaceRenderMode::NONE
-    );
-    core_->setRenderLineBreaks(options.render_line_breaks);
-    model_dirty_ = true;
-    if (invalidate_) {
-      invalidate_();
-    }
-  }
-
-  // Swaps holder-held hooks and provider lists; cheap and stateless.
-  void SyncRuntimeOptions(const EditorOptions& options) {
-    completion_provider_ = options.completion_provider;
-    completion_trigger_characters_ = options.completion_trigger_characters;
-    newline_action_ = options.newline_action;
-    accept_phantom_on_tab_ = options.accept_phantom_on_tab;
-    providers_ = options.decoration_providers;
-  }
-
-  // Applies a resolved theme change without resetting retained state.
-  void ApplyTheme(EditorTheme theme) {
-    if (theme == theme_) {
-      return;
+  bool ApplyTheme(EditorTheme theme) {
+    if (!std::isfinite(theme.caret_width) || theme.caret_width <= 0.0F) {
+      throw std::invalid_argument("CodeEditor caret width must be positive and finite");
     }
     theme_ = std::move(theme);
-    if (core_) {
-      RegisterSyntaxStyles(*core_, theme_);
-      core_->setEditorRenderColors(MakeRenderColors(theme_));
-      core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(theme_));
-    }
-    if (text_input_client_) {
-      text_input_client_->SetTheme(theme_);
-    }
-    model_dirty_ = true;
-    if (invalidate_) {
-      invalidate_();
-    }
+    text_input_->SetCaretWidth(theme_.caret_width);
+    Dispatch(core_->setEditorRenderColors(MakeRenderColors(theme_)));
+    Dispatch(core_->setEditorRangeEffectStyles(MakeRangeEffectStyles(theme_)));
+    Dispatch(core_->registerBatchTextStyles(CoreTextStyles(theme_)));
+    if (completion_.items) InvalidateCompletionPopup();
+    return true;
   }
 
-  // ---- Decoration provider pipeline -----------------------------------------
-
-  // Buffers incremental edits so providers receive them on the next refresh.
-  void RecordPendingChanges(const std::vector<se::TextChange>& changes) {
-    for (const se::TextChange& change : changes) {
-      pending_changes_.push_back(sweeteditor::TextChange{change.range, {}, change.new_text});
+  bool ApplySettings(const EditorSettings& next, bool initial = false) {
+    ValidateSettings(next);
+    const auto previous = settings_;
+    settings_ = next;
+    settings_.scale = core_->getViewState().scale;
+    if (initial || next.editor_text_size != previous.editor_text_size || next.font_family != previous.font_family ||
+        next.line_number_margin != previous.line_number_margin) {
+      UpdateFontMetrics();
     }
+    if (initial || next.scale != previous.scale) {
+      Dispatch(core_->setScale(next.scale));
+      settings_.scale = core_->getViewState().scale;
+    }
+    if (initial || next.wrap_mode != previous.wrap_mode) Dispatch(core_->setWrapMode(next.wrap_mode));
+    if (initial || next.fold_arrow_mode != previous.fold_arrow_mode) Dispatch(core_->setFoldArrowMode(next.fold_arrow_mode));
+    if (initial || next.line_spacing_add != previous.line_spacing_add || next.line_spacing_mult != previous.line_spacing_mult) {
+      Dispatch(core_->setLineSpacing(next.line_spacing_add, next.line_spacing_mult));
+    }
+    if (initial || next.content_start_padding != previous.content_start_padding) {
+      Dispatch(core_->setContentStartPadding(next.content_start_padding));
+    }
+    if (initial || next.show_split_line != previous.show_split_line) Dispatch(core_->setShowSplitLine(next.show_split_line));
+    if (initial || next.gutter_sticky != previous.gutter_sticky) Dispatch(core_->setGutterSticky(next.gutter_sticky));
+    if (initial || next.gutter_visible != previous.gutter_visible) Dispatch(core_->setGutterVisible(next.gutter_visible));
+    if (initial || next.current_line_render_mode != previous.current_line_render_mode) {
+      Dispatch(core_->setCurrentLineRenderMode(next.current_line_render_mode));
+    }
+    if (initial || next.render_whitespace != previous.render_whitespace) Dispatch(core_->setRenderWhitespace(next.render_whitespace));
+    if (initial || next.render_line_breaks != previous.render_line_breaks) Dispatch(core_->setRenderLineBreaks(next.render_line_breaks));
+    if (initial || next.auto_indent_mode != previous.auto_indent_mode) Dispatch(core_->setAutoIndentMode(next.auto_indent_mode));
+    if (initial || next.backspace_unindent != previous.backspace_unindent) Dispatch(core_->setBackspaceUnindent(next.backspace_unindent));
+    if (initial || next.read_only != previous.read_only) {
+      Dispatch(core_->setReadOnly(next.read_only));
+      if (next.read_only) {
+        DismissCompletion();
+        DismissInlineSuggestion();
+      }
+      if (invalidate_semantics_) invalidate_semantics_();
+    }
+    if (initial || next.tab_size != previous.tab_size || next.insert_spaces != previous.insert_spaces) ApplyIndentSettings();
+    if (initial || next.max_gutter_icons != previous.max_gutter_icons) Dispatch(core_->setMaxGutterIcons(next.max_gutter_icons));
+    if (initial || (kSelectionHandlesEnabled && next.handles != previous.handles)) {
+      // The core includes both edges in hit tests, so invert the horizontal bounds for an empty hit area.
+      constexpr se::HandleHitArea empty_hit_area{.left = 1.0F};
+      constexpr HandleConfig disabled_handles{.start_hit_area = empty_hit_area, .end_hit_area = empty_hit_area};
+      Dispatch(core_->setHandleConfig(kSelectionHandlesEnabled ? next.handles : disabled_handles));
+    }
+    if (initial || next.scrollbar != previous.scrollbar) Dispatch(core_->setScrollbarConfig(next.scrollbar));
+    if (initial || next.decoration_scroll_refresh_min_interval_ms != previous.decoration_scroll_refresh_min_interval_ms ||
+        next.decoration_overscan_viewport_multiplier != previous.decoration_overscan_viewport_multiplier) {
+      RequestDecorations();
+    }
+    return true;
   }
 
-  // Collects results from every registered provider and applies the merged
-  // decoration set to the core.
-  void RefreshDecorations(bool settled) {
-    if (!core_ || !document_) return;
-    const bool edits_pending = !pending_changes_.empty();
-    // Providers are the only document_text consumers, so skip the
-    // full-document copy while nothing reads it.
-    const bool sync_text = edits_pending && !providers_.empty();
-    if (sync_text) {
-      synced_document_text_ = document_->getU8Text();
-    }
-    if (edits_pending) {
-      folds_dirty_ = true;
-    }
-
-    EditorDecorationContext context;
-    const se::IntRange visible = core_->getVisibleLineRange();
-    context.visible_start_line = visible.isEmpty() ? 0 : static_cast<size_t>(std::max(0, visible.start));
-    context.visible_end_line = visible.isEmpty() ? 0 : static_cast<size_t>(std::max(0, visible.end));
-    context.total_line_count = document_->getLineCount();
-    const se::TextPosition cursor = core_->getCursorPosition();
-    context.cursor_line = cursor.line;
-    context.cursor_column = cursor.column;
-    context.viewport_settled = settled;
-    context.document_text = sync_text ? &synced_document_text_ : nullptr;
-    context.text_changes = std::move(pending_changes_);
-    pending_changes_.clear();
-
-    // Receiver collects the merged result; the provider may deliver
-    // synchronously (Accept before returning) or asynchronously.
-    class CollectingReceiver final : public EditorDecorationReceiver {
-    public:
-      EditorDecorationResult merged;
-      bool Accept(EditorDecorationResult result) override {
-        // Single-provider fast path: take ownership directly.
-        if (merged.syntax_spans.empty() && merged.diagnostics.empty() && merged.fold_regions.empty()) {
-          merged = std::move(result);
-        } else {
-          MergeInto(merged, std::move(result));
-        }
-        return !cancelled_;
-      }
-      bool IsCancelled() const override { return cancelled_; }
-      bool cancelled_ = false;
-    private:
-      static void MergeInto(EditorDecorationResult& dst, EditorDecorationResult src) {
-        dst.syntax_spans.insert(dst.syntax_spans.end(), std::make_move_iterator(src.syntax_spans.begin()), std::make_move_iterator(src.syntax_spans.end()));
-        dst.overlay_spans.insert(dst.overlay_spans.end(), std::make_move_iterator(src.overlay_spans.begin()), std::make_move_iterator(src.overlay_spans.end()));
-        dst.document_highlights.insert(dst.document_highlights.end(), std::make_move_iterator(src.document_highlights.begin()), std::make_move_iterator(src.document_highlights.end()));
-        dst.inlay_hints.insert(dst.inlay_hints.end(), std::make_move_iterator(src.inlay_hints.begin()), std::make_move_iterator(src.inlay_hints.end()));
-        dst.diagnostics.insert(dst.diagnostics.end(), std::make_move_iterator(src.diagnostics.begin()), std::make_move_iterator(src.diagnostics.end()));
-        dst.code_lens.insert(dst.code_lens.end(), std::make_move_iterator(src.code_lens.begin()), std::make_move_iterator(src.code_lens.end()));
-        dst.links.insert(dst.links.end(), std::make_move_iterator(src.links.begin()), std::make_move_iterator(src.links.end()));
-        dst.gutter_icons.insert(dst.gutter_icons.end(), std::make_move_iterator(src.gutter_icons.begin()), std::make_move_iterator(src.gutter_icons.end()));
-        dst.phantom_texts.insert(dst.phantom_texts.end(), std::make_move_iterator(src.phantom_texts.begin()), std::make_move_iterator(src.phantom_texts.end()));
-        dst.indent_guides.insert(dst.indent_guides.end(), std::make_move_iterator(src.indent_guides.begin()), std::make_move_iterator(src.indent_guides.end()));
-        dst.fold_regions.insert(dst.fold_regions.end(), std::make_move_iterator(src.fold_regions.begin()), std::make_move_iterator(src.fold_regions.end()));
-        if (src.matched_bracket_open) dst.matched_bracket_open = src.matched_bracket_open;
-        if (src.matched_bracket_close) dst.matched_bracket_close = src.matched_bracket_close;
-      }
-    };
-
-    CollectingReceiver receiver;
-    for (const auto& provider : providers_) {
-      if (!provider) continue;
-      provider->ProvideDecorations(context, receiver);
-      if (receiver.IsCancelled()) break;
-    }
-
-    cached_phantom_entries_ = receiver.merged.phantom_texts;
-    // Reserve gutter icon space only while icons actually exist; with none the
-    // auto-sized gutter collapses back to digits + margins. Re-evaluating the
-    // reserve on every refresh let the gutter width oscillate whenever the
-    // provider's mid-scroll icon slice changed between frames, shifting the
-    // line numbers every frame. Transitions therefore apply only on settled
-    // refreshes and the gutter stays width-stable while scrolling.
-    uint32_t reserve = last_gutter_icon_reserve_;
-    if (settled) {
-      bool has_gutter_icons = false;
-      for (const auto& [line, icons] : receiver.merged.gutter_icons) {
-        if (!icons.empty()) {
-          has_gutter_icons = true;
-          break;
-        }
-      }
-      // Sticky: once the document shows gutter icons the lane stays reserved,
-      // so scrolling into icon-free ranges never resizes the gutter.
-      if (has_gutter_icons) {
-        reserve = 1;
-      }
-    }
-    if (reserve != last_gutter_icon_reserve_) {
-      last_gutter_icon_reserve_ = reserve;
-      core_->setMaxGutterIcons(reserve);
-    }
-    const bool refresh_folds = settled && folds_dirty_;
-    ApplyDecorations(*core_, std::move(receiver.merged), settled, refresh_folds);
-    if (settled) {
-      folds_dirty_ = false;
-    }
-    model_dirty_ = true;
+  bool SetKeyMap(EditorKeyMap key_map) {
+    key_map_ = std::move(key_map);
+    se::KeyMap core_key_map;
+    for (const auto& binding : key_map_.Bindings()) core_key_map.addBinding(binding);
+    Dispatch(core_->setKeyMap(std::move(core_key_map)));
+    return true;
   }
 
-  bool AdvanceFrame(double timestamp) {
-    bool changed = false;
-    if (animation_pending_) {
-      const se::EditorActionResult result = core_->tickAnimations();
-      if (result.needs_redraw || result.scroll_changed || result.animation_flags != 0) {
-        model_dirty_ = true;
-        changed = true;
-      }
-      animation_pending_ = result.needsAnimation();
+  bool SetIconProvider(EditorIconProvider provider) {
+    icon_provider_ = std::move(provider);
+    Invalidate();
+    return true;
+  }
+
+  bool SetLanguage(std::optional<LanguageConfiguration> language) {
+    if (language && language->tab_size == 0) throw std::invalid_argument("Language tab size must be positive");
+    language_ = std::move(language);
+    if (language_) {
+      if (language_->brackets) Dispatch(core_->setBracketPairs(std::vector(*language_->brackets)));
+      if (language_->auto_closing_pairs) Dispatch(core_->setAutoClosingPairs(std::vector(*language_->auto_closing_pairs)));
     }
-    if (focused_ && (last_blink_timestamp_ < 0.0 || timestamp - last_blink_timestamp_ >= 0.5)) {
-      blink_on_ = !blink_on_;
-      last_blink_timestamp_ = timestamp;
-      changed = true;
+    ApplyIndentSettings();
+    DismissCompletion();
+    return RequestDecorations();
+  }
+
+  bool SetMetadata(EditorMetadata metadata) {
+    metadata_ = std::move(metadata);
+    DismissCompletion();
+    return RequestDecorations();
+  }
+
+  bool SetDiffOriginal(std::optional<std::string> original) {
+    if (original == diff_original_) return true;
+    diff_original_ = std::move(original);
+    Dispatch(diff_original_ ? core_->computeDiff(*diff_original_) : core_->clearDiff());
+    return true;
+  }
+
+  bool Dispatch(const se::EditorActionResult& result) {
+    text_input_->OnAction(result);
+    if (result.needs_redraw) {
+      model_dirty_ = true;
+      Invalidate();
     }
-    return changed;
+    const double delay = result.next_animation_delay_ms / 1000.0;
+    if (result.needsAnimation() && (!animation_ || delay < animation_delay_)) {
+      animation_deadline_ = frame_time_ + delay;
+      Invalidate();
+    }
+    animation_ = result.needsAnimation();
+    animation_delay_ = delay;
+    const bool moving = result.hasActiveInteraction() || result.needsViewportMotion();
+    if (moving != viewport_in_motion_) {
+      viewport_in_motion_ = moving;
+      if (!moving) decorations_pending_ = true;
+      Invalidate();
+    }
+    if (result.pointer_cursor_changed && set_cursor_) {
+      const auto cursor = result.pointer_cursor_after;
+      set_cursor_(cursor == se::PointerCursorType::HAND ? PointerCursorKind::Hand :
+                  cursor == se::PointerCursorType::TEXT ? PointerCursorKind::Text : PointerCursorKind::Default);
+    }
+    const bool edited = !result.text_changes.empty();
+    if (edited) {
+      ++edit_generation_;
+      snapshot_.reset();
+      pending_changes_.insert(pending_changes_.end(), result.text_changes.begin(), result.text_changes.end());
+      if (invalidate_semantics_) invalidate_semantics_();
+    }
+    if (result.selection_changed || result.cursor_changed || edited) {
+      CancelDecorations();
+      decorations_pending_ = true;
+      blink_on_ = true;
+      blink_deadline_ = frame_time_ + 0.5;
+      if (!edited && result.cursor_changed) DismissCompletion();
+      if (edited || result.cursor_changed) DismissInlineSuggestion();
+    }
+    if (edited) {
+      HideContextMenu();
+      if (diff_original_) Dispatch(core_->computeDiff(*diff_original_));
+    }
+    if (result.scale_changed) {
+      settings_.scale = result.scale_after;
+      UpdateFontMetrics();
+    }
+    UpdateSelectionMenu(result);
+    if (active_ && edited) {
+      if (core_->hasComposition()) DismissCompletion();
+      else RefreshCompletion(result);
+    }
+    if (active_) {
+      if (defer_events_) pending_events_.push_back(result);
+      else PublishAction(result);
+    }
+    return result.handled;
+  }
+
+  bool ScrollInput(const ScrollInputEvent& event) {
+    const auto point = window_to_local_(event.position);
+    if (!point) return false;
+    auto gesture = ToWheelGestureEvent(event);
+    gesture.points.push_back({point->x, point->y});
+    gesture.modifiers = ToModifiers(event.modifiers);
+    const auto result = core_->handleGestureEvent(gesture);
+    Dispatch(result);
+    return result.scroll_changed || result.scale_changed;
+  }
+
+  void HandleContextMenu(Point window_position) {
+    const auto point = window_to_local_(window_position);
+    if (!point) return;
+    se::GestureEvent event;
+    event.type = se::EventType::MOUSE_RIGHT_DOWN;
+    event.modifiers = modifiers_;
+    event.points.push_back({point->x, point->y});
+    Dispatch(core_->handleGestureEvent(event));
+  }
+
+  void Hover(const HoverEvent& event) {
+    if (mouse_pointer_active_) return;
+    se::GestureEvent gesture;
+    gesture.type = se::EventType::MOUSE_MOVE;
+    gesture.modifiers = modifiers_;
+    const Point point = event.type == HoverEventType::Leave ? Point{-1.0F, -1.0F} : event.position;
+    gesture.points.push_back({point.x, point.y});
+    Dispatch(core_->handleGestureEvent(gesture));
   }
 
   void SetFocused(bool focused) {
+    if (focused_ == focused) return;
     focused_ = focused;
+    blink_on_ = focused;
+    blink_deadline_ = frame_time_ + 0.5;
     if (!focused) {
-      blink_on_ = true;
+      UpdatePointerModifiers(KeyModifier::NONE);
+      DismissCompletion();
     }
-    if (invalidate_) {
-      invalidate_();
+    Invalidate();
+  }
+
+  bool PrepareGeometry(Size size) {
+    const se::Size viewport{size.width, size.height};
+    const bool resized = viewport_.width != viewport.width || viewport_.height != viewport.height;
+    if (resized) {
+      viewport_ = viewport;
+      defer_events_ = true;
+      Dispatch(core_->setViewport(viewport_));
+      defer_events_ = false;
+      decorations_pending_ = true;
+    }
+    return RebuildModel();
+  }
+
+  NodeExtension::FrameResult Frame(double now) {
+    frame_time_ = now;
+    PublishPendingEvents();
+    if (animation_ && now >= animation_deadline_) {
+      Dispatch(core_->tickAnimations());
+      animation_deadline_ = now + animation_delay_;
+    }
+    if (focused_ && now >= blink_deadline_) {
+      blink_on_ = !blink_on_;
+      blink_deadline_ = now + 0.5;
+      Invalidate();
+    }
+    RebuildModel();
+    UpdateCompletionPopup();
+    const double decoration_interval = settings_.decoration_scroll_refresh_min_interval_ms / 1000.0;
+    if (decorations_pending_ && !core_->getVisibleLineRange().isEmpty() &&
+        (!viewport_in_motion_ || now >= last_decoration_time_ + decoration_interval)) {
+      RefreshDecorations();
+    }
+    if (selection_menu_phase_ == SelectionMenuPhase::Pending && now >= selection_menu_deadline_) ShowSelectionMenu();
+
+    double wake = std::numeric_limits<double>::infinity();
+    if (animation_) wake = std::min(wake, animation_deadline_ - now);
+    if (focused_) wake = std::min(wake, blink_deadline_ - now);
+    if (decorations_pending_ && !core_->getVisibleLineRange().isEmpty()) {
+      wake = std::min(wake, last_decoration_time_ + decoration_interval - now);
+    }
+    if (selection_menu_phase_ == SelectionMenuPhase::Pending) wake = std::min(wake, selection_menu_deadline_ - now);
+    if (!pending_events_.empty()) wake = 0.0;
+    if (!std::isfinite(wake)) return {};
+    return wake <= 0.0 ? NodeExtension::FrameResult{.needs_frame = true} :
+                         NodeExtension::FrameResult{.wake_after = wake};
+  }
+
+  void UpdatePointerModifiers(KeyModifier modifiers) {
+    if (modifiers_ == modifiers) return;
+    modifiers_ = modifiers;
+    Dispatch(core_->updatePointerModifiers(modifiers_));
+  }
+
+  bool HandleKey(const KeyEvent& event) {
+    UpdatePointerModifiers(ToModifiers(event.modifiers));
+    if (event.type != KeyEventType::Down) return false;
+
+    if (event.key == Key::Escape) {
+      if (DismissCompletion() || DismissInlineSuggestion()) return true;
+    }
+    if (completion_.items && modifiers_ == KeyModifier::NONE) {
+      switch (event.key) {
+      case Key::ArrowUp: MoveCompletionSelection(-1); return true;
+      case Key::ArrowDown: MoveCompletionSelection(1); return true;
+      case Key::Enter:
+      case Key::Tab: return ConfirmCompletion();
+      default: break;
+      }
+    }
+    if (event.key == Key::Tab && modifiers_ == KeyModifier::NONE && inline_suggestion_) return AcceptInlineSuggestion();
+    if (event.key == Key::Enter && modifiers_ == KeyModifier::NONE && !core_->hasComposition() &&
+        !core_->isInLinkedEditing() && ApplyNewLine()) return true;
+
+    const auto key = ToKeyEvent(event);
+    auto result = core_->handleKeyEvent(key);
+    if (!result.handled && key.key_code != KeyCode::NONE && !event.text.empty() &&
+        !event.modifiers.control && !event.modifiers.meta) {
+      Dispatch(result);
+      result = core_->handleKeyEvent({KeyCode::NONE, key.text, key.modifiers});
+    }
+    Dispatch(result);
+    switch (static_cast<EditorBuiltinCommand>(result.command)) {
+    case EditorBuiltinCommand::COPY: return Copy();
+    case EditorBuiltinCommand::CUT: return Cut();
+    case EditorBuiltinCommand::PASTE: return Paste();
+    case EditorBuiltinCommand::TRIGGER_COMPLETION: return TriggerCompletion();
+    default: break;
+    }
+    if (const auto handler = key_map_.GetCommand(result.command)) {
+      const auto& bindings = key_map_.Bindings();
+      const auto match = std::ranges::find(bindings, result.command, &KeyBinding::command);
+      if (match != bindings.end()) handler(*match, controller_);
+      return true;
+    }
+    return result.handled;
+  }
+
+  bool HandlePointer(const PointerEvent& event) {
+    if (event.device_kind != PointerDeviceKind::Touch) {
+      if (event.changed_button == PointerButton::Secondary) return false;
+      if (event.type == PointerEventType::Down) mouse_pointer_active_ = true;
+      if (event.type == PointerEventType::Up || event.type == PointerEventType::Cancel) mouse_pointer_active_ = false;
+    }
+    if (event.type == PointerEventType::Down) DismissCompletion();
+    HideContextMenuOnPress(event);
+    last_pointer_touch_ = event.device_kind == PointerDeviceKind::Touch;
+    modifiers_ = ToModifiers(event.modifiers);
+    const auto gesture = last_pointer_touch_ ? TouchGesture(event) : ToGestureEvent(event);
+    const auto result = core_->handleGestureEvent(gesture);
+    Dispatch(result);
+    if (last_pointer_touch_ && !settings_.read_only && result.hit_target.type == se::HitTargetType::NONE &&
+        (result.gesture_type == se::GestureType::TAP || result.gesture_type == se::GestureType::DOUBLE_TAP)) {
+      show_keyboard_();
+    }
+    return result.handled || result.needs_redraw || result.gesture_type != se::GestureType::UNDEFINED;
+  }
+
+  void Render(PaintContext& paint, Size size) {
+    RenderModel(paint, size, cached_model_);
+    DrawInlineSuggestion(paint);
+  }
+
+  std::optional<Rect> PositionRect(TextPosition position) {
+    if (position.line >= document_->getLineCount()) return std::nullopt;
+    const auto rect = core_->getPositionScreenRect(position);
+    return Rect{rect.x, rect.y, theme_.caret_width, rect.height};
+  }
+
+  Rect CursorRect() {
+    const auto rect = core_->getCursorScreenRect();
+    return {rect.x, rect.y, theme_.caret_width, rect.height};
+  }
+
+  std::optional<TextRange> Selection() const {
+    return core_->hasSelection() ? std::optional<TextRange>(core_->getSelection()) : std::nullopt;
+  }
+
+  template <class Provider>
+  static bool AddProvider(std::vector<std::shared_ptr<Provider>>& providers, std::shared_ptr<Provider> provider) {
+    if (!provider || std::ranges::find(providers, provider) != providers.end()) return false;
+    providers.push_back(std::move(provider));
+    return true;
+  }
+
+  template <class Provider>
+  static bool RemoveProvider(std::vector<std::shared_ptr<Provider>>& providers, const std::shared_ptr<Provider>& provider) {
+    return std::erase(providers, provider) != 0;
+  }
+
+  bool AddNewLineProvider(std::shared_ptr<NewLineActionProvider> provider) {
+    return AddProvider(newline_providers_, std::move(provider));
+  }
+
+  bool RemoveNewLineProvider(const std::shared_ptr<NewLineActionProvider>& provider) {
+    return RemoveProvider(newline_providers_, provider);
+  }
+
+  bool AddDecorationProvider(std::shared_ptr<DecorationProvider> provider) {
+    if (!provider || std::ranges::find(decoration_providers_, provider) != decoration_providers_.end()) return false;
+    std::set<DecorationType> types;
+    try {
+      types = provider->GetCapabilities();
+    } catch (const std::exception& error) {
+      std::fprintf(stderr, "CodeEditor decoration provider capabilities: %s\n", error.what());
+      return false;
+    } catch (...) {
+      std::fputs("CodeEditor decoration provider capabilities failed\n", stderr);
+      return false;
+    }
+    decoration_providers_.push_back(std::move(provider));
+    decoration_capabilities_.push_back(std::move(types));
+    return RequestDecorations();
+  }
+
+  bool RemoveDecorationProvider(const std::shared_ptr<DecorationProvider>& provider) {
+    const auto found = std::ranges::find(decoration_providers_, provider);
+    if (found == decoration_providers_.end()) return false;
+    const auto types = decoration_capabilities_.begin() + (found - decoration_providers_.begin());
+    for (auto type : *types) {
+      detail::DecorationBatch::Clear(type, *core_, [this](const auto& result) { Dispatch(result); });
+    }
+    decoration_capabilities_.erase(types);
+    decoration_providers_.erase(found);
+    return RequestDecorations();
+  }
+
+  bool RequestDecorations() {
+    CancelDecorations();
+    decorations_pending_ = true;
+    Invalidate();
+    return true;
+  }
+
+  bool AddCompletionProvider(std::shared_ptr<CompletionProvider> provider) {
+    if (!AddProvider(completion_providers_, std::move(provider))) return false;
+    DismissCompletion();
+    return true;
+  }
+
+  bool RemoveCompletionProvider(const std::shared_ptr<CompletionProvider>& provider) {
+    if (!RemoveProvider(completion_providers_, provider)) return false;
+    DismissCompletion();
+    return true;
+  }
+
+  bool TriggerCompletion(CompletionTriggerKind kind = CompletionTriggerKind::Invoked, std::string character = {}) {
+    if (settings_.read_only || core_->hasComposition() || completion_providers_.empty()) return false;
+    if (kind == CompletionTriggerKind::Invoked && !focused_) editor_anchor_.RequestFocus();
+    ResetCompletionRequest();
+    if (completion_presentation_) Invalidate();
+    const auto cursor = core_->getCursorPosition();
+    const CompletionContext context{kind, std::move(character), cursor, document_handle_.GetLineText(cursor.line),
+                                    core_->getWordRangeAtCursor(), language_, metadata_};
+    completion_.requested = true;
+    completion_.pending = completion_providers_.size();
+    completion_results_.resize(completion_providers_.size());
+    for (std::size_t index = 0; index < completion_providers_.size(); ++index) {
+      completion_tasks_.push_back(tasks_.Launch(
+          [weak = weak_from_this(), provider = completion_providers_[index], context,
+           generation = completion_generation_, index]() {
+            return CollectCompletion(weak, provider, context, generation, index);
+          }));
+    }
+    return true;
+  }
+
+  bool ShowCompletionItems(std::vector<CompletionItem> items) {
+    DismissCompletion();
+    if (settings_.read_only || items.empty()) return false;
+    SetCompletionItems(std::move(items));
+    return true;
+  }
+
+  bool DismissCompletion() {
+    if (!completion_.items && !completion_.requested && !completion_presentation_) return false;
+    ResetCompletionRequest();
+    DismissCompletionPopup();
+    Invalidate();
+    return true;
+  }
+
+  bool SetCompletionRenderer(CompletionItemRenderer renderer) {
+    completion_renderer_ = std::move(renderer);
+    if (completion_.items) InvalidateCompletionPopup();
+    return true;
+  }
+
+  bool SetContextMenuProvider(ContextMenuItemProvider provider) {
+    context_menu_provider_ = std::move(provider);
+    return true;
+  }
+
+  bool SetSelectionMenuProvider(SelectionMenuItemProvider provider) {
+    selection_menu_provider_ = std::move(provider);
+    return true;
+  }
+
+  bool ShowInlineSuggestion(InlineSuggestion suggestion) {
+    if (settings_.read_only || suggestion.text.empty() || suggestion.line >= document_->getLineCount() ||
+        suggestion.column > document_->getLineU16TextRef(suggestion.line).size()) return false;
+    inline_suggestion_ = std::move(suggestion);
+    Invalidate();
+    return true;
+  }
+
+  bool DismissInlineSuggestion() {
+    if (!inline_suggestion_) return false;
+    auto suggestion = std::exchange(inline_suggestion_, std::nullopt);
+    Invalidate();
+    if (active_ && !defer_events_) events_.Emit<EditorEvents::InlineSuggestionDismissed>(*suggestion);
+    else if (active_) pending_inline_dismissal_ = std::move(suggestion);
+    return true;
+  }
+
+  bool IsInlineSuggestionShowing() const { return inline_suggestion_.has_value(); }
+
+  bool Copy() {
+    return clipboard_ && core_->hasSelection() && clipboard_->WriteText(core_->getSelectedText());
+  }
+
+  bool Cut() {
+    return !settings_.read_only && Copy() && Dispatch(core_->deleteText(core_->getSelection()));
+  }
+
+  bool Paste() {
+    if (settings_.read_only || !clipboard_) return false;
+    const auto text = clipboard_->ReadText();
+    return text && Dispatch(core_->insertText(*text));
+  }
+
+  static void ValidateSettings(const EditorSettings& settings) {
+    const auto positive = [](float value) { return std::isfinite(value) && value > 0.0F; };
+    const auto nonnegative = [](float value) { return std::isfinite(value) && value >= 0.0F; };
+    if (!positive(settings.editor_text_size) || !positive(settings.scale) || !nonnegative(settings.line_spacing_mult) ||
+        !std::isfinite(settings.line_spacing_add) || !nonnegative(settings.content_start_padding) ||
+        !nonnegative(settings.line_number_margin) || settings.tab_size == 0 ||
+        settings.wrap_mode < WrapMode::NONE || settings.wrap_mode > WrapMode::WORD_BREAK ||
+        settings.fold_arrow_mode < FoldArrowMode::AUTO || settings.fold_arrow_mode > FoldArrowMode::HIDDEN ||
+        settings.current_line_render_mode < CurrentLineRenderMode::BACKGROUND ||
+        settings.current_line_render_mode > CurrentLineRenderMode::NONE ||
+        settings.render_whitespace < WhitespaceRenderMode::NONE || settings.render_whitespace > WhitespaceRenderMode::ALL ||
+        settings.auto_indent_mode < AutoIndentMode::NONE || settings.auto_indent_mode > AutoIndentMode::KEEP_INDENT ||
+        settings.scrollbar.mode > se::ScrollbarMode::NEVER || settings.scrollbar.track_tap_mode > se::ScrollbarTrackTapMode::DISABLED ||
+        !nonnegative(settings.scrollbar.thickness) || !nonnegative(settings.scrollbar.min_thumb) ||
+        !nonnegative(settings.scrollbar.thumb_hit_padding) ||
+        settings.decoration_scroll_refresh_min_interval_ms < 0 ||
+        !nonnegative(settings.decoration_overscan_viewport_multiplier)) {
+      throw std::invalid_argument("Invalid CodeEditor settings");
     }
   }
 
-  // ---- Editor event bus (reference EditorEventBus) -------------------------
+  void DeferEvents(bool defer) { defer_events_ = defer; }
 
-  void FireCaretEvents() {
-    const se::TextPosition cursor = core_->getCursorPosition();
-    events_.Emit<EditorEvents::CursorChanged>(static_cast<uint32_t>(cursor.line), static_cast<uint32_t>(cursor.column));
-    const se::TextRange selection = core_->getSelection();
-    events_.Emit<EditorEvents::SelectionChanged>(
-        static_cast<uint32_t>(selection.start.line),
-        static_cast<uint32_t>(selection.start.column),
-        static_cast<uint32_t>(selection.end.line),
-        static_cast<uint32_t>(selection.end.column)
-    );
+ private:
+  std::shared_ptr<TextInputBridge> CreateTextInput() {
+    const auto weak = weak_from_this();
+    auto input = std::make_shared<detail::TextInputBridge>(
+        core_, document_,
+        [weak](const se::EditorActionResult& result) {
+          if (const auto editor = weak.lock()) editor->Dispatch(result);
+        },
+        [weak](const KeyEvent& event) {
+          const auto editor = weak.lock();
+          return editor && editor->HandleKey(event);
+        },
+        [weak](Point point) {
+          const auto editor = weak.lock();
+          return editor ? editor->HitTextPosition(point) : std::nullopt;
+        },
+        [weak](const TextRange& range) {
+          const auto editor = weak.lock();
+          return editor ? editor->RangeRects(range) : std::vector<Rect>{};
+        });
+    input->SetCaretWidth(theme_.caret_width);
+    return input;
   }
 
-  // Text of [start..end] line/column range (0-based), joined with newlines.
-  std::string ExtractDocumentText(
-      const se::TextPosition& start, const se::TextPosition& end
-  ) const {
-    if (!document_ || start.line > end.line) {
-      return {};
-    }
-    const auto line_text = [this](size_t line) -> std::u16string {
-      const se::U16String source = document_->getLineU16Text(line);
-      return std::u16string(reinterpret_cast<const char16_t*>(source.data()), source.size());
-    };
-    std::string result;
-    if (start.line == end.line) {
-      const std::u16string text = line_text(start.line);
-      const size_t from = std::min<size_t>(start.column, text.size());
-      const size_t to = std::min<size_t>(end.column, text.size());
-      result = Utf16ToUtf8(std::u16string_view(text).substr(from, to - from));
-    } else {
-      for (size_t line = start.line; line <= end.line; ++line) {
-        const std::u16string text = line_text(line);
-        size_t from = line == start.line ? std::min<size_t>(start.column, text.size()) : 0;
-        size_t to = line == end.line ? std::min<size_t>(end.column, text.size()) : text.size();
-        if (!result.empty()) {
-          result.push_back('\n');
-        }
-        result.append(Utf16ToUtf8(std::u16string_view(text).substr(from, to - from)));
-      }
-    }
-    return result;
+  void Invalidate() {
+    if (invalidate_) invalidate_();
   }
 
-  EditorContextMenuInfo BuildContextMenuInfo(const se::PointF& point) const {
-    EditorContextMenuInfo info;
-    const se::TextPosition caret = core_->getCursorPosition();
-    info.cursor_line = static_cast<uint32_t>(caret.line);
-    info.cursor_column = static_cast<uint32_t>(caret.column);
-    info.position_x = point.x;
-    info.position_y = point.y;
-    if (document_) {
-      const se::U16String caret_line = document_->getLineU16Text(caret.line);
-      info.caret_line_text =
-          Utf16ToUtf8(std::u16string_view(
-              reinterpret_cast<const char16_t*>(caret_line.data()), caret_line.size()
-          ));
-    }
-    const se::TextRange selection = core_->getSelection().normalized();
-    if (!(selection.start == selection.end)) {
-      info.has_selection = true;
-      info.selection_start_line = static_cast<uint32_t>(selection.start.line);
-      info.selection_start_column = static_cast<uint32_t>(selection.start.column);
-      info.selection_end_line = static_cast<uint32_t>(selection.end.line);
-      info.selection_end_column = static_cast<uint32_t>(selection.end.column);
-      info.selected_text = ExtractDocumentText(selection.start, selection.end);
-    }
-    return info;
+  void UpdateFontMetrics() {
+    const Font font = ContentFont();
+    text_measurer_->SetFont(settings_.font_family, EffectiveFontSize());
+    font_metrics_ = measurer_.Metrics(font);
+    inlay_hint_metrics_ = measurer_.Metrics(text_measurer_->InlayHintFont());
+    char_width_ = std::max(1.0F, measurer_.MeasureRun("0", TextStyle{font, Color::Black(), TextDecoration::None}).advance);
+    core_->getLayoutMetrics().line_number_margin = settings_.line_number_margin;
+    Dispatch(core_->onFontMetricsChanged());
   }
 
-  void FirePointerEvents(const se::EditorActionResult& result) {
-    // Long-press/double-tap menus expect a selection to act on: when the
-    // gesture only placed a caret, select the word under it first.
-    // Word boundaries use ASCII alnum/underscore plus any wide character.
-    const auto is_word_char = [](se::U16Char character) {
-      return character >= 0x80U || character == u'_' ||
-             (character >= u'a' && character <= u'z') || (character >= u'A' && character <= u'Z') ||
-             (character >= u'0' && character <= u'9');
-    };
-    const auto select_word_if_needed = [&] {
-      const se::TextRange selection = core_->getSelection().normalized();
-      if (selection.start != selection.end) {
-        return;
-      }
-      const se::U16String raw = document_->getLineU16Text(result.cursor_after.line);
-      const std::u16string_view line_text(reinterpret_cast<const char16_t*>(raw.data()), raw.size());
-      std::size_t start = static_cast<std::size_t>(result.cursor_after.column);
-      std::size_t end = start;
-      while (start > 0 && is_word_char(static_cast<se::U16Char>(line_text[start - 1]))) {
-        --start;
-      }
-      while (end < line_text.size() && is_word_char(static_cast<se::U16Char>(line_text[end]))) {
-        ++end;
-      }
-      if (end == start) {
-        return;
-      }
-      core_->setSelection(
-          {{result.cursor_after.line, start}, {result.cursor_after.line, end}}
-      );
-      text_input_client_->NotifySelectionChanged();
-      RefreshDecorations(true);
-      model_dirty_ = true;
-      if (invalidate_) {
-        invalidate_();
-      }
-    };
+  float EffectiveFontSize() const { return settings_.editor_text_size * settings_.scale; }
+  Font ContentFont() const { return Font::FromFamily(settings_.font_family, EffectiveFontSize()); }
+
+  void ApplyIndentSettings() {
+    Dispatch(core_->setTabSize(language_ ? language_->tab_size.value_or(settings_.tab_size) : settings_.tab_size));
+    Dispatch(core_->setInsertSpaces(language_ ? language_->insert_spaces.value_or(settings_.insert_spaces) : settings_.insert_spaces));
+  }
+
+  void PublishPendingEvents() {
+    if (!active_) return;
+    for (const auto& result : std::exchange(pending_events_, {})) PublishAction(result);
+    if (auto suggestion = std::exchange(pending_inline_dismissal_, std::nullopt)) {
+      events_.Emit<EditorEvents::InlineSuggestionDismissed>(*suggestion);
+    }
+    if (std::exchange(document_event_pending_, false)) events_.Emit<EditorEvents::DocumentLoaded>();
+  }
+
+  void PublishAction(const se::EditorActionResult& result) {
+    if (!result.text_changes.empty()) {
+      events_.Emit<EditorEvents::TextChanged>(TextChangedEvent{result.text_changes, result.text_change_kind, result.source});
+    }
+    if (result.cursor_changed) events_.Emit<EditorEvents::CursorChanged>(CursorChangedEvent{result.cursor_after});
+    const auto selection = result.has_selection_after ? std::optional<TextRange>(result.selection_after) : std::nullopt;
+    if (result.selection_changed) {
+      events_.Emit<EditorEvents::SelectionChanged>(SelectionChangedEvent{result.has_selection_after, selection, result.cursor_after});
+    }
+    if (result.scroll_changed) {
+      events_.Emit<EditorEvents::ScrollChanged>(ScrollChangedEvent{result.scroll_x_after, result.scroll_y_after});
+    }
+    if (result.scale_changed) events_.Emit<EditorEvents::ScaleChanged>(ScaleChangedEvent{result.scale_after});
+    const Point location{result.tap_point.x, result.tap_point.y};
     switch (result.gesture_type) {
-    case se::GestureType::LONG_PRESS:
-      events_.Emit<EditorEvents::LongPressed>(
-          static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
-      );
-      select_word_if_needed();
-      events_.Emit<EditorEvents::ContextMenuRequested>(BuildContextMenuInfo(result.tap_point));
+    case se::GestureType::TAP:
+      PublishTap(result.hit_target, location);
       break;
     case se::GestureType::DOUBLE_TAP:
-      events_.Emit<EditorEvents::DoubleTapped>(
-          static_cast<uint32_t>(result.cursor_after.line), static_cast<uint32_t>(result.cursor_after.column)
-      );
-      select_word_if_needed();
-      events_.Emit<EditorEvents::ContextMenuRequested>(BuildContextMenuInfo(result.tap_point));
+      events_.Emit<EditorEvents::DoubleTapped>(DoubleTapEvent{result.cursor_after, result.has_selection_after, selection, location});
       break;
-    default:
+    case se::GestureType::LONG_PRESS:
+      events_.Emit<EditorEvents::LongPressed>(LongPressEvent{result.cursor_after, location});
+      if (context_menu_provider_) ShowContextMenu(result, ContextMenuTriggerKind::LongPress, selection);
+      break;
+    case se::GestureType::CONTEXT_MENU:
+      events_.Emit<EditorEvents::ContextMenu>(ContextMenuEvent{result.cursor_after, location});
+      ShowContextMenu(result, ContextMenuTriggerKind::RightClick, selection);
+      break;
+    default: break;
+    }
+  }
+
+  void PublishTap(const HitTarget& target, Point location) {
+    using Type = se::HitTargetType;
+    switch (target.type) {
+    case Type::FOLD_GUTTER:
+    case Type::FOLD_PLACEHOLDER:
+      events_.Emit<EditorEvents::FoldToggled>(FoldToggleEvent{target.line, target.type == Type::FOLD_GUTTER, location});
+      break;
+    case Type::LINK:
+      events_.Emit<EditorEvents::LinkClicked>(
+          LinkClickEvent{target.line, target.column, core_->getLinkTargetAt(target.line, target.column), location});
+      break;
+    case Type::CODELENS:
+      events_.Emit<EditorEvents::CodeLensClicked>(CodeLensClickEvent{target.line, target.column, target.icon_id, location});
+      break;
+    case Type::GUTTER_ICON:
+      events_.Emit<EditorEvents::GutterIconClicked>(GutterIconClickEvent{target.line, target.icon_id, location});
+      break;
+    case Type::INLAY_HINT_TEXT:
+      events_.Emit<EditorEvents::InlayHintClicked>(InlayHintClickEvent{target.line, target.column, InlayType::TEXT, 0, location});
+      break;
+    case Type::INLAY_HINT_ICON:
+      events_.Emit<EditorEvents::InlayHintClicked>(InlayHintClickEvent{target.line, target.column, InlayType::ICON, target.icon_id, location});
+      break;
+    case Type::INLAY_HINT_COLOR:
+      events_.Emit<EditorEvents::InlayHintClicked>(InlayHintClickEvent{target.line, target.column, InlayType::COLOR, target.color_value, location});
+      break;
+    default: break;
+    }
+  }
+
+  se::GestureEvent TouchGesture(const PointerEvent& event) {
+    se::GestureEvent gesture;
+    gesture.modifiers = modifiers_;
+    const se::PointF point{event.position.x, event.position.y};
+    auto found = std::ranges::find(active_pointers_, event.pointer_id, &std::pair<std::int64_t, se::PointF>::first);
+    switch (event.type) {
+    case PointerEventType::Down:
+      gesture.type = active_pointers_.empty() ? se::EventType::TOUCH_DOWN : se::EventType::TOUCH_POINTER_DOWN;
+      if (found == active_pointers_.end()) active_pointers_.emplace_back(event.pointer_id, point);
+      else found->second = point;
+      break;
+    case PointerEventType::Move:
+      gesture.type = se::EventType::TOUCH_MOVE;
+      if (found != active_pointers_.end()) found->second = point;
+      break;
+    case PointerEventType::Up:
+      if (found != active_pointers_.end()) active_pointers_.erase(found);
+      gesture.type = active_pointers_.empty() ? se::EventType::TOUCH_UP : se::EventType::TOUCH_POINTER_UP;
+      break;
+    case PointerEventType::Cancel:
+      active_pointers_.clear();
+      gesture.type = se::EventType::TOUCH_CANCEL;
       break;
     }
+    for (const auto& [id, position] : active_pointers_) gesture.points.push_back(position);
+    if (gesture.points.empty()) gesture.points.push_back(point);
+    return gesture;
   }
 
-  void FireFoldToggle(size_t line) {
-    events_.Emit<EditorEvents::FoldToggled>(line);
-  }
-
-  void FireTextChanged() {
-    events_.Emit<EditorEvents::TextChanged>();
-  }
-
-  // Applies phantom (ghost) text for the visible lines (reference phantom text
-  // decoration / copilot inline suggestion preview). Returns true when the
-  // published phantom set changed (model rebuild required).
-  bool ApplyPhantomTexts(int32_t start_line, int32_t end_line) {
-    if (start_line < 0 || end_line < start_line) {
-      return false;
-    }
-    std::map<uint32_t, std::string> next;
-    for (const auto& [line, items] : cached_phantom_entries_) {
-      if (static_cast<int32_t>(line) < start_line || static_cast<int32_t>(line) > end_line) {
-        continue;
+  bool RebuildModel() {
+    const bool changed = std::exchange(model_dirty_, false);
+    if (changed) {
+      cached_model_ = {};
+      core_->buildRenderModel(cached_model_);
+      const auto visible = core_->getVisibleLineRange();
+      if (visible.start != last_visible_range_.start || visible.end != last_visible_range_.end) {
+        last_visible_range_ = visible;
+        CancelDecorations();
+        decorations_pending_ = true;
       }
-      for (const sweeteditor::PhantomText& phantom : items) {
-        if (!phantom.text.empty()) {
-          next[line] = phantom.text;
+    }
+    if (inline_suggestion_) inline_rect_ = PositionRect({inline_suggestion_->line, inline_suggestion_->column});
+    return changed;
+  }
+
+  float RunBoundaryX(const se::VisualRun& run, std::size_t line, std::size_t column) {
+    if (column == run.column) return run.x;
+    if (column >= run.column + run.length) return run.x + run.width;
+    return core_->getPositionScreenRect({line, column}).x;
+  }
+
+  std::vector<Rect> RangeRects(const TextRange& range) {
+    std::vector<Rect> rects;
+    if (model_dirty_) return rects;
+    const float line_height = LineHeight(cached_model_);
+    const float content_x = cached_model_.split_x;
+    for (const auto& row : cached_model_.lines) {
+      if (row.kind != se::VisualLineKind::CONTENT) continue;
+      for (const auto& run : row.runs) {
+        if (run.length == 0 || run.source_line == se::kVisualRunNoDocumentLine) continue;
+        const auto line = run.source_line == se::kVisualRunOwnerLine ? row.logical_line : run.source_line;
+        if (line < range.start.line || line > range.end.line) continue;
+        const auto start = line == range.start.line ? std::max(run.column, range.start.column) : run.column;
+        const auto run_end = run.column + run.length;
+        const auto end = line == range.end.line ? std::min(run_end, range.end.column) : run_end;
+        if (start >= end) continue;
+        const float a = RunBoundaryX(run, line, start);
+        const float b = RunBoundaryX(run, line, end);
+        const float left = std::max(content_x, std::min(a, b));
+        const float right = std::min(viewport_.width, std::max(a, b));
+        if (right > left) {
+          rects.push_back({left, row.line_number_position.y - font_metrics_.ascent, right - left, line_height});
         }
       }
     }
-    if (next == cached_phantom_) {
-      return false;
-    }
-    cached_phantom_ = std::move(next);
-    if (cached_phantom_.empty()) {
-      core_->clearPhantomTexts();
-      return true;
-    }
-    std::vector<std::pair<size_t, std::vector<se::PhantomText>>> entries;
-    for (const auto& [line, text] : cached_phantom_) {
-      const uint32_t column = document_->getLineColumns(line);
-      entries.push_back({line, {{column, text}}});
-    }
-    core_->setBatchLinePhantomTexts(std::move(entries));
-    return true;
+    return rects;
   }
 
-  // Single Tab handler shared by the direct component key path and the
-  // text-input key hook: advance a snippet's linked editing, accept the
-  // caret-line phantom text, move the completion selection, or insert
-  // indentation through the core. Tab is always consumed while the editor is
-  // focused so the runtime's focus traversal never steals it.
-  bool HandleTab() {
-    if (core_->isInLinkedEditing()) {
-      const se::EditorActionResult result = core_->linkedEditingNextTabStop();
-      if (result.selection_changed || result.cursor_changed) {
-        text_input_client_->NotifySelectionChanged();
-        model_dirty_ = true;
-        if (invalidate_) {
-          invalidate_();
+  std::optional<std::pair<TextPosition, se::CaretAffinity>> HitTextPosition(Point point) {
+    const float height = LineHeight(cached_model_);
+    const auto row = std::ranges::find_if(cached_model_.lines, [&](const se::VisualLine& line) {
+      const float y = line.line_number_position.y - font_metrics_.ascent;
+      return point.y >= y && point.y < y + height;
+    });
+    if (row == cached_model_.lines.end()) return std::nullopt;
+    if (row->kind != se::VisualLineKind::CONTENT) return {{row->interaction_position, se::CaretAffinity::DOWNSTREAM}};
+    auto last = TextPosition{row->logical_line, 0};
+    for (const auto& run : row->runs) {
+      if (run.length == 0 || run.source_line == se::kVisualRunNoDocumentLine) continue;
+      const auto line = run.source_line == se::kVisualRunOwnerLine ? row->logical_line : run.source_line;
+      if (point.x < run.x) return {{TextPosition{line, run.column}, se::CaretAffinity::DOWNSTREAM}};
+      if (point.x <= run.x + run.width) {
+        const auto& text = document_->getLineU16TextRef(line);
+        std::size_t start = run.column;
+        std::size_t end = std::min(text.size(), run.column + run.length);
+        while (start < end) {
+          const auto mid = start + (end - start) / 2;
+          if (RunBoundaryX(run, line, mid) < point.x) start = mid + 1;
+          else end = mid;
         }
-        return true;
-      }
-    }
-    if (AcceptPhantomText()) {
-      return true;
-    }
-    if (completion_.visible && !completion_.items.empty()) {
-      MoveCompletionSelection(1);
-      return true;
-    }
-    // Plain Tab inserts indentation (spaces up to the tab stop when
-    // insert_spaces is on); run the core's own key handling for it.
-    se::KeyEvent tab_event;
-    tab_event.key_code = se::KeyCode::TAB;
-    const se::EditorActionResult result = core_->handleKeyEvent(tab_event);
-    if (!result.text_changes.empty()) {
-      text_input_client_->NotifyContentChanged(result.text_changes);
-      RefreshDecorations(true);
-      FireTextChanged();
-      UpdateCompletion(result.text_changes);
-    } else if (result.selection_changed || result.cursor_changed) {
-      text_input_client_->NotifySelectionChanged();
-    }
-    model_dirty_ = true;
-    if (invalidate_) {
-      invalidate_();
-    }
-    return true;
-  }
-
-  // Commits the caret-line phantom text (copilot accept via Tab).
-  bool AcceptPhantomText() {
-    if (!accept_phantom_on_tab_) {
-      return false;
-    }
-    const se::TextPosition cursor = core_->getCursorPosition();
-    std::string text;
-    for (const auto& [line, items] : cached_phantom_entries_) {
-      if (line != static_cast<uint32_t>(cursor.line)) {
-        continue;
-      }
-      for (const sweeteditor::PhantomText& phantom : items) {
-        if (!phantom.text.empty()) {
-          text = phantom.text;
+        if (start > run.column && start <= text.size()) {
+          const auto before = RunBoundaryX(run, line, start - 1);
+          const auto after = RunBoundaryX(run, line, start);
+          if (point.x - before < after - point.x) --start;
         }
+        if (start < text.size() && text[start] >= 0xDC00 && text[start] <= 0xDFFF && start != 0) --start;
+        const auto affinity = start == run.column + run.length ? se::CaretAffinity::UPSTREAM : se::CaretAffinity::DOWNSTREAM;
+        return {{TextPosition{line, start}, affinity}};
       }
+      last = {line, run.column + run.length};
     }
-    if (text.empty()) {
-      return false;
-    }
-    const se::EditorActionResult result = core_->insertText(text);
-    if (!result.text_changes.empty()) {
-      text_input_client_->NotifyContentChanged(result.text_changes);
-      RefreshDecorations(true);
-      FireTextChanged();
-    }
-    model_dirty_ = true;
-    if (invalidate_) {
-      invalidate_();
-    }
-    return true;
+    return {{last, se::CaretAffinity::UPSTREAM}};
   }
 
-  // ---- Scrollbar thumb dragging (P3) ---------------------------------------
+  void CancelDecorations() {
+    for (const auto& receiver : decoration_receivers_) detail::DecorationReceiverAccess::Cancel(receiver);
+    decoration_receivers_.clear();
+    for (const auto& task : decoration_tasks_) task.Cancel();
+    decoration_tasks_.clear();
+    decoration_batch_.reset();
+    ++decoration_generation_;
+    decoration_apply_posted_ = false;
+  }
 
-  bool HitScrollbarThumb(const Point& position, bool& out_vertical) const {
-    const auto hit = [&position](const se::ScrollbarModel& bar) {
-      const se::Rect& thumb = bar.thumb;
-      return position.x >= thumb.origin.x && position.x <= thumb.origin.x + thumb.width &&
-             position.y >= thumb.origin.y && position.y <= thumb.origin.y + thumb.height;
-    };
-    if (cached_scrollbar_v_.visible && cached_scrollbar_v_.thumb.width > 0.0F && hit(cached_scrollbar_v_)) {
-      out_vertical = true;
-      return true;
+  static Task<void> CollectDecorations(std::shared_ptr<DecorationProvider> provider, DecorationContext context,
+                                       DecorationReceiver receiver) {
+    try {
+      co_await provider->ProvideDecorations(std::move(context), receiver);
+    } catch (const std::exception& error) {
+      if (!receiver.IsCancelled()) std::fprintf(stderr, "CodeEditor decoration provider: %s\n", error.what());
+    } catch (...) {
+      if (!receiver.IsCancelled()) std::fputs("CodeEditor decoration provider failed\n", stderr);
     }
-    if (cached_scrollbar_h_.visible && cached_scrollbar_h_.thumb.height > 0.0F && hit(cached_scrollbar_h_)) {
-      out_vertical = false;
-      return true;
+  }
+
+  void RefreshDecorations() {
+    decorations_pending_ = false;
+    last_decoration_time_ = frame_time_;
+    CancelDecorations();
+    if (decoration_providers_.empty()) {
+      pending_changes_.clear();
+      return;
+    }
+    const auto visible = core_->getVisibleLineRange();
+    const auto count = document_->getLineCount();
+    const auto last = static_cast<std::int32_t>(std::min<std::size_t>(count - 1, INT32_MAX));
+    const double overscan = static_cast<double>(visible.length()) * settings_.decoration_overscan_viewport_multiplier;
+    const auto margin = static_cast<std::int32_t>(std::min<double>(last, std::ceil(overscan)));
+    const IntRange requested{visible.start - std::min(margin, visible.start), visible.end + std::min(margin, last - visible.end)};
+    if (!snapshot_) snapshot_ = std::make_shared<const std::string>(document_handle_.GetText());
+    const DecorationContext context{visible, requested, count, core_->getCursorPosition(),
+                                    std::exchange(pending_changes_, {}), language_, metadata_, snapshot_,
+                                    document_generation_, !viewport_in_motion_,
+                                    previous_requested_revision_, edit_generation_};
+    previous_requested_revision_ = edit_generation_;
+    decoration_batch_.emplace(visible, decoration_capabilities_);
+    for (std::size_t index = 0; index < decoration_providers_.size(); ++index) {
+      auto receiver = detail::DecorationReceiverAccess::Create(tasks_,
+          [weak = weak_from_this(), index, generation = decoration_generation_](DecorationResult result) {
+            if (const auto editor = weak.lock()) editor->QueueDecorations(generation, index, std::move(result));
+          });
+      decoration_tasks_.push_back(tasks_.Launch(
+          [provider = decoration_providers_[index], context, receiver] {
+            return CollectDecorations(provider, context, receiver);
+          }));
+      decoration_receivers_.push_back(std::move(receiver));
+    }
+  }
+
+  void QueueDecorations(std::uint64_t generation, std::size_t index, DecorationResult result) {
+    if (!active_ || generation != decoration_generation_ || !decoration_batch_) return;
+    decoration_batch_->Accept(index, std::move(result));
+    if (std::exchange(decoration_apply_posted_, true)) return;
+    tasks_.Post([weak = weak_from_this(), generation] {
+      const auto editor = weak.lock();
+      if (!editor || !editor->active_ || generation != editor->decoration_generation_) return;
+      editor->decoration_apply_posted_ = false;
+      // A core result can change viewport geometry. Keep the batch alive until
+      // all of this delivery's writes have been dispatched.
+      auto batch = std::move(editor->decoration_batch_);
+      editor->decoration_batch_.reset();
+      batch->Apply(*editor->core_, *editor->document_, [&](const auto& action) { editor->Dispatch(action); });
+      if (generation == editor->decoration_generation_) editor->decoration_batch_ = std::move(batch);
+    });
+  }
+
+  static Task<void> CollectCompletion(std::weak_ptr<EditorSession> weak, std::shared_ptr<CompletionProvider> provider,
+                                      CompletionContext context, std::uint64_t generation, std::size_t index) {
+    CompletionResult result;
+    try {
+      result = co_await provider->ProvideCompletions(std::move(context));
+    } catch (const std::exception& error) {
+      std::fprintf(stderr, "CodeEditor completion provider: %s\n", error.what());
+    } catch (...) {
+      std::fputs("CodeEditor completion provider failed\n", stderr);
+    }
+    const auto editor = weak.lock();
+    if (editor && editor->active_ && generation == editor->completion_generation_) {
+      --editor->completion_.pending;
+      editor->completion_results_[index] = std::move(result);
+      editor->PublishCompletions();
+    }
+  }
+
+  void PublishCompletions() {
+    std::vector<CompletionItem> items;
+    completion_.incomplete = false;
+    for (const auto& result : completion_results_) {
+      items.insert(items.end(), result.items.begin(), result.items.end());
+      completion_.incomplete = completion_.incomplete || result.is_incomplete;
+    }
+    SetCompletionItems(std::move(items));
+  }
+
+  void SetCompletionItems(std::vector<CompletionItem> items) {
+    std::stable_sort(items.begin(), items.end(), [](const CompletionItem& lhs, const CompletionItem& rhs) {
+      const auto& left = lhs.sort_key.empty() ? lhs.label : lhs.sort_key;
+      const auto& right = rhs.sort_key.empty() ? rhs.label : rhs.sort_key;
+      return left < right;
+    });
+    completion_.items = items.empty() ? nullptr : std::make_shared<const std::vector<CompletionItem>>(std::move(items));
+    completion_.selected = 0;
+    InvalidateCompletionPopup();
+  }
+
+  void RefreshCompletion(const se::EditorActionResult& result) {
+    if (result.source != EditorActionSource::KEYBOARD && result.source != EditorActionSource::IME) {
+      DismissCompletion();
+      return;
+    }
+    const auto& text = result.text_changes.front().new_text;
+    if (!text.empty() && std::ranges::any_of(completion_providers_, [&](const auto& provider) {
+          try {
+            return provider->IsTriggerCharacter(text);
+          } catch (const std::exception& error) {
+            std::fprintf(stderr, "CodeEditor completion trigger: %s\n", error.what());
+          } catch (...) {
+            std::fputs("CodeEditor completion trigger failed\n", stderr);
+          }
+          return false;
+        })) {
+      TriggerCompletion(CompletionTriggerKind::Character, text);
+    } else if (completion_.requested && (completion_.items || completion_.incomplete || completion_.pending != 0)) {
+      TriggerCompletion(CompletionTriggerKind::Retrigger);
+    } else {
+      DismissCompletion();
+    }
+  }
+
+  bool ConfirmCompletion() {
+    if (!completion_.items || completion_.selected >= completion_.items->size()) return false;
+    auto item = (*completion_.items)[completion_.selected];
+    DismissCompletion();
+    const auto caret = core_->getCursorPosition();
+    TextEdit primary = item.text_edit ? std::move(*item.text_edit) :
+        TextEdit{{caret, caret}, item.insert_text.value_or(item.label)};
+    if (item.insert_text_format == InsertTextFormat::Snippet) {
+      auto snippet = std::exchange(primary.new_text, {});
+      if (!primary.range.isCollapsed() || !item.additional_text_edits.empty()) {
+        item.additional_text_edits.insert(item.additional_text_edits.begin(), std::move(primary));
+        if (!Dispatch(core_->applyTextEdits(std::move(item.additional_text_edits)))) return false;
+      } else if (primary.range.start != caret) {
+        Dispatch(core_->setCursorPosition(primary.range.start));
+      }
+      return Dispatch(core_->insertSnippet(snippet));
+    }
+    item.additional_text_edits.insert(item.additional_text_edits.begin(), std::move(primary));
+    return Dispatch(core_->applyTextEdits(std::move(item.additional_text_edits)));
+  }
+
+  bool ApplyNewLine() {
+    if (settings_.read_only || newline_providers_.empty()) return false;
+    const auto position = core_->getCursorPosition();
+    const NewLineContext context{position.line, position.column, document_handle_.GetLineText(position.line), language_, metadata_};
+    for (const auto& provider : newline_providers_) {
+      try {
+        if (auto action = provider->ProvideNewLineAction(context)) {
+          if (!action->text.empty()) Dispatch(core_->insertText(action->text));
+          return true;
+        }
+      } catch (const std::exception& error) {
+        std::fprintf(stderr, "CodeEditor newline provider: %s\n", error.what());
+      } catch (...) {
+        std::fputs("CodeEditor newline provider failed\n", stderr);
+      }
     }
     return false;
   }
 
-  void DragScrollbar(const Point& position) {
-    const se::ScrollMetrics metrics = core_->getScrollMetrics();
-    const se::ScrollbarModel& bar = scrollbar_drag_vertical_ ? cached_scrollbar_v_ : cached_scrollbar_h_;
-    const se::Rect track = bar.track;
-    const se::Rect thumb = bar.thumb;
-    const float track_extent = scrollbar_drag_vertical_ ? track.height : track.width;
-    const float thumb_extent = scrollbar_drag_vertical_ ? thumb.height : thumb.width;
-    const float pointer =
-        scrollbar_drag_vertical_ ? position.y - track.origin.y : position.x - track.origin.x;
-    const float max_scroll = scrollbar_drag_vertical_ ? metrics.max_scroll_y : metrics.max_scroll_x;
-    const float movable = std::max(1.0F, track_extent - thumb_extent);
-    const float ratio = std::clamp((pointer - scrollbar_drag_offset_) / movable, 0.0F, 1.0F);
-    const float scroll_x = scrollbar_drag_vertical_ ? metrics.scroll_x : ratio * max_scroll;
-    const float scroll_y = scrollbar_drag_vertical_ ? ratio * max_scroll : metrics.scroll_y;
-    const se::EditorActionResult result = core_->setScroll(scroll_x, scroll_y);
-    if (result.needs_redraw) {
-      model_dirty_ = true;
-      if (invalidate_) {
-        invalidate_();
-      }
-    }
+  bool AcceptInlineSuggestion() {
+    if (settings_.read_only || !inline_suggestion_) return false;
+    auto suggestion = std::exchange(inline_suggestion_, std::nullopt);
+    const TextPosition position{suggestion->line, suggestion->column};
+    const bool accepted = Dispatch(core_->replaceText({position, position}, suggestion->text));
+    Invalidate();
+    if (accepted) events_.Emit<EditorEvents::InlineSuggestionAccepted>(*suggestion);
+    else events_.Emit<EditorEvents::InlineSuggestionDismissed>(*suggestion);
+    return accepted;
   }
 
-  // Reads the link text under a hit column from the document line (the core
-  // reports the hit position; the URL continues to the next delimiter).
-  std::string LinkTextAt(size_t line, size_t column) const {
-    const se::U16String source_text = document_->getLineU16Text(line);
-    const std::u16string_view text(reinterpret_cast<const char16_t*>(source_text.data()), source_text.size());
-    if (column >= text.size()) {
-      return {};
-    }
-    size_t end = column;
-    while (end < text.size()) {
-      const char16_t ch = text[end];
-      if (ch == u' ' || ch == u'\t' || ch == u'(' || ch == u')' || ch == u'"' || ch == u'\'' || ch == u';' ||
-          ch == u',' || ch == u'<' || ch == u'>' || ch == u'{' || ch == u'}') {
-        break;
+  void DrawInlineSuggestion(PaintContext& paint) {
+    if (!inline_suggestion_ || !inline_rect_ || inline_rect_->height <= 0.0F ||
+        cached_model_.split_x >= viewport_.width) return;
+    const auto& rect = *inline_rect_;
+    const auto& text = inline_suggestion_->text;
+    const TextStyle style{ContentFont().WithSlant(FontSlant::Italic), theme_.phantom_text_color, TextDecoration::None};
+    paint.PushClip({cached_model_.split_x, 0.0F, viewport_.width - cached_model_.split_x, viewport_.height});
+    float y = rect.y;
+    for (std::size_t start = 0; start < text.size() && y < viewport_.height; ) {
+      const auto end = text.find_first_of("\r\n", start);
+      const auto count = end == std::string::npos ? text.size() - start : end - start;
+      const float x = start == 0 ? rect.x : cached_model_.split_x + settings_.content_start_padding;
+      if (count > 0 && y + rect.height > 0.0F) {
+        paint.DrawTextRun({x, y, std::max(0.0F, viewport_.width - x), rect.height},
+                          {x, y + font_metrics_.ascent}, text.substr(start, count), style);
       }
-      ++end;
+      if (end == std::string::npos) break;
+      start = end + (text[end] == '\r' && end + 1 < text.size() && text[end + 1] == '\n' ? 2 : 1);
+      y += rect.height;
     }
-    return Utf16ToUtf8(text.substr(column, end - column));
+    paint.PopClip();
   }
 
-  // buildRenderModel appends into the model, so a fresh (empty) model is
-  // required each rebuild; reusing the cached instance would accumulate stale
-  // lines/decorations and ghost on every update. The rebuild also refreshes
-  // the core's visible line range.
-  void RebuildModelIfDirty() {
-    if (!model_dirty_) {
+  void HideContextMenuOnPress(const PointerEvent& event) {
+    if (event.type == PointerEventType::Down) HideContextMenu();
+  }
+
+  void HideContextMenu() {
+    if (const auto layer = std::exchange(context_menu_layer_, std::nullopt)) menu_.Dismiss(*layer);
+  }
+
+  void HideSelectionMenu(SelectionMenuPhase next) {
+    selection_menu_phase_ = next;
+    if (const auto layer = std::exchange(selection_menu_layer_, std::nullopt)) popup_.Dismiss(*layer);
+  }
+
+  void HideMenus() {
+    HideContextMenu();
+    HideSelectionMenu(SelectionMenuPhase::Hidden);
+  }
+
+  void UpdateSelectionMenu(const se::EditorActionResult& result) {
+    if (result.selection_changed && !result.has_selection_after) {
+      HideSelectionMenu(SelectionMenuPhase::Hidden);
       return;
     }
-    cached_model_ = se::EditorRenderModel{};
-    core_->buildRenderModel(cached_model_);
-    model_dirty_ = false;
+    if (last_pointer_touch_ && result.selection_changed && result.has_selection_after &&
+        result.source == EditorActionSource::GESTURE && !context_menu_layer_) {
+      HideSelectionMenu(SelectionMenuPhase::Pending);
+      selection_menu_deadline_ = frame_time_ + 0.20;
+      Invalidate();
+    }
+    if (selection_menu_phase_ == SelectionMenuPhase::Hidden) return;
+    if (result.hasActiveInteraction() || result.needsViewportMotion()) {
+      HideSelectionMenu(SelectionMenuPhase::Suspended);
+    } else if (selection_menu_phase_ == SelectionMenuPhase::Suspended ||
+               (selection_menu_phase_ == SelectionMenuPhase::Visible && result.scroll_changed)) {
+      HideSelectionMenu(SelectionMenuPhase::Pending);
+      selection_menu_deadline_ = frame_time_ + 0.20;
+      Invalidate();
+    }
   }
 
-  void Render(PaintContext& paint, Size size) {
-    const se::Size viewport{size.width, size.height};
-    if (viewport_.width != viewport.width || viewport_.height != viewport.height) {
-      viewport_ = viewport;
-      core_->setViewport(viewport);
-      // A viewport change (e.g. IME insets resizing the editor, first paint
-      // after mount, or a document switch) invalidates the visible range and
-      // scrollbar geometry. The core only refreshes its visible line range
-      // during buildRenderModel, so build once to publish the new range, apply
-      // the decoration slice for it, and build again below — the frame then
-      // paints with its highlighting instead of flashing unhighlighted and
-      // repainting a frame later.
-      model_dirty_ = true;
-      RebuildModelIfDirty();
-      // Viewport establishment is not fast scrolling: run the full settled
-      // refresh so gutter icons, code lens, diagnostics, and rainbow brackets
-      // paint in this same frame instead of a follow-up pass.
-      RefreshDecorations(true);
-      const se::IntRange resized = core_->getVisibleLineRange();
-      if (!resized.isEmpty()) {
-        highlight_published_ = true;
-      }
-      last_visible_range_ = resized;
-      decorations_pending_ = false;
-      model_dirty_ = true;
-      if (invalidate_) {
-        invalidate_();
-      }
-    }
-
-    // Rebuild the render model first: buildRenderModel also refreshes the
-    // core's visible line range, so the viewport slice below is always current.
-    RebuildModelIfDirty();
-    const se::EditorRenderModel& model = cached_model_;
-
-    // Re-publish the viewport highlight slice when the visible range changed
-    // (scroll) or on the very first non-empty viewport. Syntax highlighting and
-    // indent guides are applied immediately; decorations/document highlights are
-    // deferred until the viewport settles so fast scrolling does not pay their
-    // per-frame cost. Publishing marks the model dirty so the next frame
-    // rebuilds with the spans; the OnFrame bootstrap keeps frames flowing until
-    // that first publish lands.
-    const se::IntRange visible = core_->getVisibleLineRange();
-    const bool first_highlight = !highlight_published_ && !visible.isEmpty();
-    if (first_highlight || visible.start != last_visible_range_.start || visible.end != last_visible_range_.end) {
-      if (first_highlight || !visible.isEmpty()) {
-        RefreshDecorations(false);
-        if (first_highlight) {
-          highlight_published_ = true;
-        }
-        decorations_pending_ = true;
-        model_dirty_ = true;
-        // The model above was built before these decorations landed; request a
-        // follow-up frame so the highlighted rebuild is guaranteed even when
-        // the bounded bootstrap has already exhausted its frame budget.
-        if (invalidate_) {
-          invalidate_();
-        }
-      }
-      last_visible_range_ = visible;
-    } else if (decorations_pending_) {
-      RefreshDecorations(true);
-      decorations_pending_ = false;
-      model_dirty_ = true;
-      if (invalidate_) {
-        invalidate_();
-      }
-    }
-
-    RenderModel(paint, size, model);
-
-    cached_scrollbar_v_ = model.vertical_scrollbar;
-    cached_scrollbar_h_ = model.horizontal_scrollbar;
-
-    if (!visible.isEmpty() && !decorations_pending_ && !cached_phantom_entries_.empty()) {
-      if (ApplyPhantomTexts(visible.start, visible.end)) {
-        model_dirty_ = true;
-      }
-    }
-
-    // The completion panel floats above the document, anchored to the caret
-    // (reference: cached cursor rect updated every frame in onDraw).
-    if (completion_.visible && !completion_.items.empty()) {
-      if (model.cursor.visible) {
-        completion_.last_cursor = model.cursor.position;
-        completion_.last_cursor_height = model.cursor.height;
-      }
-      const se::Rect panel = ComputeCompletionPanelRect(completion_.last_cursor, completion_.last_cursor_height);
-      completion_.panel_rect = panel;
-      DrawCompletionPanel(paint, panel);
-    }
-
+  std::vector<ContextMenuSection> DefaultContextItems(const ContextMenuRequest& request) const {
+    std::vector<ContextMenuSection> sections;
+    if (!request.link_target.empty()) sections.push_back({{{"open_link", "Open Link"}, {"copy_link", "Copy Link"}}});
+    if (request.has_selection) sections.push_back({{{"cut", "Cut", {}, !settings_.read_only}, {"copy", "Copy"}}});
+    sections.push_back({{{"paste", "Paste", {}, !settings_.read_only}, {"select_all", "Select All"}}});
+    return sections;
   }
 
-private:
+  bool ExecuteMenuCommand(const std::string& id) {
+    if (id == "copy") Copy();
+    else if (id == "cut") Cut();
+    else if (id == "paste") Paste();
+    else if (id == "select_all") Dispatch(core_->selectAll());
+    else if (id == "delete") {
+      if (const auto selection = Selection()) Dispatch(core_->deleteText(*selection));
+    } else return false;
+    return true;
+  }
+
+  void ShowContextMenu(const se::EditorActionResult& result, ContextMenuTriggerKind kind, std::optional<TextRange> selection) {
+    HideMenus();
+    const auto& hit = result.hit_target;
+    const ContextMenuRequest request{kind, result.cursor_after, {result.tap_point.x, result.tap_point.y},
+                                     selection.has_value(), selection, hit,
+                                     hit.type == se::HitTargetType::LINK ? core_->getLinkTargetAt(hit.line, hit.column) : std::string{}};
+    const auto sections = context_menu_provider_ ? context_menu_provider_(request) : DefaultContextItems(request);
+    std::vector<MenuEntry> entries;
+    for (const auto& section : sections) {
+      if (section.items.empty()) continue;
+      if (!entries.empty()) entries.emplace_back(MenuSection{});
+      for (const auto& item : section.items) {
+        auto action = [weak = weak_from_this(), item, request, document = document_generation_] {
+          const auto editor = weak.lock();
+          if (!editor || !editor->active_ || document != editor->document_generation_) return;
+          editor->HideContextMenu();
+          if (editor->ExecuteMenuCommand(item.id)) return;
+          if (item.id == "open_link") {
+            editor->PublishTap(request.hit_target, request.location_in_editor);
+          } else if (item.id == "copy_link" && editor->clipboard_ && !request.link_target.empty()) {
+            editor->clipboard_->WriteText(request.link_target);
+          } else {
+            editor->events_.Emit<EditorEvents::ContextMenuItemClicked>(ContextMenuItemClickEvent{item, request});
+          }
+        };
+        const auto label = item.secondary_label.empty() ? item.label : item.label + "  " + item.secondary_label;
+        auto row = item.icon ? MenuItem(*item.icon, label, std::move(action)) : MenuItem(label, std::move(action));
+        entries.emplace_back(std::move(row).Enabled(item.enabled));
+      }
+    }
+    if (entries.empty()) return;
+    MenuOptions options;
+    options.on_dismiss_request = [weak = weak_from_this()] {
+      if (const auto editor = weak.lock()) editor->HideContextMenu();
+    };
+    context_menu_layer_ = menu_.ShowAt(local_to_window_(request.location_in_editor), std::move(entries), std::move(options));
+  }
+
+  std::optional<Rect> SelectionMenuAnchor(const TextRange& selection) {
+    const float left = std::clamp(cached_model_.split_x, 0.0F, viewport_.width);
+    const Rect content{left, 0.0F, viewport_.width - left, viewport_.height};
+    Rect bounds;
+    const auto include = [&](Rect fragment) {
+      fragment = fragment.Intersection(content);
+      if (fragment.IsEmpty()) return;
+      if (bounds.IsEmpty()) {
+        bounds = fragment;
+        return;
+      }
+      const float x = std::min(bounds.x, fragment.x);
+      const float y = std::min(bounds.y, fragment.y);
+      const float right = std::max(bounds.x + bounds.width, fragment.x + fragment.width);
+      const float bottom = std::max(bounds.y + bounds.height, fragment.y + fragment.height);
+      bounds = {x, y, right - x, bottom - y};
+    };
+    for (const Rect fragment : RangeRects(selection)) include(fragment);
+    if (bounds.IsEmpty()) {
+      if (const auto start = PositionRect(selection.start)) include(*start);
+      if (const auto end = PositionRect(selection.end)) include(*end);
+    }
+    if (bounds.IsEmpty()) return std::nullopt;
+    if constexpr (kSelectionHandlesEnabled) bounds.height += kSelectionMenuHandleClearance;
+    return bounds;
+  }
+
+  void ShowSelectionMenu() {
+    const auto selection = Selection();
+    const auto anchor = selection ? SelectionMenuAnchor(*selection) : std::nullopt;
+    if (!anchor) {
+      HideSelectionMenu(SelectionMenuPhase::Hidden);
+      return;
+    }
+    const auto items = selection_menu_provider_ ? selection_menu_provider_(*selection) :
+        std::vector<SelectionMenuItem>{{"cut", "Cut", !settings_.read_only}, {"copy", "Copy"},
+                                       {"paste", "Paste", !settings_.read_only}, {"select_all", "Select All"}};
+    if (items.empty()) {
+      HideSelectionMenu(SelectionMenuPhase::Hidden);
+      return;
+    }
+
+    Views entries;
+    const Font font = Font::System(12.0F);
+    Color pressed = theme_.selection_menu_text_color;
+    pressed.alpha *= 0.12F;
+    for (const auto& item : items) {
+      if (entries.Size() != 0) {
+        entries.Add(Spacer().With(Grow(0.0F), huxerui::Frame{.width = 1.0F, .height = 18.0F},
+                                  Background(theme_.selection_menu_divider_color)));
+      }
+      const auto action = [weak = weak_from_this(), item, selection, document = document_generation_] {
+        const auto editor = weak.lock();
+        if (!editor || !editor->active_ || document != editor->document_generation_ || editor->Selection() != selection) return;
+        editor->HideSelectionMenu(SelectionMenuPhase::Hidden);
+        if (!editor->ExecuteMenuCommand(item.id)) {
+          editor->events_.Emit<EditorEvents::SelectionMenuItemClicked>(SelectionMenuItemClickEvent{item});
+        }
+      };
+      const auto icon = item.icon_id && icon_provider_ ? icon_provider_(*item.icon_id) : std::nullopt;
+      Color label_color = theme_.selection_menu_text_color;
+      if (!item.enabled) label_color.alpha *= 0.32F;
+      entries.Add(Row {
+        icon ? Image(*icon).With(huxerui::Frame{.width = 16.0F, .height = 16.0F},
+                                 Opacity(item.enabled ? 1.0F : 0.32F)) : View{},
+        Text(item.label).Style({font, label_color}),
+      }.OnClick(action)
+       .With(huxerui::Frame{.height = kSelectionMenuHeight}, Padding(EdgeInsets::Symmetric(12.0F, 0.0F)),
+             Spacing(6.0F), CrossAlign(CrossAxisAlignment::Center), Enabled(item.enabled), Focusable(false),
+             CornerRadius(4.0F), Indication{.press = IndicationLayer{.fill = pressed}},
+             Semantics{.role = SemanticRole::MenuItem, .label = item.label,
+                       .descendants = SemanticDescendantPolicy::Exclude}));
+    }
+    const View bar = Row {std::move(entries)}.With(
+        Padding(EdgeInsets::Symmetric(4.0F, 0.0F)), CrossAlign(CrossAxisAlignment::Center));
+    const View surface = ScrollView(bar)
+        .ScrollAxis(Axis::Horizontal)
+        .With(huxerui::Frame{.height = kSelectionMenuHeight, .max_width = std::max(1.0F, viewport_.width - 16.0F)},
+              Background(theme_.selection_menu_background_color), CornerRadius(8.0F), ClipChildren(),
+              Shadow{.color = Color::Rgb(0, 0, 0, 0.24F), .offset = {0.0F, 2.0F}, .blur_radius = 6.0F},
+              Semantics{.role = SemanticRole::Menu});
+    ViewFactory factory = [surface] { return surface; };
+    selection_menu_layer_ = popup_.ShowAtAnchor(editor_anchor_, *anchor, std::move(factory), {
+        .placement = {.side = AnchorSide::Above, .alignment = AnchorAlignment::Center},
+        .retain_anchor_focus = true,
+        .on_dismiss_request = [weak = weak_from_this()] {
+          if (const auto editor = weak.lock()) editor->HideSelectionMenu(SelectionMenuPhase::Hidden);
+        },
+    });
+    selection_menu_phase_ = SelectionMenuPhase::Visible;
+  }
+
   static Rect ToRect(const se::Rect& rect) {
     return Rect{rect.origin.x, rect.origin.y, rect.width, rect.height};
   }
@@ -2607,107 +1876,95 @@ private:
     const float width = size.width;
     const float height = size.height;
     const float ascent = font_metrics_.ascent;
-    const float line_height = ascent + font_metrics_.descent;
+    const float font_height = ascent + font_metrics_.descent;
+    const float row_height = LineHeight(model);
+    const float row_baseline = ascent + (row_height - font_height) * 0.5F;
+    const float split_x = std::clamp(model.split_x, 0.0F, width);
 
-    paint.DrawRect(Rect{0.0F, 0.0F, width, height}, theme_.background);
-
-    // The gutter (line-number column) sits on its own background strip; the
-    // core crops text runs with a margin that hides under this strip, so it
-    // must be painted or cropped characters bleed into the line-number area.
-    if (model.split_x > 0.0F) {
-      paint.DrawRect(Rect{0.0F, 0.0F, model.split_x, height}, theme_.gutter_background);
-      // The split line separates the gutter from the text area (reference
-      // renderer draws it when splitLineVisible is set).
-      if (model.split_line_visible) {
-        paint.DrawRect(Rect{model.split_x - 1.0F, 0.0F, 1.0F, height}, Argb(0xFFE3E5E8));
+    paint.DrawRect(Rect{0.0F, 0.0F, width, height}, theme_.background_color);
+    if (split_x > 0.0F) {
+      paint.DrawRect(Rect{0.0F, 0.0F, split_x, height}, theme_.gutter_background);
+    }
+    for (const auto& line : model.lines) {
+      const float row_top = line.line_number_position.y - row_baseline;
+      if (line.line_background_color != 0 && split_x < width) {
+        paint.DrawRect(Rect{split_x, row_top, width - split_x, row_height}, Argb(line.line_background_color));
+      }
+      if (line.gutter_background_color != 0 && split_x > 0.0F) {
+        paint.DrawRect(Rect{0.0F, row_top, split_x, row_height}, Argb(line.gutter_background_color));
       }
     }
 
+    const Rect current_line{0.0F, model.current_line.y, width, row_height};
     if (model.current_line_render_mode == se::CurrentLineRenderMode::BACKGROUND) {
-      paint.DrawRect(Rect{0.0F, model.current_line.y, width, LineHeight(model)}, theme_.current_line_background);
+      paint.DrawRect(current_line, theme_.current_line_color);
+    } else if (model.current_line_render_mode == se::CurrentLineRenderMode::BORDER) {
+      Color color = theme_.current_line_color == Color::Transparent() ? theme_.line_number_color : theme_.current_line_color;
+      color.alpha = std::max(color.alpha, 160.0F / 255.0F);
+      paint.DrawBorder(current_line, color, StrokeStyle{1.0F});
+    }
+    if (model.split_line_visible && split_x > 0.0F && model.split_x <= width) {
+      paint.DrawLine({split_x, 0.0F}, {split_x, height}, theme_.split_line_color, StrokeStyle{1.0F});
     }
 
-    for (const se::RangeEffectRenderItem& effect : model.range_effects) {
-      if (effect.style.background_color != 0) {
-        paint.DrawRect(ToRect(effect.rect), Argb(effect.style.background_color));
-      }
-    }
-
-    const TextStyle line_number_style{ContentFont(), theme_.line_number_color, TextDecoration::None};
+    const Font content_font = ContentFont();
     for (const se::VisualLine& line : model.lines) {
-      // line_number_position.y is the text baseline; the row background spans
-      // from the line top (baseline - ascent) down the full line height.
-      if (line.line_background_color != 0) {
-        paint.DrawRect(Rect{model.split_x, line.line_number_position.y - ascent, width - model.split_x, line_height},
-                       Argb(line.line_background_color));
-      }
-      if (line.line_number >= 0) {
+      if (line.owns_gutter_semantics && line.line_number >= 0) {
         const std::string number = std::to_string(line.line_number);
         const float number_width = char_width_ * static_cast<float>(number.size());
+        const Color color = line.logical_line == model.cursor.text_position.line
+            ? theme_.current_line_number_color : theme_.line_number_color;
         paint.DrawTextRun(
-            Rect{line.line_number_position.x, line.line_number_position.y - ascent, number_width, line_height},
+            Rect{line.line_number_position.x, line.line_number_position.y - ascent, number_width, font_height},
             Point{line.line_number_position.x, line.line_number_position.y},
             number,
-            line_number_style);
+            TextStyle{content_font, color, TextDecoration::None});
       }
     }
-    // Clip everything that lives in the text area right of the gutter: runs,
-    // structure guides (bracket/indent connectors), and range-effect
-    // underlines (diagnostics/IME squiggles). Gutter icons and fold markers
-    // are painted outside the clip because they belong to the gutter lane.
-    if (model.split_x < width) {
-      paint.PushClip(Rect{model.split_x, 0.0F, width - model.split_x, height});
-      for (const se::VisualLine& line : model.lines) {
-        for (const se::VisualRun& run : line.runs) {
-          DrawRun(paint, run, line_height);
+    if (split_x < width) {
+      paint.PushClip(Rect{split_x, 0.0F, width - split_x, height});
+      for (const auto& effect : model.range_effects) {
+        if (effect.style.background_color != 0) paint.DrawRect(ToRect(effect.rect), Argb(effect.style.background_color));
+      }
+      for (const auto& line : model.lines) {
+        for (const auto& run : line.runs) DrawRun(paint, run);
+      }
+      for (const auto& segment : model.guide_segments) DrawGuideSegment(paint, segment);
+      for (const auto& effect : model.range_effects) {
+        if (effect.style.border_color != 0) {
+          const float stroke_width = effect.kind == se::RangeEffectKind::LINKED_EDITING_ACTIVE ? 2.0F : 1.5F;
+          paint.DrawBorder(ToRect(effect.rect), Argb(effect.style.border_color), StrokeStyle{stroke_width});
         }
-      }
-      for (const se::GuideSegment& segment : model.guide_segments) {
-        DrawGuideSegment(paint, segment);
-      }
-      for (const se::RangeEffectRenderItem& effect : model.range_effects) {
         if (effect.style.underline_color != 0 && effect.style.underline_style != se::RangeEffectUnderlineStyle::NONE) {
           DrawUnderline(paint, effect.rect, effect.style.underline_color, effect.style.underline_style);
         }
       }
       paint.PopClip();
-    } else {
-      for (const se::VisualLine& line : model.lines) {
-        for (const se::VisualRun& run : line.runs) {
-          DrawRun(paint, run, line_height);
-        }
-      }
-      for (const se::GuideSegment& segment : model.guide_segments) {
-        DrawGuideSegment(paint, segment);
-      }
-      for (const se::RangeEffectRenderItem& effect : model.range_effects) {
-        if (effect.style.underline_color != 0 && effect.style.underline_style != se::RangeEffectUnderlineStyle::NONE) {
-          DrawUnderline(paint, effect.rect, effect.style.underline_color, effect.style.underline_style);
-        }
-      }
     }
 
     for (const se::GutterIconRenderItem& icon : model.gutter_icons) {
       DrawGutterIcon(paint, icon);
     }
     for (const se::FoldMarkerRenderItem& marker : model.fold_markers) {
-      DrawFoldMarker(paint, marker);
+      const Color color = marker.logical_line == model.cursor.text_position.line
+          ? theme_.current_line_number_color : theme_.line_number_color;
+      DrawFoldMarker(paint, marker, color);
     }
 
     const bool caret_visible = model.cursor.visible && focused_ && blink_on_;
     if (caret_visible) {
       paint.DrawRect(
           Rect{model.cursor.position.x, model.cursor.position.y, theme_.caret_width, model.cursor.height},
-          theme_.caret_color);
+          theme_.cursor_color);
     }
 
-    // Handles are drawn here (single owner) because the HuxerUI selection
-    // overlay is disabled; the core's gesture pipeline handles dragging.
-    if (model.selection_start_handle.visible) {
-      DrawSelectionHandle(paint, model.selection_start_handle);
-    }
-    if (model.selection_end_handle.visible) {
-      DrawSelectionHandle(paint, model.selection_end_handle);
+    if constexpr (kSelectionHandlesEnabled) {
+      if (model.selection_start_handle.visible) {
+        DrawSelectionHandle(paint, model.selection_start_handle);
+      }
+      if (model.selection_end_handle.visible) {
+        DrawSelectionHandle(paint, model.selection_end_handle);
+      }
     }
 
     if (model.vertical_scrollbar.visible) {
@@ -2720,12 +1977,12 @@ private:
 
   void DrawSelectionHandle(PaintContext& paint, const se::SelectionHandle& handle) {
     // Solid teardrop handle: a triangle tip touching the line bottom flares
-    // into a circular bulb below. No translucent layers — solid fill only.
+    // into a circular bulb below. Use a solid fill.
     const float radius = 10.0F;
     const float cx = handle.position.x;
     const float line_top = handle.position.y;
     const float line_bottom = handle.position.y + handle.height;
-    const Color fill = theme_.caret_color;
+    const Color fill = theme_.cursor_color;
     paint.DrawRect(Rect{cx - 1.5F, line_top, 3.0F, std::max(1.0F, line_bottom - line_top)}, fill);
     const float tip_y = line_bottom + 0.5F;
     const float bulb_y = tip_y + 16.0F;
@@ -2743,62 +2000,61 @@ private:
     if (thumb.width <= 0.0F || thumb.height <= 0.0F) {
       return;
     }
-    paint.DrawRect(thumb, Color{0.0F, 0.0F, 0.0F, std::clamp(bar.alpha, 0.0F, 1.0F) * 0.45F}, CornerRadii(4.0F));
+    const auto fade = [alpha = std::clamp(bar.alpha, 0.0F, 1.0F)](Color color) {
+      color.alpha *= alpha;
+      return color;
+    };
+    paint.DrawRect(ToRect(bar.track), fade(theme_.scrollbar_track_color));
+    paint.DrawRect(thumb, fade(bar.thumb_active ? theme_.scrollbar_thumb_active_color : theme_.scrollbar_thumb_color),
+                   CornerRadii(4.0F));
   }
 
-  void DrawRun(PaintContext& paint, const se::VisualRun& run, float line_height) {
+  void DrawRun(PaintContext& paint, const se::VisualRun& run) {
     const float ascent = font_metrics_.ascent;
     const float top = run.y - ascent;
     const float height = ascent + font_metrics_.descent;
 
     if (run.type == se::VisualRunType::INLAY_HINT) {
-      DrawInlayHint(paint, run, top, height);
+      DrawInlayHint(paint, run);
       return;
     }
     if (run.type == se::VisualRunType::FOLD_PLACEHOLDER) {
       DrawFoldPlaceholder(paint, run, top, height);
       return;
     }
+    if (run.style.background_color != 0) {
+      paint.DrawRect(Rect{run.x, top, run.width, height}, Argb(run.style.background_color));
+    }
+    if (run.text.empty()) return;
+
     if (run.type == se::VisualRunType::WHITESPACE) {
-      // Space marker: a faint dot centered on the glyph cell.
-      const float center_y = run.y - ascent * 0.35F;
-      const float spacing = std::max(2.0F, char_width_ * 0.5F);
-      for (float x = run.x + spacing; x < run.x + run.width; x += char_width_) {
-        paint.DrawCircle(Point{x, center_y}, 1.2F, Color{0.0F, 0.0F, 0.0F, 0.25F});
+      const float cell_width = run.width / static_cast<float>(run.text.size());
+      const float center_y = top + height * 0.5F;
+      const float radius = std::max(1.0F, std::min(cell_width, EffectiveFontSize()) * 0.08F);
+      for (std::size_t index = 0; index < run.text.size(); ++index) {
+        const float center_x = run.x + cell_width * (static_cast<float>(index) + 0.5F);
+        paint.DrawCircle({center_x, center_y}, radius, theme_.invisible_character_color);
       }
       return;
     }
     if (run.type == se::VisualRunType::TAB) {
-      // Tab marker: a right arrow at the glyph start.
-      const float mid_y = run.y - ascent * 0.5F;
-      const float x = run.x + 2.0F;
+      const float center_y = top + height * 0.5F;
+      const float padding = std::min(run.width * 0.25F, 8.0F);
+      const float left = run.x + padding;
+      const float right = run.x + run.width - padding;
+      const float arrow = std::clamp((right - left) * 0.35F, 2.0F, 5.0F);
       Path path;
-      path.MoveTo(Point{x, mid_y});
-      path.LineTo(Point{x + char_width_ * 0.6F, mid_y});
-      path.LineTo(Point{x + char_width_ * 0.45F, mid_y - 3.0F});
-      path.MoveTo(Point{x + char_width_ * 0.6F, mid_y});
-      path.LineTo(Point{x + char_width_ * 0.45F, mid_y + 3.0F});
-      paint.StrokePath(path, Color{0.0F, 0.0F, 0.0F, 0.3F}, StrokeStyle{1.0F});
+      path.MoveTo({left, center_y}).LineTo({right, center_y});
+      path.MoveTo({right - arrow, center_y - arrow}).LineTo({right, center_y}).LineTo({right - arrow, center_y + arrow});
+      paint.StrokePath(path, theme_.invisible_character_color,
+                       StrokeStyle{.width = std::max(1.0F, EffectiveFontSize() * 0.06F),
+                                   .cap = StrokeCap::Round, .join = StrokeJoin::Round});
       return;
     }
     if (run.type == se::VisualRunType::NEWLINE) {
-      // Line-break symbol: a left-pointing hook like the reference renderer.
-      const float mid_y = run.y - ascent * 0.5F;
-      const float x = run.x + 2.0F;
-      Path path;
-      path.MoveTo(Point{x, mid_y});
-      path.LineTo(Point{x + 8.0F, mid_y});
-      path.LineTo(Point{x + 8.0F, mid_y + 4.0F});
-      path.LineTo(Point{x + 4.0F, mid_y + 4.0F});
-      paint.StrokePath(path, Color{0.0F, 0.0F, 0.0F, 0.3F}, StrokeStyle{1.0F});
+      const TextStyle style{ContentFont(), theme_.invisible_character_color, TextDecoration::None};
+      paint.DrawTextRun({run.x, top, run.width, height}, {run.x, run.y}, Utf16ToUtf8(run.text), style);
       return;
-    }
-    if (run.text.empty()) {
-      return;
-    }
-
-    if (run.style.background_color != 0) {
-      paint.DrawRect(Rect{run.x, top, run.width, height}, Argb(run.style.background_color));
     }
 
     // HuxerUI text runs must not contain line breaks; strip any that slip
@@ -2810,45 +2066,52 @@ private:
     }
 
     if (run.type == se::VisualRunType::PHANTOM_TEXT) {
-      TextStyle phantom{ContentFont().WithSlant(FontSlant::Italic), Color{0.6F, 0.6F, 0.6F, 0.6F},
+      TextStyle phantom{ContentFont().WithSlant(FontSlant::Italic), theme_.phantom_text_color,
                         TextDecoration::None};
       paint.DrawTextRun(Rect{run.x, top, run.width, height}, Point{run.x, run.y}, text, phantom);
       return;
     }
 
-    // Content runs carry the configured content font (family + weight/slant);
-    // MakeTextStyle seeds the base, then retarget the family so custom fonts
-    // reach the paint path (the measurer path already uses ContentFont()).
-    // Text measurement/layout still uses one uniform font, so styles must
-    // not resize the painted font (the caret geometry would drift). Heading
-    // hierarchy stays visual (bold + color) until per-line measurement lands.
-    TextStyle style = MakeTextStyle(run.style.font_style, run.style.color, font_size_);
-    style.font = ContentFont();
+    const auto style = MakeTextStyle(run.style.font_style, run.style.color, ContentFont());
     paint.DrawTextRun(Rect{run.x, top, run.width, height}, Point{run.x, run.y}, text, style);
+    if (run.active && (run.type == se::VisualRunType::CODELENS || run.type == se::VisualRunType::LINK)) {
+      const float underline_y = run.y + 1.0F;
+      paint.DrawLine({run.x, underline_y}, {run.x + run.width, underline_y}, Argb(run.style.color), StrokeStyle{1.0F});
+    }
   }
 
-  void DrawInlayHint(PaintContext& paint, const se::VisualRun& run, float top, float height) {
+  void DrawInlayHint(PaintContext& paint, const se::VisualRun& run) {
+    const float top = run.y - inlay_hint_metrics_.ascent;
+    const float height = inlay_hint_metrics_.ascent + inlay_hint_metrics_.descent;
     const float margin = run.margin;
+    const Rect background{run.x + margin, top, run.width - margin * 2.0F, height};
+    if (background.width <= 0.0F || height <= 0.0F) return;
     if (run.color_value != 0) {
-      paint.DrawRect(Rect{run.x + margin, top, height, height}, Argb(run.color_value));
+      const float side = std::min(background.width, height);
+      paint.DrawRect(Rect{background.x, top, side, side}, Argb(run.color_value));
       return;
     }
-    const Rect background{run.x + margin, top, run.width - margin * 2.0F, height};
-    paint.DrawRect(background, theme_.inlay_hint_background, CornerRadii(height * 0.2F));
-    if (!run.text.empty()) {
-      const float text_x = run.x + margin + run.padding;
-      const TextStyle style{Font::System(font_size_ * 0.9F), theme_.inlay_hint_text, TextDecoration::None};
-      paint.DrawTextRun(Rect{text_x, top, run.width, height}, Point{text_x, run.y}, Utf16ToUtf8(run.text), style);
+    paint.DrawRect(background, theme_.inlay_hint_bg_color, CornerRadii(height * 0.2F));
+    if (run.icon_id != 0) {
+      const float side = std::min(height, std::max(0.0F, background.width - run.padding * 2.0F));
+      const Rect icon{background.x + (background.width - side) * 0.5F, top + (height - side) * 0.5F, side, side};
+      if (const auto asset = icon_provider_ ? icon_provider_(run.icon_id) : std::nullopt) paint.DrawImage(*asset, icon);
+      else paint.DrawCircle({icon.x + side * 0.5F, icon.y + side * 0.5F}, side * 0.25F, theme_.inlay_hint_icon_color);
+    } else if (!run.text.empty()) {
+      const float text_x = background.x + run.padding;
+      const TextStyle style{text_measurer_->InlayHintFont(), theme_.inlay_hint_text_color, TextDecoration::None};
+      paint.DrawTextRun(Rect{text_x, top, background.width - run.padding * 2.0F, height},
+                        Point{text_x, run.y}, Utf16ToUtf8(run.text), style);
     }
   }
 
   void DrawFoldPlaceholder(PaintContext& paint, const se::VisualRun& run, float top, float height) {
     const float margin = run.margin;
     const Rect background{run.x + margin, top, run.width - margin * 2.0F, height};
-    paint.DrawRect(background, theme_.fold_placeholder_background, CornerRadii(height * 0.2F));
+    paint.DrawRect(background, theme_.fold_placeholder_bg_color, CornerRadii(height * 0.2F));
     if (!run.text.empty()) {
       const float text_x = run.x + margin + run.padding;
-      const TextStyle style{ContentFont(), theme_.fold_placeholder_text, TextDecoration::None};
+      const TextStyle style{ContentFont(), theme_.fold_placeholder_text_color, TextDecoration::None};
       paint.DrawTextRun(Rect{text_x, top, run.width, height}, Point{text_x, run.y}, Utf16ToUtf8(run.text), style);
     }
   }
@@ -2856,6 +2119,12 @@ private:
   void DrawGutterIcon(PaintContext& paint, const se::GutterIconRenderItem& icon) {
     const Rect rect = ToRect(icon.rect);
     const Point center{rect.x + rect.width * 0.5F, rect.y + rect.height * 0.5F};
+    if (icon_provider_) {
+      if (const auto asset = icon_provider_(icon.icon_id)) {
+        paint.DrawImage(*asset, rect);
+        return;
+      }
+    }
     // icon_id drives the shape: 1 = type marker (diamond), 2 = execution point
     // (filled circle), anything else = plain dot. The demo emits 1 for
     // class/struct rows; hosts may reuse the ids for breakpoints/errors.
@@ -2876,1125 +2145,979 @@ private:
     paint.DrawCircle(center, rect.width * 0.35F, theme_.gutter_icon_color);
   }
 
-  void DrawFoldMarker(PaintContext& paint, const se::FoldMarkerRenderItem& marker) {
+  void DrawFoldMarker(PaintContext& paint, const se::FoldMarkerRenderItem& marker, Color color) {
     const Rect rect = ToRect(marker.rect);
+    if (marker.fold_state == se::FoldState::NONE || rect.width <= 0.0F || rect.height <= 0.0F) return;
+
+    const Point center{rect.x + rect.width * 0.5F, rect.y + rect.height * 0.5F};
+    const float half_size = std::min(rect.width, rect.height) * 0.28F;
     Path path;
     if (marker.fold_state == se::FoldState::COLLAPSED) {
-      path.MoveTo(Point{rect.x + rect.width * 0.35F, rect.y + rect.height * 0.2F});
-      path.LineTo(Point{rect.x + rect.width * 0.75F, rect.y + rect.height * 0.5F});
-      path.LineTo(Point{rect.x + rect.width * 0.35F, rect.y + rect.height * 0.8F});
+      path.MoveTo({center.x - half_size * 0.5F, center.y - half_size})
+          .LineTo({center.x + half_size * 0.5F, center.y})
+          .LineTo({center.x - half_size * 0.5F, center.y + half_size});
     } else {
-      path.MoveTo(Point{rect.x + rect.width * 0.2F, rect.y + rect.height * 0.35F});
-      path.LineTo(Point{rect.x + rect.width * 0.5F, rect.y + rect.height * 0.75F});
-      path.LineTo(Point{rect.x + rect.width * 0.8F, rect.y + rect.height * 0.35F});
+      path.MoveTo({center.x - half_size, center.y - half_size * 0.5F})
+          .LineTo({center.x, center.y + half_size * 0.5F})
+          .LineTo({center.x + half_size, center.y - half_size * 0.5F});
     }
-    paint.StrokePath(path, theme_.line_number_color, StrokeStyle{1.5F});
+    paint.StrokePath(path, color, StrokeStyle{.width = std::max(1.0F, rect.height * 0.1F),
+                                             .cap = StrokeCap::Round, .join = StrokeJoin::Round});
   }
 
   void DrawUnderline(
       PaintContext& paint, const se::Rect& rect, int32_t color, se::RangeEffectUnderlineStyle style
   ) {
-    const Rect r = ToRect(rect);
-    const float baseline = r.y + r.height - 1.0F;
+    const float start = rect.origin.x;
+    const float end = start + rect.width;
+    const float y = rect.origin.y + rect.height - 1.0F;
+    if (start >= end) return;
+
+    StrokeStyle stroke{.width = 2.0F};
     if (style == se::RangeEffectUnderlineStyle::WAVY) {
+      constexpr float kHalfWave = 7.0F;
+      constexpr float kControlOffset = 3.5F;
       Path path;
-      constexpr float kAmplitude = 1.5F;
-      constexpr float kWavelength = 5.0F;
-      path.MoveTo(Point{r.x, baseline});
-      bool up = true;
-      for (float x = r.x + kWavelength; x < r.x + r.width; x += kWavelength) {
-        path.LineTo(Point{x, baseline + (up ? -kAmplitude : kAmplitude)});
-        up = !up;
+      path.MoveTo({start, y});
+      float control_offset = -kControlOffset;
+      for (float x = start; x < end; x += kHalfWave) {
+        const float next = std::min(x + kHalfWave, end);
+        path.QuadraticTo({(x + next) * 0.5F, y + control_offset}, {next, y});
+        control_offset = -control_offset;
       }
-      path.LineTo(Point{r.x + r.width, baseline + (up ? -kAmplitude : kAmplitude)});
-      paint.StrokePath(path, Argb(color), StrokeStyle{1.0F});
+      paint.StrokePath(path, Argb(color), stroke);
       return;
     }
     if (style == se::RangeEffectUnderlineStyle::DASHED) {
-      constexpr float kDash = 4.0F;
-      constexpr float kGap = 3.0F;
-      float x = r.x;
-      while (x < r.x + r.width) {
-        const float end = std::min(x + kDash, r.x + r.width);
-        paint.DrawRect(Rect{x, baseline, end - x, 1.5F}, Argb(color));
-        x = end + kGap;
-      }
-      return;
+      stroke.dash_pattern = {3.0F, 2.0F};
     }
-    paint.DrawRect(Rect{r.x, baseline, r.width, 1.5F}, Argb(color));
+    paint.DrawLine({start, y}, {end, y}, Argb(color), stroke);
   }
 
   void DrawGuideSegment(PaintContext& paint, const se::GuideSegment& segment) {
-    const Color color =
-        segment.type == se::GuideType::SEPARATOR ? theme_.separator_color : theme_.indent_guide_color;
-    // Separator and bracket lines are lighter than indent guides (reference
-    // renderer uses a separate paint for separators).
-    const float width = segment.type == se::GuideType::SEPARATOR ? 1.0F : 1.0F;
-    const auto stroke = [&](const Point& a, const Point& b) {
-      Path path;
-      path.MoveTo(a);
-      path.LineTo(b);
-      paint.StrokePath(path, color, StrokeStyle{width});
-    };
+    const Color color = segment.type == se::GuideType::SEPARATOR ? theme_.separator_line_color : theme_.guide_color;
+    StrokeStyle stroke{.width = segment.type == se::GuideType::INDENT ? 1.0F : 1.2F};
+    const Point start{segment.start.x, segment.start.y};
+    const Point end{segment.end.x, segment.end.y};
 
-    // DOUBLE style draws a pair of parallel lines straddling the segment.
     if (segment.style == se::GuideStyle::DOUBLE) {
       constexpr float kOffset = 1.5F;
-      if (segment.direction == se::GuideDirection::HORIZONTAL) {
-        stroke({segment.start.x, segment.start.y - kOffset}, {segment.end.x, segment.end.y - kOffset});
-        stroke({segment.start.x, segment.start.y + kOffset}, {segment.end.x, segment.end.y + kOffset});
-      } else {
-        stroke({segment.start.x - kOffset, segment.start.y}, {segment.end.x - kOffset, segment.end.y});
-        stroke({segment.start.x + kOffset, segment.start.y}, {segment.end.x + kOffset, segment.end.y});
-      }
+      const Point offset = segment.direction == se::GuideDirection::HORIZONTAL ? Point{0.0F, kOffset} : Point{kOffset, 0.0F};
+      paint.DrawLine(start - offset, end - offset, color, stroke);
+      paint.DrawLine(start + offset, end + offset, color, stroke);
       return;
     }
-
-    // DASHED style: short dashes along the segment (used by separator guides).
     if (segment.style == se::GuideStyle::DASHED) {
-      const float dx = segment.end.x - segment.start.x;
-      const float dy = segment.end.y - segment.start.y;
-      const float length = std::hypot(dx, dy);
-      if (length <= 0.0F) {
-        return;
-      }
-      constexpr float kDash = 6.0F;
-      constexpr float kGap = 4.0F;
-      const float ux = dx / length;
-      const float uy = dy / length;
-      float distance = 0.0F;
-      while (distance < length) {
-        const float end = std::min(distance + kDash, length);
-        stroke(
-            {segment.start.x + ux * distance, segment.start.y + uy * distance},
-            {segment.start.x + ux * end, segment.start.y + uy * end}
-        );
-        distance = end + kGap;
-      }
+      stroke.dash_pattern = {6.0F, 4.0F};
+    }
+    if (!segment.arrow_end) {
+      paint.DrawLine(start, end, color, stroke);
       return;
     }
 
-    // Solid line; when the segment carries an arrow, draw the shaft plus a
-    // small arrowhead at the end (flow/return guides).
-    if (segment.arrow_end) {
-      constexpr float kArrowLength = 8.0F;
-      constexpr float kArrowAngle = 0.49F;  // ~28 degrees
-      const float dx = segment.end.x - segment.start.x;
-      const float dy = segment.end.y - segment.start.y;
-      const float length = std::hypot(dx, dy);
-      if (length <= kArrowLength) {
-        return;
-      }
-      const float ratio = (length - kArrowLength) / length;
-      const Point shaft_end{
-          segment.start.x + dx * ratio,
-          segment.start.y + dy * ratio,
-      };
-      stroke({segment.start.x, segment.start.y}, shaft_end);
-      // Arrowhead: two short lines back from the tip at ±angle.
-      const float ux = dx / length;
-      const float uy = dy / length;
-      const float cos_a = std::cos(kArrowAngle);
-      const float sin_a = std::sin(kArrowAngle);
-      // Left wing: rotate (ux, uy) by -angle.
-      const float left_x = segment.end.x - kArrowLength * (ux * cos_a + uy * sin_a);
-      const float left_y = segment.end.y - kArrowLength * (-ux * sin_a + uy * cos_a);
-      stroke(shaft_end, {left_x, left_y});
-      // Right wing: rotate (ux, uy) by +angle.
-      const float right_x = segment.end.x - kArrowLength * (ux * cos_a - uy * sin_a);
-      const float right_y = segment.end.y - kArrowLength * (ux * sin_a + uy * cos_a);
-      stroke(shaft_end, {right_x, right_y});
-      return;
-    }
+    const Point delta = end - start;
+    const float length = std::hypot(delta.x, delta.y);
+    if (length < 1.0F) return;
 
-    stroke({segment.start.x, segment.start.y}, {segment.end.x, segment.end.y});
+    constexpr float kArrowLength = 9.0F;
+    constexpr float kArrowAngle = 28.0F * 3.14159265F / 180.0F;
+    const float arrow_length = std::min(kArrowLength, length);
+    const Point direction = delta * (1.0F / length);
+    const float depth = arrow_length * std::cos(kArrowAngle);
+    const Point base = end - direction * depth;
+    const Point wing = Point{-direction.y, direction.x} * (arrow_length * std::sin(kArrowAngle));
+    if (length > depth) paint.DrawLine(start, base, color, stroke);
+    Path arrow;
+    arrow.MoveTo(end).LineTo(base + wing).LineTo(base - wing).Close();
+    paint.FillPath(arrow, color);
   }
 
   // ---- Code completion ----------------------------------------------------
 
-  static bool IsCompletionWordChar(char16_t ch) {
-    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' ||
-           ch > 0x7F;
-  }
-
-  bool IsTriggerCharacter(const std::string& ch) const {
-    return completion_trigger_characters_ && completion_trigger_characters_(ch);
-  }
-
-  void UpdateCompletion(const std::vector<se::TextChange>& changes) {
-    FireTextChanged();
-    if (!completion_provider_) {
-      return;
-    }
-    const bool completion_active = completion_.request_active;
-    // The reference manager dismisses when the result carries no text change
-    // or more than one (a single character edit is the only live trigger).
-    if (changes.empty() || changes.size() != 1) {
-      DismissCompletion();
-      return;
-    }
-    const std::string& new_text = changes.front().new_text;
-    if (new_text.size() == 1 && IsTriggerCharacter(new_text)) {
-      TriggerCompletion(CompletionContext::TriggerKind::Character, new_text);
-    } else if (completion_active || new_text.size() == 1) {
-      // Any printable character re-requests while active, and also opens the
-      // panel from scratch so typing an identifier (for example `for`) shows
-      // matching candidates immediately.
-      TriggerCompletion(CompletionContext::TriggerKind::Retrigger, "");
-    } else {
-      completion_.request_active = false;
-      if (completion_.visible) {
-        DismissCompletion();
-      }
-    }
-  }
-
-  void TriggerCompletion(CompletionContext::TriggerKind kind, const std::string& trigger_character) {
-    completion_.request_active = true;
-    completion_.last_trigger_kind = kind;
-    completion_.last_trigger_char = trigger_character;
-    ExecuteCompletionRefresh();
-  }
-
-  void DismissCompletion() {
-    if (!completion_.visible && !completion_.request_active) {
-      return;
-    }
-    completion_.visible = false;
-    completion_.request_active = false;
-    completion_.items.clear();
-    completion_.scroll_pixels = 0.0F;
-    completion_.panel_tap_armed = false;
-    completion_.panel_scrolling = false;
-    completion_.thumb_dragging = false;
-    if (invalidate_) {
-      invalidate_();
-    }
-  }
-
-  void ExecuteCompletionRefresh() {
-    if (!completion_.request_active || !completion_provider_) {
-      DismissCompletion();
-      return;
-    }
-    const CompletionContext context = BuildCompletionContext(completion_.last_trigger_kind, completion_.last_trigger_char);
-    std::vector<CompletionItem> items = completion_provider_(context);
-    std::stable_sort(items.begin(), items.end(), [](const CompletionItem& a, const CompletionItem& b) {
-      const std::string& key_a = !a.sort_key.empty() ? a.sort_key : a.label;
-      const std::string& key_b = !b.sort_key.empty() ? b.sort_key : b.label;
-      return key_a < key_b;
-    });
-    if (items.empty()) {
-      DismissCompletion();
-      return;
-    }
-    completion_.items = std::move(items);
-    completion_.selected = 0;
-    completion_.scroll_pixels = 0.0F;
-    completion_.visible = true;
-    if (invalidate_) {
-      invalidate_();
-    }
-  }
-
-  CompletionContext BuildCompletionContext(CompletionContext::TriggerKind kind, const std::string& trigger_character) {
-    CompletionContext context;
-    context.trigger_kind = kind;
-    context.trigger_character = trigger_character;
-    const se::TextPosition cursor = core_->getCursorPosition();
-    context.cursor_line = static_cast<uint32_t>(cursor.line);
-    context.cursor_column = static_cast<uint32_t>(cursor.column);
-    const se::U16String source_line = document_->getLineU16Text(cursor.line);
-    const std::u16string_view line(reinterpret_cast<const char16_t*>(source_line.data()), source_line.size());
-    context.line_text = Utf16ToUtf8(line);
-    size_t start = cursor.column;
-    while (start > 0 && IsCompletionWordChar(line[start - 1])) {
-      --start;
-    }
-    size_t end = cursor.column;
-    while (end < line.size() && IsCompletionWordChar(line[end])) {
-      ++end;
-    }
-    context.word_start = static_cast<uint32_t>(start);
-    context.word_end = static_cast<uint32_t>(end);
-    return context;
-  }
-
-  void ConfirmCompletion() {
-    if (!completion_.visible || completion_.selected >= completion_.items.size()) {
-      return;
-    }
-    const CompletionItem item = completion_.items[completion_.selected];
-    DismissCompletion();
-
-    const std::string text = !item.insert_text.empty() ? item.insert_text : item.label;
-    const bool is_snippet = item.insert_text_is_snippet;
-    se::EditorActionResult result;
-    try {
-      if (item.has_text_edit) {
-        const se::TextPosition cursor = core_->getCursorPosition();
-        const std::string edit_text = !item.text_edit_text.empty() ? item.text_edit_text : text;
-        const se::TextRange range{{cursor.line, item.text_edit_start}, {cursor.line, item.text_edit_end}};
-        if (is_snippet) {
-          // Reference behavior: clear the replacement range first, then expand
-          // the snippet template from the caret.
-          result = core_->replaceText(range, "");
-          if (!result.text_changes.empty() && !edit_text.empty()) {
-            result = core_->insertSnippet(edit_text);
-          }
-        } else {
-          result = core_->replaceText(range, edit_text);
-        }
-      } else if (is_snippet) {
-        result = core_->insertSnippet(text);
-      } else {
-        result = core_->insertText(text);
-      }
-    } catch (const std::exception&) {
-      return;
-    }
-    if (!result.text_changes.empty()) {
-      text_input_client_->NotifyContentChanged(result.text_changes);
-      model_dirty_ = true;
-    }
-  }
-
   void MoveCompletionSelection(int delta) {
-    if (!completion_.visible || completion_.items.empty()) {
+    if (!completion_.items) return;
+    const auto last = completion_.items->size() - 1;
+    const auto current = completion_.selected;
+    if ((delta < 0 && current == 0) || (delta > 0 && current == last)) return;
+    completion_.selected = delta < 0 ? current - 1 : current + 1;
+    InvalidateCompletionPopup();
+  }
+
+  void ResetCompletionRequest() {
+    ++completion_generation_;
+    for (const auto& task : completion_tasks_) task.Cancel();
+    completion_tasks_.clear();
+    completion_results_.clear();
+    completion_ = {};
+  }
+
+  void InvalidateCompletionPopup() {
+    completion_popup_dirty_ = true;
+    Invalidate();
+  }
+
+  void DismissCompletionPopup() {
+    if (const auto shown = std::exchange(completion_presentation_, std::nullopt)) {
+      popup_.Dismiss(shown->layer);
+    }
+  }
+
+  void UpdateCompletionPopup() {
+    if (!completion_.items) {
+      DismissCompletionPopup();
       return;
     }
-    const int count = static_cast<int>(completion_.items.size());
-    const int next = std::max(0, std::min(count - 1, static_cast<int>(completion_.selected) + delta));
-    if (static_cast<size_t>(next) != completion_.selected) {
-      completion_.selected = static_cast<size_t>(next);
-      RevealCompletionSelection();
-    }
-  }
-
-  // Maximum pixel offset (0 when everything fits).
-  float CompletionMaxScroll() const {
-    const size_t count = completion_.items.size();
-    if (count <= kCompletionMaxVisible) {
-      return 0.0F;
-    }
-    return static_cast<float>(count - kCompletionMaxVisible) * kCompletionRowHeight;
-  }
-
-  // First fully-or-partially visible row for the pixel offset.
-  size_t CompletionFirstVisible() const {
-    const size_t count = completion_.items.size();
-    if (count <= kCompletionMaxVisible) {
-      return 0;
-    }
-    const size_t max_first = count - kCompletionMaxVisible;
-    const size_t first = static_cast<size_t>(completion_.scroll_pixels / kCompletionRowHeight);
-    return std::min(first, max_first);
-  }
-
-  // Sub-pixel shift of the first visible row (0..rowHeight).
-  float CompletionRowFraction() const {
-    const size_t count = completion_.items.size();
-    if (count <= kCompletionMaxVisible) {
-      return 0.0F;
-    }
-    return completion_.scroll_pixels -
-           static_cast<float>(static_cast<size_t>(completion_.scroll_pixels / kCompletionRowHeight)) *
-               kCompletionRowHeight;
-  }
-
-  bool CompletionPanelHitRect(const Point& position) const {
-    if (!completion_.visible) {
-      return false;
-    }
-    const se::Rect& rect = completion_.panel_rect;
-    return position.x >= rect.origin.x && position.x < rect.origin.x + rect.width &&
-           position.y >= rect.origin.y && position.y < rect.origin.y + rect.height;
-  }
-
-  bool HitCompletionPanel(const Point& position, size_t& out_row) const {
-    if (!completion_.visible || completion_.items.empty()) {
-      return false;
-    }
-    const se::Rect& rect = completion_.panel_rect;
-    if (position.x < rect.origin.x || position.x >= rect.origin.x + rect.width || position.y < rect.origin.y ||
-        position.y >= rect.origin.y + rect.height) {
-      return false;
-    }
-    // Convert to list coordinates using the pixel scroll offset so the tapped
-    // row matches what is drawn.
-    const float list_y = (position.y - rect.origin.y - kCompletionPanelPaddingV) + CompletionRowFraction();
-    const float row = list_y / kCompletionRowHeight;
-    if (row < 0.0F) {
-      return false;
-    }
-    const size_t absolute = static_cast<size_t>(row) + CompletionFirstVisible();
-    if (absolute >= completion_.items.size()) {
-      return false;
-    }
-    out_row = absolute;
-    return true;
-  }
-
-  // Scrolls by pixels, clamped; keeps the selection visible afterwards.
-  void ScrollCompletionBy(float delta_pixels) {
-    const float max_scroll = CompletionMaxScroll();
-    if (max_scroll <= 0.0F) {
+    if (viewport_.width <= 0.0F || viewport_.height <= 0.0F) return;
+    const Rect viewport{0.0F, 0.0F, viewport_.width, viewport_.height};
+    const Rect anchor = CursorRect().Intersection(viewport);
+    const float vertical_padding = 2.0F * kCompletionPanelPaddingV;
+    const float below = viewport.height - anchor.y - anchor.height;
+    const float available = std::max(anchor.y, below) - kCompletionGap - kCompletionFramePadding - vertical_padding;
+    const float rows = std::min(static_cast<float>(std::min(completion_.items->size(), kCompletionMaxVisible)),
+                                std::max(1.0F, std::floor(available / kCompletionRowHeight)));
+    const Size size{
+        std::min(kCompletionPanelWidth, viewport.width - 2.0F * kCompletionFramePadding),
+        std::min(rows * kCompletionRowHeight + vertical_padding, viewport.height - 2.0F * kCompletionFramePadding),
+    };
+    if (anchor.IsEmpty() || size.width <= 2.0F * kCompletionPanelPaddingH + kCompletionScrollbarSpace ||
+        size.height <= vertical_padding) {
+      DismissCompletion();
       return;
     }
-    completion_.scroll_pixels = std::max(0.0F, std::min(max_scroll, completion_.scroll_pixels + delta_pixels));
-    if (completion_.selected < CompletionFirstVisible()) {
-      completion_.selected = CompletionFirstVisible();
-    }
-    const size_t first = CompletionFirstVisible();
-    if (completion_.selected >= first + kCompletionMaxVisible) {
-      completion_.selected = first + kCompletionMaxVisible - 1;
-    }
-    if (invalidate_) {
-      invalidate_();
-    }
-  }
 
-  // Picks the scroll offset that keeps the selection fully visible.
-  void RevealCompletionSelection() {
-    const size_t count = completion_.items.size();
-    if (count <= kCompletionMaxVisible) {
-      completion_.scroll_pixels = 0.0F;
-      return;
-    }
-    const size_t first = CompletionFirstVisible();
-    if (completion_.selected < first) {
-      completion_.scroll_pixels = static_cast<float>(completion_.selected) * kCompletionRowHeight;
-    } else if (completion_.selected >= first + kCompletionMaxVisible) {
-      completion_.scroll_pixels =
-          static_cast<float>(completion_.selected - (kCompletionMaxVisible - 1)) * kCompletionRowHeight;
-    }
-    if (invalidate_) {
-      invalidate_();
-    }
-  }
-
-  se::Rect ComputeCompletionPanelRect(const se::PointF& cursor, float cursor_height) const {
-    const float width = std::min(
-        kCompletionPanelWidth,
-        std::max(kCompletionPanelMinWidth, viewport_.width - kCompletionFramePadding * 2.0F));
-    const size_t rows = std::min(completion_.items.size(), kCompletionMaxVisible);
-    const float height = kCompletionRowHeight * static_cast<float>(rows) + kCompletionPanelPaddingV * 2.0F;
-    const float x = std::max(
-        kCompletionFramePadding,
-        std::min(cursor.x, std::max(kCompletionFramePadding, viewport_.width - kCompletionFramePadding - width)));
-    float y = cursor.y + cursor_height + kCompletionGap;
-    if (y + height > viewport_.height - kCompletionFramePadding) {
-      // Not enough room below the caret: place the panel above it.
-      y = cursor.y - kCompletionGap - height;
-      if (y < kCompletionFramePadding) {
-        y = kCompletionFramePadding;
+    auto& shown = completion_presentation_;
+    if (shown && shown->anchor != anchor) {
+      if (popup_.UpdateAnchor(shown->layer, anchor)) {
+        shown->anchor = anchor;
+      } else {
+        shown.reset();
       }
     }
-    return se::Rect{{x, y}, width, height};
+    if (shown && !completion_popup_dirty_ && shown->size == size) return;
+
+    const auto weak = weak_from_this();
+    const auto items = completion_.items;
+    const CompletionPopupContent content{
+        .items = items,
+        .selected = completion_.selected,
+        .renderer = completion_renderer_,
+        .colors = {theme_.completion_bg_color, theme_.completion_border_color, theme_.completion_selected_bg_color,
+                   theme_.completion_label_color, theme_.completion_detail_color, theme_.scrollbar_track_color,
+                   theme_.scrollbar_thumb_color},
+        .size = size,
+        .accept = [weak, items](std::size_t index) {
+          const auto editor = weak.lock();
+          if (editor && editor->active_ && editor->completion_.items == items) {
+            editor->completion_.selected = index;
+            editor->ConfirmCompletion();
+          }
+        },
+    };
+    ViewFactory factory = [content] { return CompletionPopupView(content); };
+    if (shown && popup_.Update(shown->layer, factory)) {
+      shown->size = size;
+    } else {
+      const auto layer = popup_.ShowAtAnchor(editor_anchor_, anchor, std::move(factory), {
+          .gap = kCompletionGap,
+          .viewport_margin = kCompletionFramePadding,
+          .retain_anchor_focus = true,
+          .on_dismiss_request = [weak] {
+            if (const auto editor = weak.lock()) editor->DismissCompletion();
+          },
+      });
+      shown = CompletionPresentation{layer, anchor, size};
+    }
+    completion_popup_dirty_ = false;
   }
 
-  // Height of the scrollbar thumb (0 when the list fits).
-  float CompletionThumbHeight() const {
-    const size_t count = completion_.items.size();
-    if (count <= kCompletionMaxVisible) {
-      return 0.0F;
-    }
-    const float track = kCompletionRowHeight * static_cast<float>(kCompletionMaxVisible);
-    const float all = kCompletionRowHeight * static_cast<float>(count);
-    return std::max(12.0F, track * (track / all));
-  }
-
-  bool CompletionThumbHit(const Point& position) const {
-    const float thumb = CompletionThumbHeight();
-    if (thumb <= 0.0F || !completion_.visible) {
-      return false;
-    }
-    const float track_top = completion_.panel_rect.origin.y + kCompletionPanelPaddingV;
-    const float track_bottom = track_top + kCompletionPanelPaddingV * 0.0F +
-                               kCompletionRowHeight * static_cast<float>(kCompletionMaxVisible);
-    const float travel = (track_bottom - track_top) - thumb;
-    const float thumb_top = travel > 0.0F
-        ? track_top + (completion_.scroll_pixels / CompletionMaxScroll()) * travel
-        : track_top;
-    const float x = completion_.panel_rect.origin.x + completion_.panel_rect.width - 12.0F;
-    return position.x >= x && position.x <= x + 8.0F && position.y >= thumb_top &&
-           position.y <= thumb_top + thumb;
-  }
-
-  void DrawCompletionPanel(PaintContext& paint, const se::Rect& rect) {
-    const Rect panel{rect.origin.x, rect.origin.y, rect.width, rect.height};
-    paint.DrawRect(panel, theme_.completion_background, CornerRadii(12.0F));
-    paint.DrawBorder(panel, theme_.completion_border, StrokeStyle{1.0F}, CornerRadii(12.0F));
-
-    // Clip the list to the panel so rows disappear only once they have fully
-    // scrolled out; partially visible boundary rows never paint outside the
-    // rounded surface.
-    paint.PushClip(
-        Rect{rect.origin.x + 1.0F, rect.origin.y + 1.0F, rect.width - 2.0F, rect.height - 2.0F},
-        CornerRadii(11.0F)
-    );
-
-    const float content_left = rect.origin.x + kCompletionPanelPaddingH + kCompletionRowPaddingH;
-    const size_t first_row = CompletionFirstVisible();
-    const float fraction = CompletionRowFraction();
-    // First row baseline starts above the padding so the list scrolls smoothly.
-    float row_center_y = rect.origin.y + kCompletionPanelPaddingV - fraction + kCompletionRowHeight * 0.5F;
-    const float panel_bottom = rect.origin.y + rect.height;
-    for (size_t item_index = first_row; item_index < completion_.items.size(); ++item_index) {
-      if (row_center_y - kCompletionRowHeight * 0.5F >= panel_bottom) {
-        break;
-      }
-      const CompletionItem& item = completion_.items[item_index];
-      const bool selected = (item_index == completion_.selected);
-      if (selected) {
-        paint.DrawRect(
-            Rect{rect.origin.x + kCompletionPanelPaddingH, row_center_y - kCompletionRowHeight * 0.5F,
-                 rect.width - kCompletionPanelPaddingH * 2.0F, kCompletionRowHeight},
-            theme_.completion_selected_background,
-            CornerRadii(6.0F));
-      }
-
-      // Kind badge: 18x18 rounded square with a single bold letter.
-      const float badge_center_y = row_center_y;
-      const float badge_x = content_left;
-      paint.DrawRect(
-          Rect{badge_x, badge_center_y - kCompletionBadgeSize * 0.5F, kCompletionBadgeSize, kCompletionBadgeSize},
-          Argb(CompletionKindColor(item.kind)),
-          CornerRadii(4.0F));
-      const std::string letter = CompletionKindLetter(item.kind);
-      const TextStyle badge_style{Font::System(kCompletionBadgeSizePx).WithWeight(FontWeight::Bold), Argb(0xFFFFFFFF),
-                                  TextDecoration::None};
-      const float badge_baseline = CenterBaseline(badge_center_y, completion_badge_metrics_);
-      const float badge_text_x = badge_x + (kCompletionBadgeSize - completion_badge_char_advance_) * 0.5F;
-      paint.DrawTextRun(
-          Rect{badge_text_x, badge_center_y - kCompletionBadgeSize * 0.5F, kCompletionBadgeSize, kCompletionBadgeSize},
-          Point{badge_text_x, badge_baseline},
-          letter,
-          badge_style);
-
-      // Label, then a right-aligned detail when space allows.
-      const float label_x = content_left + kCompletionBadgeSize + kCompletionBadgeGap;
-      const float label_baseline = CenterBaseline(badge_center_y, completion_label_metrics_);
-      paint.DrawTextRun(
-          Rect{label_x, row_center_y - kCompletionRowHeight * 0.5F,
-               rect.width - (label_x - rect.origin.x) - kCompletionRowPaddingH, kCompletionRowHeight},
-          Point{label_x, label_baseline},
-          item.label,
-          TextStyle{Font::System(kCompletionLabelSize), theme_.completion_label, TextDecoration::None});
-
-      if (!item.detail.empty()) {
-        const float detail_right = rect.origin.x + rect.width - kCompletionRowPaddingH;
-        const float detail_width = std::min(
-            160.0F,
-            detail_right - (label_x + kCompletionRowPaddingH)
-        );
-        if (detail_width > 40.0F) {
-          const float detail_baseline = CenterBaseline(badge_center_y, completion_detail_metrics_);
-          paint.DrawTextRun(
-              Rect{detail_right - detail_width, row_center_y - kCompletionRowHeight * 0.5F, detail_width,
-                   kCompletionRowHeight},
-              Point{detail_right - kCompletionRowPaddingH - 0.0F, detail_baseline},
-              item.detail,
-              TextStyle{Font::System(kCompletionDetailSize), theme_.completion_detail, TextDecoration::None});
-        }
-      }
-      row_center_y += kCompletionRowHeight;
-    }
-
-    // Scrollbar: a thin track with a thumb when the list overflows.
-    const float thumb = CompletionThumbHeight();
-    if (thumb > 0.0F) {
-      const float track_left = rect.origin.x + rect.width - 7.0F;
-      const float track_top = rect.origin.y + kCompletionPanelPaddingV;
-      const float track_height = kCompletionRowHeight * static_cast<float>(kCompletionMaxVisible);
-      paint.DrawRect(
-          Rect{track_left, track_top, 2.0F, track_height},
-          Color::Rgb(0, 0, 0, 0.10F),
-          CornerRadii(1.0F));
-      const float travel = track_height - thumb;
-      const float thumb_top = travel > 0.0F
-          ? track_top + (completion_.scroll_pixels / CompletionMaxScroll()) * travel
-          : track_top;
-      paint.DrawRect(
-          Rect{track_left - 1.0F, thumb_top, 4.0F, thumb},
-          Color::Rgb(128, 128, 128, 0.55F),
-          CornerRadii(2.0F));
-    }
-    paint.PopClip();
-  }
-
-
-  std::shared_ptr<se::EditorCore> core_;
-  std::shared_ptr<se::Document> document_;
   std::shared_ptr<HuxeruiTextMeasurer> text_measurer_;
-  huxerui::TextMeasurer* measurer_ = nullptr;
-  EditorTheme theme_;
-  FontFamily font_family_;
-  float display_scale_{1.0F};
-  // Set when document content changed since the last fold publication; the
-  // next settled refresh re-applies fold regions (possibly empty to clear).
-  bool folds_dirty_{true};
-  uint32_t last_gutter_icon_reserve_{0};
-  std::vector<std::shared_ptr<EditorDecorationProvider>> providers_;
-  std::vector<sweeteditor::TextChange> pending_changes_;
-  std::string synced_document_text_;
-  std::vector<std::pair<size_t, std::vector<sweeteditor::PhantomText>>> cached_phantom_entries_;
-  std::shared_ptr<EditorTextInputClient> text_input_client_;
-  std::function<void()> invalidate_;
-  se::Size viewport_;
-  se::IntRange last_visible_range_{0, -1};
-  FontMetrics font_metrics_;
-  float font_size_;
-  float char_width_;
-  CompletionProvider completion_provider_;
-  std::function<bool(const std::string&)> completion_trigger_characters_;
-  FontMetrics completion_label_metrics_;
-  FontMetrics completion_detail_metrics_;
-  FontMetrics completion_badge_metrics_;
-  float completion_badge_char_advance_{0.0F};
-
+  std::shared_ptr<se::EditorCore> core_;
+  Document document_handle_;
+  std::shared_ptr<se::Document> document_;
+  TextMeasurer& measurer_;
+  TaskScope tasks_;
+  MenuHandle menu_;
+  PopupHandle popup_;
+  ViewHandle editor_anchor_;
+  std::shared_ptr<Clipboard> clipboard_;
+  EventEmitter events_;
   EditorController controller_;
-  huxerui::EventEmitter events_;
-  std::function<std::string(uint32_t, uint32_t)> newline_action_;
-  bool accept_phantom_on_tab_{true};
-  std::string current_diff_original_;
-  int current_wrap_mode_{0};
-  bool current_sticky_gutter_{false};
-  std::map<uint32_t, std::string> cached_phantom_;
+  std::function<void()> invalidate_;
+  std::function<void()> invalidate_semantics_;
+  std::function<void(PointerCursorKind)> set_cursor_;
+  std::function<void()> show_keyboard_;
+  std::function<Point(Point)> local_to_window_;
+  std::function<std::optional<Point>(Point)> window_to_local_;
+  std::shared_ptr<detail::TextInputBridge> text_input_;
+
+  EditorSettings settings_;
+  EditorTheme theme_;
+  EditorKeyMap key_map_;
+  std::optional<LanguageConfiguration> language_;
+  EditorMetadata metadata_;
+  EditorIconProvider icon_provider_;
+  std::optional<std::string> diff_original_;
+  std::uint64_t document_generation_ = 1;
+  std::uint64_t edit_generation_ = 0;
+  std::uint64_t previous_requested_revision_ = 0;
+  bool active_ = false;
+  bool defer_events_ = false;
+  bool document_event_pending_ = false;
+  std::vector<se::EditorActionResult> pending_events_;
+
+  std::vector<std::shared_ptr<DecorationProvider>> decoration_providers_;
+  std::vector<std::set<DecorationType>> decoration_capabilities_;
+  std::vector<TaskHandle> decoration_tasks_;
+  std::vector<DecorationReceiver> decoration_receivers_;
+  std::optional<detail::DecorationBatch> decoration_batch_;
+  std::uint64_t decoration_generation_ = 0;
+  bool decoration_apply_posted_ = false;
+  bool decorations_pending_ = false;
+  std::shared_ptr<const std::string> snapshot_;
+  std::vector<TextChange> pending_changes_;
+  IntRange last_visible_range_;
+  double last_decoration_time_ = -1.0;
 
   struct CompletionState {
-    bool visible{false};
-    bool request_active{false};
-    std::vector<CompletionItem> items;
-    size_t selected{0};
-    // Continuous scroll offset in pixels (0 when the list fits).
-    float scroll_pixels{0.0F};
-    // Pointer gesture state: a tap selects, a drag scrolls.
-    bool panel_tap_armed{false};
-    bool panel_scrolling{false};
-    bool thumb_dragging{false};
-    float thumb_drag_anchor{0.0F};
-    Point panel_down{};
-    float panel_last_y{0.0F};
-    CompletionContext::TriggerKind last_trigger_kind{CompletionContext::TriggerKind::Invoked};
-    std::string last_trigger_char;
-    se::Rect panel_rect{};
-    se::PointF last_cursor{};
-    float last_cursor_height{0.0F};
+    bool requested = false;
+    bool incomplete = false;
+    std::size_t pending = 0;
+    std::shared_ptr<const std::vector<CompletionItem>> items;
+    std::size_t selected = 0;
+  };
+  struct CompletionPresentation {
+    LayerId layer;
+    Rect anchor;
+    Size size;
   };
   CompletionState completion_;
+  std::optional<CompletionPresentation> completion_presentation_;
+  bool completion_popup_dirty_ = false;
+  std::vector<std::shared_ptr<CompletionProvider>> completion_providers_;
+  std::vector<CompletionResult> completion_results_;
+  std::vector<TaskHandle> completion_tasks_;
+  CompletionItemRenderer completion_renderer_;
+  std::uint64_t completion_generation_ = 0;
+  std::vector<std::shared_ptr<NewLineActionProvider>> newline_providers_;
 
-  // Active touch pointers (pointer_id -> position) in press order. The editor
-  // aggregates multi-touch into one multi-point SweetEditor GestureEvent so the
-  // core can recognize two-finger pinch-to-zoom.
+  std::optional<InlineSuggestion> inline_suggestion_;
+  std::optional<InlineSuggestion> pending_inline_dismissal_;
+  std::optional<Rect> inline_rect_;
+  std::optional<LayerId> context_menu_layer_;
+  ContextMenuItemProvider context_menu_provider_;
+  std::optional<LayerId> selection_menu_layer_;
+  SelectionMenuItemProvider selection_menu_provider_;
+  SelectionMenuPhase selection_menu_phase_ = SelectionMenuPhase::Hidden;
+  double selection_menu_deadline_ = 0.0;
+
   std::vector<std::pair<std::int64_t, se::PointF>> active_pointers_;
-  float pinch_last_distance_{0.0F};
-
-  bool focused_{false};
-  bool blink_on_{true};
-  double last_blink_timestamp_{-1.0};
-  // Core-managed animations (fling momentum / edge scroll) are pending.
-  bool animation_pending_{false};
+  KeyModifier modifiers_ = KeyModifier::NONE;
+  bool last_pointer_touch_ = false;
+  bool mouse_pointer_active_ = false;
+  bool viewport_in_motion_ = false;
+  se::Size viewport_;
   se::EditorRenderModel cached_model_;
-  bool model_dirty_{true};
-  bool decorations_pending_{false};
-  bool highlight_published_{false};
-  static constexpr unsigned kHighlightBootstrapFrames = 16;
-  unsigned highlight_bootstrap_attempts_{0};
-  // Scrollbar thumb dragging state.
-  bool scrollbar_dragging_{false};
-  bool scrollbar_drag_vertical_{true};
-  float scrollbar_drag_offset_{0.0F};
-  se::ScrollbarModel cached_scrollbar_v_;
-  se::ScrollbarModel cached_scrollbar_h_;
+  bool model_dirty_ = true;
+  FontMetrics font_metrics_;
+  FontMetrics inlay_hint_metrics_;
+  float char_width_ = 1.0F;
+  bool focused_ = false;
+  bool blink_on_ = true;
+  double frame_time_ = 0.0;
+  double blink_deadline_ = 0.0;
+  bool animation_ = false;
+  double animation_delay_ = 0.0;
+  double animation_deadline_ = 0.0;
 };
 
-struct SearchBridge {
-  std::function<void(const std::string&)> run_search;
-  std::function<void()> find_next;
-  std::function<void()> find_previous;
-  std::function<void(const std::string&)> replace_current;
-  std::function<void(const std::string&)> replace_all;
-  std::function<void()> close;
-};
-
-}  // namespace
-
-namespace detail {
 
 struct EditorControllerState {
-  // Editor extension currently bound to this state. Guards teardown so one
-  // editor's unmount cannot disconnect a different editor that reused the
-  // same controller value.
-  const void* owner = nullptr;
-  std::function<void(const std::string&, const std::string&)> load_document;
-  std::function<std::string()> get_text;
-  std::function<bool(uint32_t, uint32_t)> set_cursor;
-  std::function<void(const std::string&)> run_search;
-  std::function<void()> find_next;
-  std::function<void()> find_previous;
-  std::function<void(const std::string&)> replace_current;
-  std::function<void(const std::string&)> replace_all;
-  std::function<void()> clear_search;
-  std::function<void()> toggle_search;
-  std::function<bool()> cut;
-  std::function<bool()> copy;
-  std::function<bool()> paste;
-  std::function<bool()> select_all;
+  enum class Phase { Unbound, Attached, Active, Detached };
+  Phase phase = Phase::Unbound;
+  std::weak_ptr<EditorSession> editor;
+
+  template <class F>
+  auto Invoke(F&& action) const -> std::invoke_result_t<F, EditorSession&> {
+    if (phase == Phase::Active) {
+      if (const auto mounted = editor.lock()) return std::invoke(std::forward<F>(action), *mounted);
+    }
+    return {};
+  }
 };
 
 struct EditorControllerAccess {
-  static const std::shared_ptr<EditorControllerState>& State(const EditorController& controller) noexcept {
+  static const std::shared_ptr<EditorControllerState>& State(const EditorController& controller) {
     return controller.state_;
+  }
+
+  static void Attach(const EditorController& controller, const std::shared_ptr<EditorSession>& editor) {
+    auto& state = *State(controller);
+    if (state.phase != EditorControllerState::Phase::Unbound) {
+      throw std::logic_error("A CodeEditor controller can only be attached once");
+    }
+    state.editor = editor;
+    state.phase = EditorControllerState::Phase::Attached;
+  }
+
+  static void Activate(const EditorController& controller, EditorSession& editor) {
+    auto& state = *State(controller);
+    if (state.phase != EditorControllerState::Phase::Attached) return;
+    state.phase = EditorControllerState::Phase::Active;
+    editor.Activate();
+  }
+
+  static void Detach(const EditorController& controller) {
+    auto& state = *State(controller);
+    state.phase = EditorControllerState::Phase::Detached;
+    state.editor.reset();
   }
 };
 
 }  // namespace detail
 
-EditorController::EditorController()
-    : state_(std::make_shared<detail::EditorControllerState>()) {}
+using detail::EditorSession;
 
-bool EditorController::IsConnected() const noexcept {
-  return detail::EditorControllerAccess::State(*this)->load_document != nullptr;
+EditorController::EditorController() : state_(std::make_shared<detail::EditorControllerState>()) {}
+
+EditorController UseCodeEditor(const std::source_location& location) {
+  return UseState(EditorController{}, location).Get();
 }
 
-bool EditorController::LoadDocument(const std::string& document_key, const std::string& text) const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  if (!state->load_document) {
-    return false;
-  }
-  state->load_document(document_key, text);
-  return true;
+EditorSettingsHandle::EditorSettingsHandle(std::weak_ptr<detail::EditorControllerState> state)
+    : state_(std::move(state)) {}
+
+std::optional<EditorSettings> EditorSettingsHandle::Get() const {
+  const auto state = state_.lock();
+  return state ? state->Invoke([](EditorSession& editor) { return std::optional(editor.Settings()); }) : std::nullopt;
 }
 
-std::string EditorController::Text() const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  return state->get_text ? state->get_text() : std::string();
+bool EditorSettingsHandle::Apply(EditorSettings settings) const {
+  const auto state = state_.lock();
+  return state && state->Invoke([&](EditorSession& editor) { return editor.ApplySettings(settings); });
 }
 
-bool EditorController::SetCursor(std::uint32_t line, std::uint32_t column) const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  return state->set_cursor ? state->set_cursor(line, column) : false;
+std::optional<EditorSettingsHandle> EditorController::GetSettings() const {
+  return state_->Invoke([this](EditorSession&) { return std::optional(EditorSettingsHandle(state_)); });
 }
 
-bool EditorController::RunSearch(const std::string& pattern) const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  if (!state->run_search) {
-    return false;
-  }
-  state->run_search(pattern);
-  return true;
+namespace {
+
+template <class T>
+auto LineEntries(LineDecorations<T> values) {
+  std::vector<std::pair<std::size_t, std::vector<T>>> entries;
+  entries.reserve(values.size());
+  for (auto& [line, items] : values) entries.emplace_back(line, std::move(items));
+  return entries;
 }
 
-bool EditorController::FindNext() const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  if (!state->find_next) {
-    return false;
-  }
-  state->find_next();
-  return true;
+}  // namespace
+
+bool EditorController::LoadDocument(Document document) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.LoadDocument(std::move(document)); });
 }
 
-bool EditorController::FindPrevious() const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  if (!state->find_previous) {
-    return false;
-  }
-  state->find_previous();
-  return true;
+bool EditorController::ApplyTheme(EditorTheme theme) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.ApplyTheme(std::move(theme)); });
 }
 
-bool EditorController::ReplaceCurrent(const std::string& replacement) const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  if (!state->replace_current) {
-    return false;
-  }
-  state->replace_current(replacement);
-  return true;
+bool EditorController::SetKeyMap(EditorKeyMap key_map) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.SetKeyMap(std::move(key_map)); });
 }
 
-bool EditorController::ReplaceAll(const std::string& replacement) const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  if (!state->replace_all) {
-    return false;
-  }
-  state->replace_all(replacement);
-  return true;
+bool EditorController::SetEditorIconProvider(EditorIconProvider provider) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.SetIconProvider(std::move(provider)); });
 }
 
-bool EditorController::ClearSearch() const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  if (!state->clear_search) {
-    return false;
-  }
-  state->clear_search();
-  return true;
+bool EditorController::CopyToClipboard() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Copy(); });
 }
 
-bool EditorController::ToggleSearch() const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  if (!state->toggle_search) {
-    return false;
-  }
-  state->toggle_search();
-  return true;
+bool EditorController::PasteFromClipboard() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Paste(); });
 }
 
-bool EditorController::Cut() const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  return state->cut ? state->cut() : false;
+bool EditorController::CutToClipboard() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Cut(); });
 }
 
-bool EditorController::Copy() const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  return state->copy ? state->copy() : false;
+bool EditorController::SetLanguageConfiguration(std::optional<LanguageConfiguration> configuration) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.SetLanguage(std::move(configuration)); });
 }
 
-bool EditorController::Paste() const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  return state->paste ? state->paste() : false;
+bool EditorController::SetMetadata(EditorMetadata metadata) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.SetMetadata(std::move(metadata)); });
+}
+
+bool EditorController::AddDecorationProvider(std::shared_ptr<DecorationProvider> provider) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.AddDecorationProvider(std::move(provider)); });
+}
+
+bool EditorController::RemoveDecorationProvider(const std::shared_ptr<DecorationProvider>& provider) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.RemoveDecorationProvider(provider); });
+}
+
+bool EditorController::RequestDecorationRefresh() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.RequestDecorations(); });
+}
+
+bool EditorController::AddCompletionProvider(std::shared_ptr<CompletionProvider> provider) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.AddCompletionProvider(std::move(provider)); });
+}
+
+bool EditorController::RemoveCompletionProvider(const std::shared_ptr<CompletionProvider>& provider) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.RemoveCompletionProvider(provider); });
+}
+
+bool EditorController::AddNewLineActionProvider(std::shared_ptr<NewLineActionProvider> provider) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.AddNewLineProvider(std::move(provider)); });
+}
+
+bool EditorController::RemoveNewLineActionProvider(const std::shared_ptr<NewLineActionProvider>& provider) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.RemoveNewLineProvider(provider); });
+}
+
+bool EditorController::TriggerCompletion() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.TriggerCompletion(); });
+}
+
+bool EditorController::ShowCompletionItems(std::vector<CompletionItem> items) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.ShowCompletionItems(std::move(items)); });
+}
+
+bool EditorController::DismissCompletion() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.DismissCompletion(); });
+}
+
+bool EditorController::SetCompletionItemRenderer(CompletionItemRenderer renderer) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.SetCompletionRenderer(std::move(renderer)); });
+}
+
+bool EditorController::SetContextMenuItemProvider(ContextMenuItemProvider provider) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.SetContextMenuProvider(std::move(provider)); });
+}
+
+bool EditorController::SetSelectionMenuItemProvider(SelectionMenuItemProvider provider) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.SetSelectionMenuProvider(std::move(provider)); });
+}
+
+bool EditorController::ShowInlineSuggestion(InlineSuggestion suggestion) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.ShowInlineSuggestion(std::move(suggestion)); });
+}
+
+bool EditorController::DismissInlineSuggestion() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.DismissInlineSuggestion(); });
+}
+
+bool EditorController::IsInlineSuggestionShowing() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.IsInlineSuggestionShowing(); });
+}
+
+bool EditorController::SetDiffOriginal(std::optional<std::string> original) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.SetDiffOriginal(std::move(original)); });
+}
+
+bool EditorController::InsertText(std::string text) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().insertText(text)); });
+}
+
+bool EditorController::InsertTextAt(TextPosition position, std::string text) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().replaceText({position, position}, text)); });
+}
+
+bool EditorController::ReplaceText(TextRange range, std::string text) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().replaceText(range, text)); });
+}
+
+bool EditorController::DeleteText(TextRange range) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().deleteText(range)); });
+}
+
+bool EditorController::ApplyTextEdits(std::vector<TextEdit> edits) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().applyTextEdits(std::move(edits))); });
+}
+
+bool EditorController::MoveLineUp() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().moveLineUp()); });
+}
+
+bool EditorController::MoveLineDown() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().moveLineDown()); });
+}
+
+bool EditorController::CopyLineUp() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().copyLineUp()); });
+}
+
+bool EditorController::CopyLineDown() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().copyLineDown()); });
+}
+
+bool EditorController::DeleteLine() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().deleteLine()); });
+}
+
+bool EditorController::InsertLineAbove() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().insertLineAbove()); });
+}
+
+bool EditorController::InsertLineBelow() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().insertLineBelow()); });
+}
+
+bool EditorController::Undo() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().undo()); });
+}
+
+bool EditorController::Redo() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().redo()); });
 }
 
 bool EditorController::SelectAll() const {
-  const auto& state = detail::EditorControllerAccess::State(*this);
-  return state->select_all ? state->select_all() : false;
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().selectAll()); });
 }
 
+bool EditorController::FoldAll() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().foldAll()); });
+}
+
+bool EditorController::UnfoldAll() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().unfoldAll()); });
+}
+
+bool EditorController::FindNextSearchMatch() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().findNextSearchMatch()); });
+}
+
+bool EditorController::FindPreviousSearchMatch() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().findPreviousSearchMatch()); });
+}
+
+bool EditorController::ClearSearch() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().clearSearch()); });
+}
+
+bool EditorController::ClearInlayHints() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().clearInlayHints()); });
+}
+
+bool EditorController::ClearPhantomTexts() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().clearPhantomTexts()); });
+}
+
+bool EditorController::ClearGutterIcons() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().clearGutterIcons()); });
+}
+
+bool EditorController::ClearCodeLens() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().clearCodeLens()); });
+}
+
+bool EditorController::ClearLinks() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().clearLinks()); });
+}
+
+bool EditorController::ClearGuides() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().clearGuides()); });
+}
+
+bool EditorController::ClearDiagnostics() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().clearDiagnostics()); });
+}
+
+bool EditorController::ClearDocumentHighlights() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().clearDocumentHighlights()); });
+}
+
+bool EditorController::ClearAllDecorations() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().clearAllDecorations()); });
+}
+
+bool EditorController::CancelLinkedEditing() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().cancelLinkedEditing()); });
+}
+
+bool EditorController::SetSelection(TextRange range) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setSelection(range)); });
+}
+
+bool EditorController::SetCursorPosition(TextPosition position) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setCursorPosition(position)); });
+}
+
+bool EditorController::GotoPosition(TextPosition position) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().gotoPosition(position.line, position.column)); });
+}
+
+bool EditorController::ScrollToLine(std::size_t line, ScrollBehavior behavior) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().scrollToLine(line, behavior)); });
+}
+
+bool EditorController::ToggleFold(std::size_t line) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().toggleFoldAt(line)); });
+}
+
+bool EditorController::FoldAt(std::size_t line) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().foldAt(line)); });
+}
+
+bool EditorController::UnfoldAt(std::size_t line) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().unfoldAt(line)); });
+}
+
+bool EditorController::Search(SearchRequest request) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().search(request)); });
+}
+
+bool EditorController::ReplaceCurrentSearchMatch(std::string replacement) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().replaceCurrentSearchMatch(replacement)); });
+}
+
+bool EditorController::ReplaceAllSearchMatches(std::string replacement) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().replaceAllSearchMatches(replacement)); });
+}
+
+bool EditorController::RegisterTextStyle(std::uint32_t id, EditorTextStyle style) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().registerTextStyle(id, ToCoreStyle(style))); });
+}
+
+bool EditorController::SetLineSpans(std::size_t line, SpanLayer layer, std::vector<StyleSpan> spans) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setLineSpans(line, layer, std::move(spans))); });
+}
+
+bool EditorController::SetBatchLineSpans(SpanLayer layer, LineDecorations<StyleSpan> spans) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setBatchLineSpans(layer, LineEntries(std::move(spans)))); });
+}
+
+bool EditorController::SetLineInlayHints(std::size_t line, std::vector<InlayHint> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setLineInlayHints(line, std::move(values))); });
+}
+
+bool EditorController::SetBatchLineInlayHints(LineDecorations<InlayHint> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setBatchLineInlayHints(LineEntries(std::move(values)))); });
+}
+
+bool EditorController::SetLinePhantomTexts(std::size_t line, std::vector<PhantomText> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setLinePhantomTexts(line, std::move(values))); });
+}
+
+bool EditorController::SetBatchLinePhantomTexts(LineDecorations<PhantomText> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setBatchLinePhantomTexts(LineEntries(std::move(values)))); });
+}
+
+bool EditorController::SetLineGutterIcons(std::size_t line, std::vector<GutterIcon> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setLineGutterIcons(line, std::move(values))); });
+}
+
+bool EditorController::SetBatchLineGutterIcons(LineDecorations<GutterIcon> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setBatchLineGutterIcons(LineEntries(std::move(values)))); });
+}
+
+bool EditorController::SetLineCodeLens(std::size_t line, std::vector<CodeLensItem> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setLineCodeLens(line, std::move(values))); });
+}
+
+bool EditorController::SetBatchLineCodeLens(LineDecorations<CodeLensItem> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setBatchLineCodeLens(LineEntries(std::move(values)))); });
+}
+
+bool EditorController::SetLineLinks(std::size_t line, std::vector<LinkSpan> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setLineLinks(line, std::move(values))); });
+}
+
+bool EditorController::SetBatchLineLinks(LineDecorations<LinkSpan> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setBatchLineLinks(LineEntries(std::move(values)))); });
+}
+
+bool EditorController::SetLineDiagnostics(std::size_t line, std::vector<Diagnostic> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setLineDiagnostics(line, std::move(values))); });
+}
+
+bool EditorController::SetBatchLineDiagnostics(LineDecorations<Diagnostic> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setBatchLineDiagnostics(LineEntries(std::move(values)))); });
+}
+
+bool EditorController::SetLineDocumentHighlights(std::size_t line, std::vector<DocumentHighlight> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setLineDocumentHighlights(line, std::move(values))); });
+}
+
+bool EditorController::SetBatchLineDocumentHighlights(LineDecorations<DocumentHighlight> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setBatchLineDocumentHighlights(LineEntries(std::move(values)))); });
+}
+
+bool EditorController::SetIndentGuides(std::vector<IndentGuide> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setIndentGuides(std::move(values))); });
+}
+
+bool EditorController::SetBracketGuides(std::vector<BracketGuide> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setBracketGuides(std::move(values))); });
+}
+
+bool EditorController::SetFlowGuides(std::vector<FlowGuide> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setFlowGuides(std::move(values))); });
+}
+
+bool EditorController::SetSeparatorGuides(std::vector<SeparatorGuide> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setSeparatorGuides(std::move(values))); });
+}
+
+bool EditorController::SetFoldRegions(std::vector<FoldRegion> values) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().setFoldRegions(std::move(values))); });
+}
+
+bool EditorController::InsertSnippet(std::string snippet) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().insertSnippet(snippet)); });
+}
+
+bool EditorController::StartLinkedEditing(std::vector<TabStopGroup> groups) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Dispatch(editor.Core().startLinkedEditing(std::move(groups))); });
+}
+
+bool EditorController::LinkedEditingNext() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().linkedEditingNextTabStop()); });
+}
+
+bool EditorController::LinkedEditingPrevious() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Dispatch(editor.Core().linkedEditingPrevTabStop()); });
+}
+
+std::optional<Document> EditorController::GetDocument() const {
+  return state_->Invoke([](EditorSession& editor) { return std::optional(editor.CurrentDocument()); });
+}
+
+std::optional<EditorTheme> EditorController::GetTheme() const {
+  return state_->Invoke([](EditorSession& editor) { return std::optional(editor.Theme()); });
+}
+
+std::optional<EditorKeyMap> EditorController::GetKeyMap() const {
+  return state_->Invoke([](EditorSession& editor) { return std::optional(editor.KeyMap()); });
+}
+
+bool EditorController::CanUndo() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Core().canUndo(); });
+}
+
+bool EditorController::CanRedo() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Core().canRedo(); });
+}
+
+std::string EditorController::GetSelectedText() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Core().getSelectedText(); });
+}
+
+std::optional<TextRange> EditorController::GetSelection() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Selection(); });
+}
+
+std::optional<TextPosition> EditorController::GetCursorPosition() const {
+  return state_->Invoke([](EditorSession& editor) { return std::optional(editor.Core().getCursorPosition()); });
+}
+
+std::optional<TextRange> EditorController::GetWordRangeAtCursor() const {
+  return state_->Invoke([](EditorSession& editor) { return std::optional(editor.Core().getWordRangeAtCursor()); });
+}
+
+std::string EditorController::GetWordAtCursor() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Core().getWordAtCursor(); });
+}
+
+std::optional<ScrollMetrics> EditorController::GetScrollMetrics() const {
+  return state_->Invoke([](EditorSession& editor) { return std::optional(editor.Core().getScrollMetrics()); });
+}
+
+std::optional<Rect> EditorController::GetPositionRect(TextPosition position) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.PositionRect(position); });
+}
+
+std::optional<Rect> EditorController::GetCursorRect() const {
+  return state_->Invoke([](EditorSession& editor) { return std::optional(editor.CursorRect()); });
+}
+
+bool EditorController::IsLineVisible(std::size_t line) const {
+  return state_->Invoke([&](EditorSession& editor) { return line < editor.CurrentDocument().GetLineCount() && editor.Core().isLineVisible(line); });
+}
+
+std::optional<SearchState> EditorController::GetSearchState() const {
+  return state_->Invoke([](EditorSession& editor) { return std::optional(editor.Core().getSearchState()); });
+}
+
+std::optional<LanguageConfiguration> EditorController::GetLanguageConfiguration() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Language(); });
+}
+
+EditorMetadata EditorController::GetMetadata() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Metadata(); });
+}
+
+IntRange EditorController::GetVisibleLineRange() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Core().getVisibleLineRange(); });
+}
+
+std::size_t EditorController::GetTotalLineCount() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.CurrentDocument().GetLineCount(); });
+}
+
+std::string EditorController::GetLinkTargetAt(TextPosition position) const {
+  return state_->Invoke([&](EditorSession& editor) { return editor.Core().getLinkTargetAt(position.line, position.column); });
+}
+
+bool EditorController::IsInLinkedEditing() const {
+  return state_->Invoke([](EditorSession& editor) { return editor.Core().isInLinkedEditing(); });
+}
+
+bool EditorController::SetScroll(float x, float y) const {
+  return state_->Invoke([&](EditorSession& editor) {
+    if (!std::isfinite(x) || !std::isfinite(y)) throw std::invalid_argument("CodeEditor scroll offsets must be finite");
+    return editor.Dispatch(editor.Core().setScroll(x, y));
+  });
+}
+
+bool EditorController::RegisterBatchTextStyles(std::map<std::uint32_t, EditorTextStyle> styles) const {
+  return state_->Invoke([&](EditorSession& editor) {
+    std::vector<std::pair<std::uint32_t, se::TextStyle>> entries;
+    entries.reserve(styles.size());
+    for (const auto& [id, style] : styles) entries.emplace_back(id, ToCoreStyle(style));
+    return editor.Dispatch(editor.Core().registerBatchTextStyles(std::move(entries)));
+  });
+}
+
+bool EditorController::ClearHighlights(std::optional<SpanLayer> layer) const {
+  return state_->Invoke([&](EditorSession& editor) {
+    return editor.Dispatch(layer ? editor.Core().clearHighlights(*layer) : editor.Core().clearHighlights());
+  });
+}
+
+namespace {
+
 struct EditorBehavior {
-  huxerui::TextMeasurer* measurer = nullptr;
+  TextMeasurer* measurer;
   EditorOptions options;
   EditorController controller;
-  huxerui::EventEmitter events;
-  huxerui::State<bool> search_visible;
+  EventEmitter events;
+  TaskScope tasks;
+  MenuHandle menu;
+  PopupHandle popup;
+  ViewHandle editor_anchor;
+  std::shared_ptr<Clipboard> clipboard;
+  State<PointerCursorKind> cursor;
 
-  struct Extension final : NodeExtension {
+  class Extension final : public NodeExtension {
+   public:
     Extension(ViewNode& node, const EditorBehavior& behavior)
-        : measurer_(behavior.measurer),
-          options_(behavior.options),
-          events_(behavior.events),
-          controller_(behavior.controller),
-          search_visible_(behavior.search_visible),
-          holder_(std::make_shared<EditorHolder>(
-              *behavior.measurer,
-              behavior.options,
-              [this] { InvalidatePaint(); },
-              behavior.events,
-              behavior.controller
-          )),
-          document_key_(behavior.options.document_key) {
-      BindController(behavior.controller);
-      static_cast<void>(node);
+        : options_(behavior.options), controller_(behavior.controller),
+          holder_(std::make_shared<EditorSession>(*behavior.measurer, options_, behavior.tasks, behavior.menu,
+              behavior.popup, behavior.editor_anchor,
+              behavior.clipboard, behavior.events, controller_,
+              [this] { InvalidatePaint(); }, [this] { InvalidateSemantics(); },
+              [cursor = behavior.cursor](PointerCursorKind kind) { if (cursor.Get() != kind) cursor = kind; },
+              [this] { ShowKeyboard(); },
+              [&node](Point point) { return node.LocalToWindow(point); },
+              [&node](Point point) { return node.WindowToLocal(point); })) {
+      holder_->Initialize(options_);
+      detail::EditorControllerAccess::Attach(controller_, holder_);
     }
 
-    ~Extension() {
-      UnbindController();
+    ~Extension() override {
+      detail::EditorControllerAccess::Detach(controller_);
+      holder_->Close();
     }
 
-    // Every controller entry point is bound here and released together, so
-    // controller calls after the editor unmounts observe the documented
-    // disconnected behavior instead of touching a destroyed extension.
-    void BindController(EditorController controller) {
-      UnbindController();
-      controller_ = std::move(controller);
-      auto& state = detail::EditorControllerAccess::State(controller_);
-      state->owner = this;
-      state->load_document = [this](const std::string& key, const std::string& text) {
-        document_key_ = key;
-        options_.initial_text = text;
-        options_.document_key = key;
-        holder_ =
-            std::make_shared<EditorHolder>(*measurer_, options_, [this] { InvalidatePaint(); }, events_, controller_);
-        InvalidatePaint();
-      };
-      state->get_text = [this] { return holder_->Text(); };
-      state->set_cursor = [this](uint32_t line, uint32_t column) { return holder_->SetCursor(line, column); };
-      state->run_search = [this](const std::string& text) { holder_->RunSearch(text); };
-      state->find_next = [this] { holder_->FindNext(); };
-      state->find_previous = [this] { holder_->FindPrevious(); };
-      state->replace_current = [this](const std::string& text) { holder_->ReplaceCurrent(text); };
-      state->replace_all = [this](const std::string& text) { holder_->ReplaceAll(text); };
-      state->clear_search = [this] { holder_->CloseSearch(); };
-      state->toggle_search = [this] {
-        const bool next = !search_visible_.Get();
-        search_visible_ = next;
-        events_.Emit<EditorEvents::SearchVisibilityChanged>(next);
-      };
-      // Clipboard / selection actions for application toolbars.
-      state->cut = [this] {
-        if (!holder_) return false;
-        holder_->CutSelectionAction();
-        return true;
-      };
-      state->copy = [this] {
-        if (!holder_) return false;
-        holder_->CopySelectionAction();
-        return true;
-      };
-      state->paste = [this] {
-        if (!holder_) return false;
-        holder_->PasteSelectionAction();
-        return true;
-      };
-      state->select_all = [this] {
-        if (!holder_) return false;
-        holder_->SelectAllAction();
-        return true;
-      };
-    }
-
-    void UnbindController() {
-      const auto& state = detail::EditorControllerAccess::State(controller_);
-      if (state->owner != this) {
-        return;
-      }
-      state->owner = nullptr;
-      state->load_document = nullptr;
-      state->get_text = nullptr;
-      state->set_cursor = nullptr;
-      state->run_search = nullptr;
-      state->find_next = nullptr;
-      state->find_previous = nullptr;
-      state->replace_current = nullptr;
-      state->replace_all = nullptr;
-      state->clear_search = nullptr;
-      state->toggle_search = nullptr;
-      state->cut = nullptr;
-      state->copy = nullptr;
-      state->paste = nullptr;
-      state->select_all = nullptr;
-    }
-
-    void Update(ViewNode& node, const EditorBehavior& behavior) {
-      static_cast<void>(node);
-      measurer_ = behavior.measurer;
+    void Update(ViewNode&, const EditorBehavior& behavior) {
+      if (controller_ != behavior.controller) throw std::logic_error("A mounted CodeEditor keeps its original controller");
+      holder_->DeferEvents(true);
+      holder_->SyncOptions(behavior.options, &options_);
+      holder_->DeferEvents(false);
       options_ = behavior.options;
-      search_visible_ = behavior.search_visible;
-      BindController(behavior.controller);
-      // Reconcile declarative configuration without resetting the editor:
-      // theme, editing/presentation options, hooks, and provider lists apply
-      // live; only a document switch or a font change (layout metrics)
-      // justifies rebuilding the holder.
-      holder_->ApplyTheme(behavior.options.theme.value_or(holder_->Theme()));
-      holder_->ApplyFont(behavior.options.font_family, behavior.options.font_size);
-      if (behavior.options.document_key != document_key_) {
-        document_key_ = behavior.options.document_key;
-        holder_ = std::make_shared<EditorHolder>(
-            *behavior.measurer,
-            behavior.options,
-            [this] { InvalidatePaint(); },
-            behavior.events,
-            behavior.controller
-        );
-        BindController(behavior.controller);
-        return;
-      }
-      holder_->SyncEditingOptions(behavior.options);
-      holder_->SyncRuntimeOptions(behavior.options);
-      if (behavior.options.original_text != holder_->CurrentDiffOriginal()) {
-        holder_->SetDiffOriginal(behavior.options.original_text);
-      }
-      holder_->SyncDisplayOptions(behavior.options.wrap_mode, behavior.options.sticky_gutter);
     }
 
-    PointerResult OnPointer(ViewNode& node, const PointerEvent& event) override {
-      static_cast<void>(node);
-      CODEEDITOR_TRACE(
-          "pointer id=%lld type=%d pos=(%.0f,%.0f) device=%d", static_cast<long long>(event.pointer_id),
-          static_cast<int>(event.type), event.position.x, event.position.y,
-          static_cast<int>(event.device_kind)
-      );
-      const bool changed = holder_->HandlePointer(event);
-      if (changed) {
-        InvalidatePaint();
-      }
-      if (event.type == PointerEventType::Down) {
+    PaintInvalidation PrepareGeometry(ViewNode& node, TextMeasurer&) override {
+      return holder_->PrepareGeometry(node.LayoutSize()) ? PaintInvalidation::Foreground : PaintInvalidation::None;
+    }
+
+    FrameResult OnFrame(ViewNode&, const FrameInfo& frame) override {
+      detail::EditorControllerAccess::Activate(controller_, *holder_);
+      return holder_->Frame(frame.timestamp);
+    }
+
+    PointerResult OnPointer(ViewNode&, const PointerEvent& event) override {
+      const bool handled = holder_->HandlePointer(event);
+      if (event.type == PointerEventType::Down &&
+          (event.device_kind == PointerDeviceKind::Touch || event.changed_button != PointerButton::Secondary)) {
         return PointerResult::Capture;
       }
-      return changed ? PointerResult::Handled : PointerResult::Ignored;
+      return handled ? PointerResult::Handled : PointerResult::Ignored;
     }
 
-    bool OnKey(ViewNode& node, const KeyEvent& event) override {
-      static_cast<void>(node);
-      if (holder_->HandleKey(event)) {
-        InvalidatePaint();
-        return true;
-      }
-      return false;
+    void OnHover(ViewNode&, const HoverEvent& event) override { holder_->Hover(event); }
+    bool OnKey(ViewNode&, const KeyEvent& event) override {
+      return !holder_->TextInput()->IsActive() && holder_->HandleKey(event);
     }
+    void OnFocusChanged(ViewNode&, bool focused, bool) override { holder_->SetFocused(focused); }
 
-    void OnFocusChanged(ViewNode& node, bool focused, bool reverse) override {
-      static_cast<void>(node);
-      static_cast<void>(reverse);
-      holder_->SetFocused(focused);
-      InvalidatePaint();
-    }
-
-    FrameResult OnFrame(ViewNode& node, const FrameInfo& frame) override {
-      static_cast<void>(node);
-      const bool changed = holder_->AdvanceFrame(frame.timestamp);
-      if (changed) {
-        InvalidatePaint();
-      }
-      // Keep frames flowing until the first highlight slice is published: an
-      // unfocused editor otherwise schedules no follow-up frame and the first
-      // paint (which may run before the viewport has size) never repaints.
-      // Bounded so a permanently empty viewport cannot spin frames forever.
-      if (holder_->ShouldBootstrapHighlight()) {
-        InvalidatePaint();
-        return {.needs_frame = true, .wake_after = std::nullopt};
-      }
-      if (holder_->HasActiveAnimation() || holder_->HasPendingPaintWork()) {
-        return {.needs_frame = true, .wake_after = std::nullopt};
-      }
-      if (holder_->IsFocused()) {
-        return {.wake_after = 0.5};
-      }
-      return {};
-    }
-
-    void PaintAboveContent(const ViewNode& node, PaintContext& context) const override {
+    void PaintAboveContent(const ViewNode& node, PaintContext& paint) const override {
       const Size size = node.LayoutSize();
-      // Clip the editor painting to its own bounds so cursor, focus line,
-      // selection backgrounds, and other overdraw cannot bleed into the gutter
-      // lane or outside the component layout.
-      context.PushClip(Rect{0.0F, 0.0F, size.width, size.height});
-      holder_->Render(context, size);
-      context.PopClip();
+      paint.PushClip({0.0F, 0.0F, size.width, size.height});
+      holder_->Render(paint, size);
+      paint.PopClip();
     }
 
-    std::shared_ptr<TextInputClient> GetTextInputClient() noexcept override {
-      return holder_->TextInputClient();
-    }
+    std::shared_ptr<TextInputClient> GetTextInputClient() noexcept override { return holder_->TextInput(); }
 
-    TextSelectionClient* GetTextSelectionClient() noexcept override {
-      // The editor renders selection handles and highlights itself inside its
-      // own clip; leaving the window-level selection overlay enabled would draw
-      // them in host coordinates without clipping and bleed onto other views.
-      return nullptr;
+    bool HitTest(ViewNode& node, Point point) const override {
+      const auto size = node.LayoutSize();
+      return point.x >= 0 && point.x < size.width && point.y >= 0 && point.y < size.height;
     }
+    bool HoverHitTest(ViewNode& node, Point point) const override { return HitTest(node, point); }
 
-    bool HitTest(ViewNode& node, Point position) const override {
-      const Rect bounds = node.Bounds();
-      return position.x >= bounds.x && position.x <= bounds.x + bounds.width &&
-             position.y >= bounds.y && position.y <= bounds.y + bounds.height;
-    }
-
-    // Screen-reader surface for the document: the editor is one text field
-    // whose value is the current content. Action kinds such as SetText stay
-    // unadvertised until the component routes them into the editor core.
     void BuildSemantics(SemanticBuilder& builder) const override {
       Semantics semantics;
       semantics.role = SemanticRole::TextField;
-      semantics.value = holder_->Text();
-      semantics.read_only = options_.read_only;
+      semantics.value = holder_->CurrentDocument().GetText();
+      semantics.read_only = holder_->Settings().read_only;
       builder.SetOwner(std::move(semantics));
     }
 
-    huxerui::TextMeasurer* measurer_ = nullptr;
+   private:
     EditorOptions options_;
-    huxerui::EventEmitter events_;
     EditorController controller_;
-    huxerui::State<bool> search_visible_;
-    std::shared_ptr<EditorHolder> holder_;
-    std::string document_key_;
+    std::shared_ptr<EditorSession> holder_;
   };
 };
 
-View EditorSearchBar(
-    State<std::string> search_text,
-    State<std::string> replace_text,
-    State<bool> visible,
-    EditorController controller
-) {
-  return Column {
-    Row {
-      TextField(TextEditingValue::FromText(search_text.Get()))
-          .Placeholder("Find")
-          .OnChanged([search_text, controller](const TextEditingValue& value) {
-            search_text = value.text;
-            controller.RunSearch(value.text);
-          })
-          .OnSubmitted([controller] { controller.FindNext(); })
-          .With(Grow{}),
-      Button("Prev").OnClick([controller] { controller.FindPrevious(); }),
-      Button("Next").OnClick([controller] { controller.FindNext(); }),
-      Button("Close").OnClick([visible, controller] {
-        controller.ClearSearch();
-        visible = false;
-      }),
-    }.With(Spacing(4.0F), Padding(4.0F)),
-    Row {
-      TextField(TextEditingValue::FromText(replace_text.Get()))
-          .Placeholder("Replace")
-          .OnChanged([replace_text](const TextEditingValue& value) { replace_text = value.text; })
-          .With(Grow{}),
-      Button("Replace").OnClick([replace_text, controller] {
-        controller.ReplaceCurrent(replace_text.Get());
-      }),
-      Button("All").OnClick([replace_text, controller] {
-        controller.ReplaceAll(replace_text.Get());
-      }),
-    }.With(Spacing(4.0F), Padding(4.0F)),
-  }.With(CrossAlign(CrossAxisAlignment::Stretch));
-}
-
-// Rejects configuration the editor core cannot honor before any composition
-// state is allocated.
-void ValidateEditorOptions(const EditorOptions& options) {
-  if (!(options.font_size > 0.0F)) {
-    throw std::invalid_argument("HuxerUI CodeEditor font_size must be positive");
-  }
-  if (options.tab_size == 0) {
-    throw std::invalid_argument("HuxerUI CodeEditor tab_size must be positive");
-  }
-  if (options.line_spacing_mult < 0.0F) {
-    throw std::invalid_argument("HuxerUI CodeEditor line_spacing_mult must be non-negative");
-  }
-  if (options.wrap_mode < 0 || options.wrap_mode > 2) {
-    throw std::invalid_argument("HuxerUI CodeEditor wrap_mode must be 0 (none), 1 (character), or 2 (word)");
-  }
-  if (options.scrollbar_mode < 0 || options.scrollbar_mode > 2) {
-    throw std::invalid_argument("HuxerUI CodeEditor scrollbar_mode must be 0 (always), 1 (transient), or 2 (never)");
-  }
-}
-
 [[huxerui::composable]]
-View CodeEditor(EditorOptions options, EditorController controller) {
-  ValidateEditorOptions(options);
-  TextMeasurer& measurer = UseTextMeasurer();
-  // An empty document key keeps one default document so callers never have to
-  // invent a storage key. The theme resolves from the ambient HuxerUI theme
-  // unless explicitly overridden, so the editor follows Theme changes live.
-  EditorOptions effective_options = options;
-  if (effective_options.document_key.empty()) {
-    effective_options.document_key = "codeeditor:default";
-  }
-  // Priority: explicit options.theme, then a EditorTheme placed in the
-  // environment through Theme{ThemeDefinition{}.Set(EditorTheme{...})},
-  // then the ambient ThemeSpec.
-  if (!effective_options.theme) {
-    const EditorTheme& environment_style = UseEnvironment<EditorTheme>();
-    if (!(environment_style == EditorTheme::Default())) {
-      effective_options.theme = environment_style;
-    }
-  }
-  effective_options.theme = effective_options.theme.value_or(EditorTheme::FromThemeSpec(UseTheme()));
+View EditorView(EditorController controller, EditorOptions options) {
+  EditorOptions resolved = options;
+  if (!resolved.theme) resolved.theme = EditorTheme::Dark();
+  const auto cursor = UseState(PointerCursorKind::Text);
+  const auto editor_anchor = UseViewHandle();
+  const auto state = detail::EditorControllerAccess::State(controller);
+  return Canvas([](PaintContext&, Size) {})
+      .With(EditorBehavior{&UseTextMeasurer(), std::move(resolved), controller, UseEvents(), UseTaskScope(), UseMenu(),
+                           UsePopup(), editor_anchor, UseApplication().Clipboard(), cursor},
+            editor_anchor, Focusable{}, PointerCursor(cursor.Get()))
+      .On<ViewEvents::KeyIntercept>([state](const KeyEvent& event) {
+        if (event.type == KeyEventType::Down && !event.modifiers.control && !event.modifiers.meta) return false;
+        return state->Invoke([&](EditorSession& editor) { return editor.HandleKey(event); });
+      })
+      .On<ViewEvents::ContextMenuRequested>([state](Point point) {
+        state->Invoke([&](EditorSession& editor) {
+          editor.HandleContextMenu(point);
+          return true;
+        });
+      })
+      .On<ViewEvents::ScrollInput>([state](const ScrollInputEvent& event) {
+        return state->Invoke([&](EditorSession& editor) { return editor.ScrollInput(event); });
+      });
+}
 
-  // Search UI is decoupled from the retained editor node. The default bar is
-  // composed here unless the caller opted out (built_in_search_bar = false),
-  // in which case they compose the exported EditorSearchBar themselves and
-  // mirror visibility through the SearchVisibilityChanged event.
-  const EventEmitter events = UseEvents();
-  // Search UI is fully decoupled: the component never draws a search panel.
-  // Ctrl+F toggles a reported visibility so applications can show their own
-  // bar (the exported EditorSearchBar or a custom one). The toggle binding
-  // lives on the mounted extension, so it dies with the editor instead of
-  // outliving it inside the controller state.
-  auto search_visible = UseState(false);
-  View editor = Canvas([](PaintContext&, Size) {}).With(
-      EditorBehavior{&measurer, std::move(effective_options), controller, events, search_visible}, Focusable{}
-  );
-  return editor;
+}  // namespace
+
+View CodeEditor(EditorController controller, EditorOptions options) {
+  EditorSession::ValidateSettings(options.settings);
+  if (const auto* document = std::get_if<Document>(&options.document);
+      document && !detail::DocumentAccess::Core(*document)) {
+    throw std::invalid_argument("CodeEditor document handle is empty");
+  }
+  return EditorView(std::move(controller), std::move(options));
 }
 
 }  // namespace huxerui::codeeditor
